@@ -1,4 +1,4 @@
-# Stream Dock M18 控制台
+﻿# Stream Dock M18 控制台
 
 自研 Stream Dock M18 驱动：一个本地图形控制台，**不经过官方 Stream Dock 软件**，自己接管设备的按键、屏幕和 24 颗灯珠。
 
@@ -86,7 +86,7 @@
 
 准备步骤：
 
-1. 安装 Python 3.10+，`pip install pillow`
+1. 安装 Python 3.9+（勾选 Add to PATH），双击 `setup.bat` 自动装 Pillow
 2. 把官方 SDK 的 Windows 包解压到 `ws-sdk/`（其中应有 `StreamDockWebsocketSDK.exe`）
 3. 双击 `启动 M18 控制台.bat`（或 `python app/server.py`）
 4. 浏览器会自动打开 `http://127.0.0.1:8642`
