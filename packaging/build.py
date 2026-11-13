@@ -39,6 +39,11 @@ PIP_PACKAGES = {"PIL": "pillow", "PyInstaller": "pyinstaller"}     # 模块名 �
 PIP_MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"            # 官方源下载失败时换国内镜像
 SDK_EXE = os.path.join(ROOT, "ws-sdk", "StreamDockWebsocketSDK.exe")
 SDK_PAGE = "https://sdk.key123.vip/"
+# 单文件 exe 启动时要先解压到一个临时目录。默认用系统 %TEMP%，但有的电脑 %TEMP% 不可写
+# （权限坏了，或安全软件禁止往 Temp 里写程序）会弹「Could not create temporary directory!」。
+# 改成解压到用户自己的 LocalAppData 下（启动时自动创建），避开系统 Temp。
+RUNTIME_TMPDIR = r"%LOCALAPPDATA%\M18Console\runtime"
+ONEFILE = ["--onefile", "--runtime-tmpdir", RUNTIME_TMPDIR]
 
 
 # --------------------------------------------------------------------------- #
@@ -238,7 +243,7 @@ def main() -> int:
 
     # 2b) 卸载程序：同一个 installer.py，但不带安装内容，单独打一个小 exe 放进程序目录
     pyinstaller(
-        "--name", "uninstall", "--windowed", "--onefile",
+        "--name", "uninstall", "--windowed", *ONEFILE,
         "--icon", os.path.join(APP, "icon.ico"),
         "--distpath", os.path.join(BUILD, "uninstaller"),
         "--paths", APP, "--hidden-import", "version", "--exclude-module", "numpy",
@@ -249,7 +254,7 @@ def main() -> int:
 
     # 2c) MCP 服务：给 Codex / DeepSeek Harness / Claude 等 AI 智能体用（带控制台的单文件 exe，走标准输入输出）
     pyinstaller(
-        "--name", "m18-mcp", "--console", "--onefile",
+        "--name", "m18-mcp", "--console", *ONEFILE,
         "--icon", os.path.join(APP, "icon.ico"),
         "--distpath", os.path.join(BUILD, "mcp"),
         "--paths", APP, "--hidden-import", "version",
@@ -273,7 +278,7 @@ def main() -> int:
     # 4) 安装程序（单文件）
     release = os.path.join(DIST, "release")
     pyinstaller(
-        "--name", f"M18Console-Setup-{VERSION}", "--windowed", "--onefile",
+        "--name", f"M18Console-Setup-{VERSION}", "--windowed", *ONEFILE,
         "--icon", os.path.join(APP, "icon.ico"),
         "--distpath", release,
         "--paths", APP,
@@ -284,7 +289,11 @@ def main() -> int:
     )
     setup = os.path.join(release, f"M18Console-Setup-{VERSION}.exe")
     print(f"\n✓ 安装包：{setup}（{os.path.getsize(setup) / 1048576:.1f} MB，用时 {time.time() - t0:.0f} 秒）")
-    print("  发给别人的就是这一个文件；安装说明见 docs/打包与安装指南.md")
+    # 5) 免安装版：程序文件夹直接压成 zip，解压即用（不经过单文件解压，安装包在某些电脑上打不开时用它）
+    portable = os.path.join(release, f"M18Console-Portable-{VERSION}.zip")
+    shutil.copyfile(payload, portable)
+    print(f"✓ 免安装版：{portable}（{os.path.getsize(portable) / 1048576:.1f} MB，解压后运行 M18Console.exe）")
+    print("  一般发安装包；对方装不上时发免安装版。安装说明见 docs/打包与安装指南.md")
     return 0
 
 
