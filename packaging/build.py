@@ -38,6 +38,8 @@ def pyinstaller(*args: str) -> None:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # 中文 / ✓ 在 GBK 控制台里不报错
     sdk = os.path.join(ROOT, "ws-sdk", "StreamDockWebsocketSDK.exe")
     if not os.path.isfile(sdk):
         print("✗ 缺少 ws-sdk/StreamDockWebsocketSDK.exe（官方 WebSocket SDK），先放进来再构建")
@@ -75,6 +77,20 @@ def main() -> int:
         os.path.join(HERE, "installer.py"),
     )
     shutil.copyfile(os.path.join(BUILD, "uninstaller", "uninstall.exe"), os.path.join(app_dir, "uninstall.exe"))
+
+    # 2c) MCP 服务：给 Codex / DeepSeek Harness / Claude 等 AI 智能体用（带控制台的单文件 exe，走标准输入输出）
+    pyinstaller(
+        "--name", "m18-mcp", "--console", "--onefile",
+        "--icon", os.path.join(APP, "icon.ico"),
+        "--distpath", os.path.join(BUILD, "mcp"),
+        "--paths", APP, "--hidden-import", "version",
+        "--exclude-module", "tkinter", "--exclude-module", "numpy", "--exclude-module", "PIL",
+        "--add-data", f"{os.path.join(APP, 'plugin_guide.md')}{SEP}.",
+        os.path.join(APP, "mcp_server.py"),
+    )
+    shutil.copyfile(os.path.join(BUILD, "mcp", "m18-mcp.exe"), os.path.join(app_dir, "m18-mcp.exe"))
+    for doc in (os.path.join(ROOT, "AGENTS.md"), os.path.join(APP, "plugin_guide.md")):
+        shutil.copyfile(doc, os.path.join(app_dir, os.path.basename(doc)))
 
     # 3) 程序文件夹 → payload.zip
     payload = os.path.join(BUILD, "payload.zip")

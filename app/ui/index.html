@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261113f" />
+  <link rel="stylesheet" href="style.css?v=20261113h" />
 </head>
 <body>
 <div class="app">
@@ -265,7 +265,7 @@
               <h2>自制插件</h2>
               <span class="muted">写一小段 JavaScript 就是一个插件；保存后出现在左侧「自制插件」，拖到按键上使用</span>
               <span class="spacer"></span>
-              <span class="editor-actions"><button class="seg small" id="cp-new">新建</button></span>
+              <span class="editor-actions"><button class="seg small" id="cp-agent" title="让 Codex / DeepSeek Harness / Claude 等 AI 帮你写插件">接入 AI</button><button class="seg small" id="cp-new">新建</button></span>
             </div>
             <div class="cp-body">
               <div class="cp-list" id="cp-list"></div>
@@ -298,7 +298,8 @@
 <p><b>定时</b>：<code>key.every(毫秒, key =&gt; { … })</code>，按键离开屏幕自动停止 · <code>await M18.sleep(毫秒)</code></p>
 <p><b>系统</b>：<code>M18.hotkey("ctrl+c")</code> · <code>M18.type("文字", 回车?)</code> · <code>M18.launch("C:\\路径\\程序.exe")</code> ·
 <code>M18.openUrl(网址)</code> · <code>M18.media("playpause")</code>（next / prev / mute / volup / voldown）</p>
-<p><b>调试</b>：<code>M18.log(…)</code> 输出到下方日志；也可以直接用 <code>fetch()</code> 请求网络接口。</p>
+<p><b>联网</b>：<code>const r = await M18.http(网址, { method, headers, body })</code> → <code>r.status</code> · <code>r.text</code> · <code>r.json()</code>（由控制台代发，不受跨域限制）</p>
+<p><b>调试</b>：<code>M18.log(…)</code> 输出到下方日志。想让 AI 帮你写？点右上角「接入 AI」。</p>
 </div></details>
               </div>
             </div>
@@ -454,6 +455,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261113g"></script>
+<script src="app.js?v=20261113h"></script>
 </body>
 </html>

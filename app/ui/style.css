@@ -1381,3 +1381,19 @@ html, body { overflow: hidden; height: 100%; }
 /* 官方内置插件里控制台暂不支持的动作 */
 .pl-act.unsupported img { filter: grayscale(1); opacity: .45; }
 .pl-act.unsupported span { color: #8a96a8; text-decoration: line-through; }
+
+/* 接入 AI 弹窗 */
+.agent-card { width: min(720px, 94vw); }
+.agent-card p { margin: 0; line-height: 1.6; }
+.agent-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.agent-pane { display: flex; flex-direction: column; gap: 8px; }
+.agent-pane[hidden] { display: none; }
+.agent-code { position: relative; }
+.agent-code pre {
+  margin: 0; padding: 10px 12px; padding-right: 64px;
+  background: #1b2230; color: #dfe7f5; border-radius: 8px;
+  font: 12px/1.5 Consolas, "Cascadia Mono", monospace; overflow: auto; max-height: 220px;
+}
+.agent-code pre.wrap { white-space: pre-wrap; }
+.agent-code button { position: absolute; top: 8px; right: 8px; }
+.agent-card code { background: rgba(0, 0, 0, .08); padding: 0 4px; border-radius: 4px; word-break: break-all; }

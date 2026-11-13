@@ -750,8 +750,9 @@ const CITY = "Shanghai";
 
 async function refresh(key) {
   try {
-    const text = await (await fetch(\`https://wttr.in/\${CITY}?format=%c%t\`)).text();
-    key.setTitle(text.trim());
+    // M18.http 由控制台代发请求，不受跨域限制（直接用 fetch 很多接口会被拦）
+    const r = await M18.http(\`https://wttr.in/\${CITY}?format=%c%t\`);
+    key.setTitle(r.text.trim());
   } catch (e) {
     key.setTitle("请求失败");
     M18.log("请求失败：", e);
@@ -883,6 +884,7 @@ async function loadCustomPlugins() {
 }
 
 function bindCustomLab() {
+  $("#cp-agent").addEventListener("click", () => agentDialog().catch((e) => toast(`打开失败：${e.message || e}`)));
   const tpl = $("#cp-template");
   tpl.innerHTML = Object.entries(CP_TEMPLATES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join("");
   tpl.addEventListener("change", async () => {
@@ -1261,6 +1263,62 @@ function confirmDialog(message) {
     box.querySelector('[data-act="yes"]').addEventListener("click", () => done(true));
     box.querySelector('[data-act="no"]').addEventListener("click", () => done(false));
   });
+}
+
+/* 接入 AI：把 MCP 配置给 Codex / DeepSeek Harness / Claude / Cursor 等智能体 */
+async function agentDialog() {
+  const cfg = await post("/api/agent/config", {});
+  if (!cfg.ok) return toast("读取接入配置失败");
+  const prompt = "用 m18-console 这个 MCP 帮我做一个 Stream Dock 自制插件：<在这里描述想要的功能>。"
+    + "先调 m18_plugin_api 读开发指南、m18_status 看哪些键空着，写好后绑到空键上，"
+    + "用 m18_press_key / m18_view_keys / m18_plugin_logs 自己测试，有报错就修到能用为止。";
+  const tabs = [
+    { id: "codex", name: "Codex", where: "加到 <code>%USERPROFILE%\\.codex\\config.toml</code> 末尾，然后重开 Codex（命令行 / VS Code 插件 / 桌面版通用）。也可以用命令：",
+      code: cfg.codexToml,
+      extra: `codex mcp add m18-console -- ${[cfg.command, ...cfg.args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ")}` },
+    { id: "dsh", name: "DeepSeek Harness", where: "保存为项目里的 <code>.dsh/mcp.json</code>（需要启用 dsh-project-mcp 插件），或在配置的 mcpServers 里加上这一段：",
+      code: cfg.mcpJson },
+    { id: "json", name: "Claude / Cursor / 其他", where: "支持 MCP 的客户端都用这段标准配置：Claude Desktop 放进 <code>claude_desktop_config.json</code>，Cursor 放进 <code>.cursor/mcp.json</code>，Cline / Cherry Studio 等在 MCP 设置里粘贴。",
+      code: cfg.mcpJson },
+    { id: "chatgpt", name: "ChatGPT", where: "ChatGPT 网页版的连接器只能连公网 HTTPS 服务，<b>连不到你电脑上的控制台</b>。推荐用 <b>Codex</b>（同一个 ChatGPT 账号登录，选第一个页签的配置）。",
+      code: "" },
+  ];
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.innerHTML = `<div class="modal-card agent-card">
+    <div class="modal-head"><h2>接入 AI 智能体（MCP）</h2><button class="seg small" data-x>关闭</button></div>
+    <div class="modal-body">
+      <p class="muted">配好后，AI 可以直接写自制插件、绑到按键、模拟按键测试、看键面截图和日志，自己改到能用为止。
+        控制台没开时会在后台自动启动。共 16 个工具，开发指南：<code>m18_plugin_api</code>。</p>
+      <div class="agent-tabs">${tabs.map((t, i) => `<button class="seg small${i ? "" : " on"}" data-tab="${t.id}">${t.name}</button>`).join("")}</div>
+      ${tabs.map((t, i) => `<div class="agent-pane" data-pane="${t.id}"${i ? " hidden" : ""}>
+        <p>${t.where}</p>
+        ${t.code ? `<div class="agent-code"><pre>${escHtml(t.code)}</pre><button class="seg tiny" data-copy="${t.id}">复制</button></div>` : ""}
+        ${t.extra ? `<div class="agent-code"><pre>${escHtml(t.extra)}</pre><button class="seg tiny" data-copy="${t.id}-extra">复制</button></div>` : ""}
+      </div>`).join("")}
+      <p><b>试试这样说</b>（复制后改掉尖括号里的内容）：</p>
+      <div class="agent-code"><pre class="wrap">${escHtml(prompt)}</pre><button class="seg tiny" data-copy="prompt">复制</button></div>
+      <p class="muted">命令：<code>${escHtml(cfg.command)}</code>${cfg.guide ? ` · 说明文档：<code>${escHtml(cfg.guide)}</code>` : ""}<br>
+        AI 能按键、改按键、运行插件，等于能执行你绑定的程序；只接你信任的客户端。</p>
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+  const texts = { prompt };
+  tabs.forEach((t) => { texts[t.id] = t.code; texts[`${t.id}-extra`] = t.extra; });
+  const close = () => box.remove();
+  box.querySelector("[data-x]").addEventListener("click", close);
+  box.addEventListener("pointerdown", (e) => { if (e.target === box) close(); });
+  box.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+    box.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("on", x === b));
+    box.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+  }));
+  box.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(texts[b.dataset.copy] || "");
+      b.textContent = "已复制";
+      setTimeout(() => { b.textContent = "复制"; }, 1500);
+    } catch (e) { toast("复制失败，请手动选中复制"); }
+  }));
 }
 
 function choiceDialog(message, choices) {

@@ -79,7 +79,7 @@ python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且
   图标（含官方加密的 `.mbg` 动图）、标题、网址 / 程序 / 热键 / 宏 / 媒体键 / 亮度 / 场景切换都会还原；
   时钟、天气等官方插件控件只保留图标。删掉的官方场景不会再自动出现。
 - **图标库**：直接读取官方驱动下载的图标包（按包分组、展开时才加载），点选或拖到按键上即可使用；
-  用到的图标会复制一份进 `app/assets/uploads/`，官方删了图标包也不影响。
+  用到的图标会复制一份进用户数据目录的 `assets/uploads/`，官方删了图标包也不影响。
 - **插件**：内置插件宿主，兼容官方 / Elgato 插件协议，直接运行官方驱动里装好的插件：
   Node.js 插件用官方自带的 `node20.exe`，exe 插件直接拉起，网页插件跑在后台无头 Edge 里。
   把侧栏「插件」里的动作拖到按键上即绑定；按键编辑区「插件设置」打开插件自带的设置页。
@@ -92,6 +92,9 @@ python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且
 - **自制插件**：主页下方「自制插件」里用几行 JavaScript 写插件（带计数器 / 时钟 / 网络数据 / 开关模板、
   API 速查、运行日志、保存即热重载）；保存在 `app/custom-plugins/`，是标准 `.sdPlugin`，
   出现在侧栏「自制插件」里，拖到按键上使用。
+- **接入 AI 智能体（MCP）**：「自制插件 → 接入 AI」一键复制 Codex / DeepSeek Harness / Claude / Cursor 的配置。
+  AI 能写插件、绑到按键、模拟按键、看键面截图和日志，自己测到能用为止（16 个工具，见 [AGENTS.md](AGENTS.md)）。
+  插件开发指南：[app/plugin_guide.md](app/plugin_guide.md)。ChatGPT 网页版连不到本机，请用 Codex。
 
 ## 关键参数
 
@@ -105,6 +108,7 @@ python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且
 |---|---|
 | `app/server.py` | 本地服务、渲染、灯光引擎、动作执行 |
 | `app/wssdk.py` | 极简 WebSocket 客户端 + 官方 SDK 设备封装 |
+| `app/mcp_server.py` | MCP 服务（给 AI 智能体用，安装版是 `m18-mcp.exe`） |
 | `app/ui/` | 界面（HTML/CSS/JS） |
 | `app/config.json` | 配置（页面、按键、灯光、待机等） |
 | `ws-sdk/` | 官方 WebSocket SDK（Windows） |

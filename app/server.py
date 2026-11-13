@@ -30,7 +30,9 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
 import urllib.parse
+import urllib.request
 import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -798,6 +800,8 @@ class App:
         self._auto_return = None
         self._auto_applying = False
         self.recent_apps = deque(maxlen=12)
+        self.plugin_logs: deque = deque(maxlen=1500)  # 插件日志（给界面和 AI 智能体拉取）
+        self._plog_seq = 0
         self._gif_active: dict[int, str] = {}   # 正在由 SDK 原生播放的键 → GIF 文件
         self._gif_session = -1
         self.official_root_cfg = ""      # config.json 里手动指定的官方软件目录
@@ -3508,7 +3512,7 @@ class App:
         try:
             os.makedirs(PLUGIN_DATA, exist_ok=True)
             self.plugin_host = PluginHost(
-                install_root=SD_ROOT, data_dir=PLUGIN_DATA, http_port_fn=lambda: PORT, log=log,
+                install_root=SD_ROOT, data_dir=PLUGIN_DATA, http_port_fn=lambda: PORT, log=self._host_log,
                 on_plugin_message=self._on_plugin_msg, on_pi_message=self._on_pi_msg,
                 on_plugin_ready=self._on_plugin_ready, on_host_message=self._on_host_msg)
             plugins = {}
@@ -3726,6 +3730,20 @@ class App:
             return
         self._plugin_apply_raster(ctx, raw)
 
+    def _plog(self, plugin: str, message: str, level: str = "info") -> None:
+        self._plog_seq += 1
+        self.plugin_logs.append({"seq": self._plog_seq, "t": round(time.time(), 3), "plugin": plugin,
+                                 "level": level, "message": str(message)[:2000]})
+
+    def _host_log(self, message: str) -> None:
+        log(message)
+        self._plog("host", message, "error" if any(w in message for w in ("失败", "退出", "不支持")) else "info")
+
+    def plugin_log_items(self, plugin: str = "", since: int = 0, limit: int = 200) -> list:
+        items = [x for x in self.plugin_logs if x["seq"] > since and (not plugin or x["plugin"] == plugin
+                                                         or (x["plugin"] == "host" and plugin in x["message"]))]
+        return items[-max(1, min(1000, limit)):]
+
     def _on_host_msg(self, msg: dict) -> None:
         if msg.get("event") == "rasterized":
             ctx = self._raster_pending.pop(str(msg.get("id")), None)
@@ -3737,6 +3755,9 @@ class App:
                     pass
         elif msg.get("event") == "log":
             log(f"[插件浏览器] {msg.get('message')}")
+            text = str(msg.get("message") or "")
+            uid = text.split("：", 1)[0] if "：" in text else "host"
+            self._plog(uid, text, "error" if "出错" in text or "没有" in text else "info")
 
     def _plugin_global(self) -> dict:
         try:
@@ -3774,7 +3795,9 @@ class App:
                 log(f"插件 {uid} 试图打开非网页地址，已忽略：{url[:80]}")
             return True
         if ev == "logMessage":
-            log(f"[插件 {uid}] {str(payload.get('message'))[:300]}")
+            message = str(payload.get("message"))
+            log(f"[插件 {uid}] {message[:300]}")
+            self._plog(uid, message, "error" if any(w in message for w in ("错误", "出错", "Error", "失败")) else "info")
             return True
         if ev == "getGlobalSettings":
             reply({"event": "didReceiveGlobalSettings",
@@ -3911,11 +3934,48 @@ class App:
             elif ev == "m18.media":
                 vk = MEDIA_LABELS.get(str(payload.get("action") or ""), ("", ""))[0]
                 ok = bool(vk) and send_hotkey(vk)
+            elif ev == "m18.http":
+                threading.Thread(target=self._custom_http, args=(uid, payload), daemon=True).start()
+                return
             else:
                 ok = False
             log(f"[自制插件 {uid[len(CUSTOM_PREFIX):]}] {ev} {'✓' if ok else '✗'}")
         except Exception as exc:  # noqa: BLE001
             log(f"[自制插件 {uid}] {ev} 失败：{exc}")
+
+    def _custom_http(self, uid: str, payload: dict) -> None:
+        """M18.http：由控制台代发网络请求（插件页在 127.0.0.1 下，直接 fetch 常被跨域拦截）。"""
+        rid = payload.get("id")
+        url = str(payload.get("url") or "")
+        result = {"id": rid, "status": 0, "body": "", "headers": {}, "error": ""}
+        if not url.lower().startswith(("http://", "https://")):
+            result["error"] = "只支持 http / https 地址"
+        else:
+            body = payload.get("body")
+            data = body.encode("utf-8") if isinstance(body, str) else None
+            headers = {str(k): str(v) for k, v in (payload.get("headers") or {}).items()}
+            headers.setdefault("User-Agent", "M18Console/1.0")
+            req = urllib.request.Request(url, data=data, method=str(payload.get("method") or "GET").upper(),
+                                         headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    raw = resp.read(2 * 1024 * 1024)
+                    result.update(status=resp.status, headers=dict(resp.headers.items()))
+            except urllib.error.HTTPError as exc:
+                raw = exc.read(2 * 1024 * 1024)
+                result.update(status=exc.code, headers=dict(exc.headers.items()))
+            except Exception as exc:  # noqa: BLE001
+                raw = b""
+                result["error"] = str(exc)
+            charset = "utf-8"
+            ctype = result["headers"].get("Content-Type", "")
+            if "charset=" in ctype:
+                charset = ctype.split("charset=", 1)[1].split(";")[0].strip() or "utf-8"
+            result["body"] = raw.decode(charset, "replace") if raw else ""
+        self._plog(uid, f"M18.http {url[:120]} → {result['status'] or result['error']}",
+                   "error" if result["error"] or result["status"] >= 400 else "info")
+        if self.plugin_host:
+            self.plugin_host.send(uid, {"event": "m18.httpResult", "payload": result})
 
     CUSTOM_RUNTIME = r"""<!doctype html>
 <html><head><meta charset="utf-8"><title>__TITLE__</title></head><body>
@@ -3927,7 +3987,7 @@ class App:
   const fmt = (e) => String((e && e.stack) || e).split("\n").slice(0, 3).join("\n")
     .replace(/https?:\/\/[^\s)]*index\.html:(\d+):(\d+)/g, (m, l) => (l > OFFSET ? `代码第 ${l - OFFSET} 行` : "运行时"));
   let ws = null;
-  const keys = new Map(), handlers = {}, timers = new Map();
+  const keys = new Map(), handlers = {}, timers = new Map(), pending = new Map();
   const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
   const M18 = {
     on(ev, fn) { handlers[ev] = fn; },
@@ -3937,6 +3997,16 @@ class App:
     launch(path) { send({ event: "m18.launch", payload: { path } }); },
     type(text, enter = false) { send({ event: "m18.text", payload: { text, enter } }); },
     media(action) { send({ event: "m18.media", payload: { action } }); },
+    // 由控制台代发请求：不受浏览器跨域限制。返回 { ok, status, text, json(), headers }
+    http(url, opts = {}) {
+      return new Promise((resolve, reject) => {
+        const id = Math.random().toString(36).slice(2) + Date.now();
+        const body = opts.body == null ? null : (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body));
+        pending.set(id, { resolve, reject });
+        send({ event: "m18.http", payload: { id, url, method: opts.method || "GET", headers: opts.headers || {}, body } });
+        setTimeout(() => { if (pending.delete(id)) reject(new Error("请求超时")); }, 20000);
+      });
+    },
     sleep(ms) { return new Promise((r) => setTimeout(r, ms)); },
     keys() { return [...keys.values()]; },
   };
@@ -3988,6 +4058,15 @@ class App:
     ws.onopen = () => { send({ event: registerEvent, uuid }); call("ready"); };
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
+      if (msg.event === "m18.httpResult") {
+        const p = msg.payload || {}, cb = pending.get(p.id);
+        if (!cb) return;
+        pending.delete(p.id);
+        if (p.error) cb.reject(new Error(p.error));
+        else cb.resolve({ ok: p.status >= 200 && p.status < 300, status: p.status, headers: p.headers || {},
+          text: p.body || "", json: () => JSON.parse(p.body || "null") });
+        return;
+      }
       if (!msg.context) { if (msg.event === "didReceiveGlobalSettings") call(msg.event, null, msg.payload); return; }
       const k = keyOf(msg);
       if (msg.event === "willDisappear") {
@@ -4188,6 +4267,66 @@ __CODE__
         if changed:
             log(f"已把 {changed} 个官方内置插件动作换成控制台原生动作")
         return changed
+
+    # -- 给 AI 智能体用的测试接口 ------------------------------------------- #
+    def simulate_press(self, key: int, gesture: str = "press") -> bool:
+        """模拟按一下设备上的键（短按 / 长按 / 双击），走和真实按键完全相同的处理流程。"""
+        if not (1 <= key <= KEY_COUNT + 3) or gesture not in ("press", "long", "double"):
+            return False
+        if self.in_standby:
+            self._wake_from_standby()          # 模拟按键不需要「第一下只唤醒」
+        hold = 0.8 if gesture == "long" else 0.06
+
+        def run():
+            for i in range(2 if gesture == "double" else 1):
+                self._on_input(key, 1)
+                time.sleep(hold)
+                self._on_input(key, 0)
+                time.sleep(0.08)
+        threading.Thread(target=run, daemon=True).start()
+        log(f"模拟按键 {key}（{ {'press': '短按', 'long': '长按', 'double': '双击'}[gesture] }）")
+        return True
+
+    def keys_sheet_png(self, scale: int = 2) -> bytes:
+        """当前页 15 个键的画面拼成一张图（和设备上看到的一致，左下角是 1 号键）。"""
+        size, gap = KEY_SIZE * scale, 10
+        sheet = Image.new("RGB", (GRID_COLS * size + (GRID_COLS + 1) * gap,
+                                  GRID_ROWS * size + (GRID_ROWS + 1) * gap), (24, 28, 36))
+        d = ImageDraw.Draw(sheet)
+        for key in range(1, KEY_COUNT + 1):
+            col, row_top = (key - 1) % GRID_COLS, GRID_ROWS - 1 - (key - 1) // GRID_COLS
+            x, y = gap + col * (size + gap), gap + row_top * (size + gap)
+            try:
+                tile = Image.open(io.BytesIO(self._number_tile(key))).convert("RGB").resize((size, size))
+                sheet.paste(tile, (x, y))
+            except Exception:  # noqa: BLE001
+                d.rectangle([x, y, x + size, y + size], outline=(200, 60, 60))
+            d.rectangle([x, y, x + 15, y + 12], fill=(0, 0, 0))
+            d.text((x + 2, y), str(key), fill=(255, 220, 90))
+        buf = io.BytesIO()
+        sheet.save(buf, "PNG")
+        return buf.getvalue()
+
+    def agent_config(self) -> dict:
+        """接入 AI 智能体（Codex / DeepSeek Harness / Claude / Cursor…）的 MCP 配置。"""
+        if FROZEN:
+            cmd, args = os.path.join(APP_DIR, "m18-mcp.exe"), []
+        else:
+            py = sys.executable
+            if py.lower().endswith("pythonw.exe") and os.path.isfile(py[:-5] + ".exe"):
+                py = py[:-5] + ".exe"      # MCP 走标准输入输出，要用带控制台的 python.exe
+            cmd, args = py, [os.path.join(HERE, "mcp_server.py")]
+        toml_args = ", ".join(json.dumps(a) for a in args)
+        guide = os.path.join(APP_DIR if FROZEN else ROOT, "AGENTS.md")
+        return {
+            "ok": True, "command": cmd, "args": args, "url": f"http://127.0.0.1:{PORT}/",
+            "mcpJson": json.dumps({"mcpServers": {"m18-console": {"command": cmd, "args": args}}},
+                                  ensure_ascii=False, indent=2),
+            "codexToml": f"[mcp_servers.m18-console]\ncommand = {json.dumps(cmd)}\nargs = [{toml_args}]\n"
+                         "startup_timeout_sec = 30\ntool_timeout_sec = 120\n",
+            "guide": guide if os.path.isfile(guide) else "",
+            "dataDir": DATA_DIR, "customPluginDir": CUSTOM_PLUGIN_DIR,
+        }
 
     def bind_plugin_action(self, key: int, plugin_id: str, idx: int) -> dict:
         if not (1 <= key <= KEY_COUNT + 3):
@@ -4705,6 +4844,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/api/keys/sheet.png":
+            data = APP.keys_sheet_png()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
         elif path.startswith("/api/key/") and path.endswith("/live.jpg"):
             try:
                 key = int(path.split("/")[3])
@@ -4898,6 +5045,14 @@ class Handler(BaseHTTPRequestHandler):
             pid = str(body.get("id") or "")
             folder = APP._custom_folder(pid) if pid.startswith(CUSTOM_PREFIX) else ""
             self._json({"ok": bool(folder) and APP.reveal_in_explorer(os.path.join(folder, "manifest.json"))})
+        elif path == "/api/key/simulate":
+            self._json({"ok": APP.simulate_press(int(body.get("key", 0)), str(body.get("gesture") or "press"))})
+        elif path == "/api/plugins/logs":
+            self._json({"ok": True, "items": APP.plugin_log_items(str(body.get("plugin") or ""),
+                                                                  int(body.get("since") or 0),
+                                                                  int(body.get("limit") or 200))})
+        elif path == "/api/agent/config":
+            self._json(APP.agent_config())
         elif path == "/api/key/plugin":
             self._json(APP.bind_plugin_action(int(body.get("key", 0)), str(body.get("plugin") or ""),
                                               int(body.get("index", -1))))
