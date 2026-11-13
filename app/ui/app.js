@@ -1772,6 +1772,13 @@ function applyState(s) {
   setSwitch($("#reverse-led"), s.effectReverse);
   setSwitch($("#mute-btn"), s.inputMuted);
   setSwitch($("#autostart-btn"), s.autostart);
+  const note = $("#autostart-note");
+  if (note) note.textContent = s.autostartOther ? `（当前是${s.autostartOther}开机自启，打开这里会改成${s.edition}）` : "";
+  const ver = $("#app-version");
+  if (ver && s.edition) {
+    ver.textContent = ver.textContent.replace(/ · .*$/, ` · ${s.edition}`);
+    ver.title = `数据目录：${s.dataDir}`;
+  }
   if (s.album) renderAlbum(s.album);
   const wpBtn = $("#wallpaper-toggle");
   if (wpBtn) {
@@ -2382,7 +2389,8 @@ function bindUI() {
     const r = await post("/api/autostart", { value: v });
     if (state) state.autostart = r.value;
     setSwitch($("#autostart-btn"), r.value);
-    toast(r.value ? "已设置开机自启" : "已关闭开机自启", 1600);
+    toast(r.value ? `已设置开机自启（${state?.edition || ""}）` : "已关闭开机自启", 1600);
+    refreshState();
   });
 
   $("#export-btn").addEventListener("click", async () => {
@@ -2977,6 +2985,14 @@ function connectEvents() {
 
 /* ------------------------------------------------------------------ 启动 */
 async function boot() {
+  // 另一个版本已在运行时，后启动的那个会带着提示打开这里
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get("notice")) {
+      setTimeout(() => toast(q.get("notice"), 9000), 800);
+      history.replaceState(null, "", location.pathname);
+    }
+  } catch (_) { /* ignore */ }
   bindAlbum();
   bindDeselect();
   hardenBrowser();

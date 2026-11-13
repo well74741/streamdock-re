@@ -16,8 +16,10 @@
 
 完整的打包与安装步骤见 [docs/打包与安装指南.md](docs/打包与安装指南.md)。
 
+双击项目根目录的 **`打包.bat`**（缺 Python / 依赖会引导安装），或：
+
 ```bash
-python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且 ws-sdk/ 已就位
+python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会询问后自动安装；需要 ws-sdk/ 已就位
 ```
 
 产物：`dist/release/M18Console-Setup-<版本>.exe`（单文件，约 44 MB，版本号在 `app/version.py`）。

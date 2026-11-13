@@ -116,6 +116,10 @@ official.EXTRA_PLUGIN_ROOTS.extend([os.path.join(MIRROR_DIR, "plugins"), CUSTOM_
 official.CUSTOM_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
 official.EXTRA_ICON_ROOTS.append(os.path.join(MIRROR_DIR, "icons"))
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+# 源码版和安装版可以装在同一台电脑上：端口共用（谁先开谁生效），数据目录各自独立。
+EDITION = "安装版" if getattr(sys, "frozen", False) else "源码版"
+STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
+STARTUP_LNKS = {"安装版": "Stream Dock M18 控制台.lnk", "源码版": "Stream Dock M18 控制台（源码版）.lnk"}
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
 GRID_COLS, GRID_ROWS = 5, 3
@@ -894,12 +898,7 @@ class App:
         self.active_scene = ""
         self._suspend_snapshot = False
         self._applying_scene = False
-        startup_lnk = os.path.join(
-            os.environ.get("APPDATA", ""),
-            r"Microsoft\Windows\Start Menu\Programs\Startup",
-            "Stream Dock M18 控制台.lnk",
-        )
-        self.autostart = os.path.isfile(startup_lnk)
+        self.autostart = self.autostart_state()["this"]
         self._last_activity = time.time()
         self.clear_before_paint = False
         self.writes_paused = False
@@ -2826,21 +2825,61 @@ class App:
             except Exception as exc:  # noqa: BLE001
                 log(f"宏步骤失败 {op}: {exc}")
 
+    @staticmethod
+    def autostart_state() -> dict:
+        """开机自启现状：本版本有没有开；另一个版本有没有开（只会有一个生效，后启动的只是打开窗口）。"""
+        other = "源码版" if EDITION == "安装版" else "安装版"
+        has = lambda ed: os.path.isfile(os.path.join(STARTUP_DIR, STARTUP_LNKS[ed]))  # noqa: E731
+        # 旧版本源码运行时也用过「安装版」那个名字：看快捷方式指向哪儿才算数
+        this_on = has(EDITION)
+        other_on = has(other)
+        if EDITION == "源码版" and other_on and not this_on:
+            target = App._lnk_target(os.path.join(STARTUP_DIR, STARTUP_LNKS["安装版"]))
+            if target.lower().endswith(".bat"):
+                this_on, other_on = True, False
+        return {"this": this_on, "other": other if other_on else ""}
+
+    _lnk_cache: dict = {}
+
+    @staticmethod
+    def _lnk_target(lnk: str) -> str:
+        """快捷方式指向哪儿（按修改时间缓存，状态接口频繁调用也不会每次起 PowerShell）。"""
+        try:
+            mtime = os.path.getmtime(lnk)
+        except OSError:
+            return ""
+        hit = App._lnk_cache.get(lnk)
+        if hit and hit[0] == mtime:
+            return hit[1]
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk.replace(chr(39), chr(39) * 2)}').TargetPath"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            App._lnk_cache[lnk] = (mtime, out.strip())
+            return out.strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
     def set_autostart(self, enabled: bool) -> bool:
-        startup = os.path.join(
-            os.environ.get("APPDATA", ""),
-            r"Microsoft\Windows\Start Menu\Programs\Startup",
-        )
-        lnk = os.path.join(startup, "Stream Dock M18 控制台.lnk")
+        lnk = os.path.join(STARTUP_DIR, STARTUP_LNKS[EDITION])
         bat = sys.executable if FROZEN else os.path.abspath(os.path.join(HERE, "..", "启动 M18 控制台.bat"))
+        # 两个版本只留一个开机自启，否则开机会先后启动两次
+        others = [os.path.join(STARTUP_DIR, n) for n in STARTUP_LNKS.values() if n != STARTUP_LNKS[EDITION]]
+        q = lambda p: p.replace("'", "''")  # noqa: E731
         if enabled:
-            ps = (
-                f'$s=(New-Object -ComObject WScript.Shell).CreateShortcut("{lnk}");'
-                f'$s.TargetPath="{bat}";$s.WorkingDirectory="{os.path.dirname(bat)}";'
-                f'$s.WindowStyle=7;$s.Save()'
+            ps = "".join(f"Remove-Item -LiteralPath '{q(o)}' -ErrorAction SilentlyContinue;" for o in others) + (
+                f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(lnk)}');"
+                f"$s.TargetPath='{q(bat)}';$s.WorkingDirectory='{q(os.path.dirname(bat))}';"
+                f"$s.Description='Stream Dock M18 控制台（{EDITION}）';$s.WindowStyle=7;$s.Save()"
             )
         else:
-            ps = f'Remove-Item -LiteralPath "{lnk}" -ErrorAction SilentlyContinue'
+            ps = f"Remove-Item -LiteralPath '{q(lnk)}' -ErrorAction SilentlyContinue"
+            if EDITION == "源码版":           # 旧版本建的同名快捷方式（指向 .bat 的）也一起删
+                old = os.path.join(STARTUP_DIR, STARTUP_LNKS["安装版"])
+                if os.path.isfile(old) and self._lnk_target(old).lower().endswith(".bat"):
+                    ps += f";Remove-Item -LiteralPath '{q(old)}' -ErrorAction SilentlyContinue"
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps],
@@ -2850,9 +2889,9 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"设置开机自启失败：{exc}")
             return False
-        self.autostart = enabled
+        self.autostart = self.autostart_state()["this"]
         self._save_config()
-        log(f"开机自启：{'开' if enabled else '关'}")
+        log(f"开机自启（{EDITION}）：{'开' if enabled else '关'}")
         return True
 
     def export_config(self) -> dict:
@@ -5434,6 +5473,9 @@ __CODE__
                 "customScene": self.custom_scene_name,
                 "activeScene": self.active_scene,
                 "autostart": self.autostart,
+                "autostartOther": self.autostart_state()["other"],
+                "edition": EDITION,
+                "dataDir": DATA_DIR,
                 "inStandby": self.in_standby,
                 "album": self.album_state(),
                 "inputStats": dict(self.device.stats),
@@ -5501,14 +5543,19 @@ def _shutdown() -> None:
     os._exit(0)
 
 
-def running_instance(port: int) -> bool:
-    import urllib.request
-
+def running_instance(port: int) -> dict | None:
+    """端口上已有控制台在跑就返回它的信息（含 edition：源码版 / 安装版）。"""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.8) as resp:
-            return b"m18-console" in resp.read()
+            data = resp.read()
+        if b"m18-console" not in data:
+            return None
+        try:
+            return json.loads(data.decode("utf-8"))
+        except ValueError:
+            return {"app": "m18-console"}
     except Exception:  # noqa: BLE001
-        return False
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -5578,7 +5625,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._json(APP.snapshot())
         elif path == "/api/health":
-            self._json({"app": "m18-console", "url": f"http://127.0.0.1:{PORT}/"})
+            self._json({"app": "m18-console", "url": f"http://127.0.0.1:{PORT}/", "edition": EDITION,
+                        "dataDir": DATA_DIR, "pid": os.getpid()})
         elif path == "/api/events":
             self._sse()
         elif path == "/api/wallpaper/preview.png":
@@ -6337,10 +6385,18 @@ def main() -> int:
     args = parser.parse_args()
 
     # 单实例：已有控制台在跑就只开窗口，避免两个进程同时写设备
-    if not args.port and running_instance(PORT):
-        log(f"已有实例在运行，打开 {PORT}")
+    other = None if args.port else running_instance(PORT)
+    if other:
+        url = f"http://127.0.0.1:{PORT}/"
+        running = other.get("edition") or "旧版本"
+        if running != EDITION:
+            log(f"{running}的控制台已在运行（数据在 {other.get('dataDir', '?')}），本次启动的{EDITION}不再重复启动")
+            url += "?" + urllib.parse.urlencode({"notice": f"你打开的是{EDITION}，但{running}已经在运行，当前窗口是{running}。"
+                                                           f"要改用{EDITION}，请先在「设备设置 → 退出控制台」后再打开。"})
+        else:
+            log(f"已有实例在运行，打开 {PORT}")
         if not args.no_browser:
-            open_window(f"http://127.0.0.1:{PORT}/")
+            open_window(url)
         return 0
 
     APP = App()

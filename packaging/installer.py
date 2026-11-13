@@ -70,8 +70,9 @@ def shortcut_paths() -> list[str]:
     return [
         os.path.join(shell_folder("Programs"), f"{APP_NAME}.lnk"),
         os.path.join(shell_folder("Desktop"), f"{APP_NAME}.lnk"),
+        # 控制台里开过「开机自启」（安装版用这个名字；源码版是「…（源码版）.lnk」，卸载不碰）
         os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup",
-                     f"{APP_NAME}.lnk"),        # 控制台里开过「开机自启」
+                     f"{APP_NAME}.lnk"),
     ]
 
 
