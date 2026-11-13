@@ -54,7 +54,54 @@ APP_DIR = os.path.dirname(sys.executable) if FROZEN else ROOT
 # 源码运行时仍放在 app 目录里（和以前一样）；也可以用环境变量 M18_DATA_DIR 指定
 DATA_DIR = os.environ.get("M18_DATA_DIR") or (
     os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "M18Console") if FROZEN else HERE)
-os.makedirs(DATA_DIR, exist_ok=True)
+
+BLOCKED_HELP = (
+    "这台电脑不允许本程序写文件（拒绝访问）。\n\n"
+    "通常是安全软件，或 Windows 安全中心的「受控文件夹访问」（勒索软件防护）拦截了未签名的程序。\n\n"
+    "解决办法（任选其一）：\n"
+    "1. Windows 安全中心 → 病毒和威胁防护 → 勒索软件防护 → 管理勒索软件防护 →\n"
+    "   「通过受控文件夹访问允许应用」，把 M18Console.exe 加进去\n"
+    "2. 在你装的安全软件（360 / 火绒 / 卡巴斯基等）里把 M18Console.exe 加入信任\n"
+    "3. 运行源码里的「诊断.bat」，自动检查是谁拦截并一键放行\n"
+    "4. 这台电脑上改用源码版（双击「启动 M18 控制台.bat」）"
+)
+
+
+def _fatal_box(title: str, text: str) -> None:
+    """打包版没有控制台：用系统对话框说明原因，而不是甩一段 Python 报错。"""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x10)
+    except Exception:  # noqa: BLE001
+        print(f"{title}\n{text}")
+
+
+def _ensure_data_dir(path: str) -> str:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write-test")
+        with open(probe, "w") as fh:
+            fh.write("ok")
+        os.remove(probe)
+        return path
+    except PermissionError as exc:
+        if not FROZEN:
+            raise
+        # 免安装版：AppData 写不进去时，试试程序旁边的 data 文件夹
+        alt = os.path.join(APP_DIR, "data")
+        if os.path.normcase(alt) != os.path.normcase(path):
+            try:
+                os.makedirs(alt, exist_ok=True)
+                with open(os.path.join(alt, ".write-test"), "w") as fh:
+                    fh.write("ok")
+                os.remove(os.path.join(alt, ".write-test"))
+                return alt
+            except OSError:
+                pass
+        _fatal_box("Stream Dock M18 控制台 无法启动", f"{BLOCKED_HELP}\n\n（被拒绝的位置：{exc.filename or path}）")
+        raise SystemExit(1)
+
+
+DATA_DIR = _ensure_data_dir(DATA_DIR)
 SDK_SRC = os.path.join(ROOT, "refs", "devicesdk", "Python-SDK", "src")
 sys.path.insert(0, SDK_SRC)
 

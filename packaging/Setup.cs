@@ -15,6 +15,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
+using System.Management;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -73,10 +74,52 @@ static class M18Setup
         }
         catch (Exception ex)
         {
-            if (silent) { Console.Error.WriteLine("安装失败：" + ex.Message); return 2; }
-            MessageBox.Show("出错了：" + ex.Message, APP_NAME, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (silent) { Console.Error.WriteLine("安装失败：" + Explain(ex)); return 2; }
+            MessageBox.Show("出错了：" + Explain(ex), APP_NAME, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 2;
         }
+    }
+
+    // ------------------------------------------------------------------ 被拦截时说清楚原因
+    static bool IsAccessDenied(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is UnauthorizedAccessException) return true;
+            if (e is IOException && (Marshal.GetHRForException(e) & 0xFFFF) == 5) return true;
+        }
+        return false;
+    }
+
+    // Windows 安全中心「受控文件夹访问」：0 关、1 开、2 审核；查不到返回 -1
+    static int ControlledFolderAccess()
+    {
+        try
+        {
+            using (var q = new ManagementObjectSearcher(@"root\Microsoft\Windows\Defender",
+                                                        "SELECT EnableControlledFolderAccess FROM MSFT_MpPreference"))
+            {
+                foreach (ManagementObject o in q.Get()) return Convert.ToInt32(o["EnableControlledFolderAccess"]);
+            }
+        }
+        catch { }
+        return -1;
+    }
+
+    public static string Explain(Exception ex)
+    {
+        if (!IsAccessDenied(ex)) return ex.Message;
+        string self = Assembly.GetExecutingAssembly().Location;
+        string why = ControlledFolderAccess() == 1
+            ? "这台电脑开启了 Windows 安全中心的「受控文件夹访问」（勒索软件防护），它会阻止未签名的程序写文件。"
+            : "这台电脑的安全软件（或 Windows 安全中心）阻止了安装程序写文件——换任何文件夹都会被拒绝。";
+        return ex.Message + "\n\n" + why + "\n\n解决办法（任选其一）：\n"
+            + "1. Windows 安全中心 → 病毒和威胁防护 → 勒索软件防护 → 管理勒索软件防护 →\n"
+            + "   「通过受控文件夹访问允许应用」，添加本安装程序：\n   " + self + "\n"
+            + "   （装好后对安装目录里的 M18Console.exe 也做一次）\n"
+            + "2. 在你装的安全软件（360 / 火绒 / 卡巴斯基等）里把安装程序和 M18Console.exe 加入信任\n"
+            + "3. 运行源码里的「诊断.bat」：自动查出是谁拦截，并可一键放行\n"
+            + "4. 这台电脑上改用源码版（双击「启动 M18 控制台.bat」）";
     }
 
     // ------------------------------------------------------------------ 载荷
@@ -361,7 +404,7 @@ static class M18Setup
                 {
                     BeginInvoke((Action)(() =>
                     {
-                        MessageBox.Show(this, "安装失败：" + ex.Message, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(this, "安装失败：" + Explain(ex), "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         installBtn.Enabled = browseBtn.Enabled = dirBox.Enabled = true;
                         status.Text = "";
                     }));

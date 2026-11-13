@@ -69,7 +69,7 @@ def build_setup(payload: str, out: str) -> None:
     run([find_csc(), "-nologo", "-target:winexe", "-codepage:65001", "-optimize+", f"-out:{exe}",
          f"-win32icon:{os.path.join(APP, 'icon.ico')}",
          "-r:System.IO.Compression.dll", "-r:System.IO.Compression.FileSystem.dll",
-         "-r:System.Windows.Forms.dll", "-r:System.Drawing.dll", cs])
+         "-r:System.Windows.Forms.dll", "-r:System.Drawing.dll", "-r:System.Management.dll", cs])
     size = os.path.getsize(payload)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "wb") as dst:
