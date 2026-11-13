@@ -18,6 +18,27 @@ import time
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
+def _xor_mask(payload: bytes, mask: bytes) -> bytes:
+    """WebSocket 掩码：整块大整数异或，比逐字节 Python 循环快几十倍（图片帧有几十 KB）。"""
+    n = len(payload)
+    if not n:
+        return b""
+    key = (mask * (n // 4 + 1))[:n]
+    return (int.from_bytes(payload, "big") ^ int.from_bytes(key, "big")).to_bytes(n, "big")
+
+
+def _field(payload: dict, *names, default=None):
+    """按名字取字段，不区分大小写（官方文档写 FirmwareVersion，实际可能是 firmwareVersion）。"""
+    if not isinstance(payload, dict):
+        return default
+    lower = {str(k).lower(): v for k, v in payload.items()}
+    for name in names:
+        value = lower.get(name.lower())
+        if value not in (None, ""):
+            return value
+    return default
+
+
 def port_open(port: int, host: str = "127.0.0.1") -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.4):
@@ -35,6 +56,7 @@ class WSClient:
         self.on_close = None
         self._buf = b""
         self._send_lock = threading.Lock()
+        self.close_reason = ""
 
     def connect(self, timeout: float = 5.0) -> bool:
         sock = socket.create_connection((self.host, self.port), timeout=timeout)
@@ -78,7 +100,7 @@ class WSClient:
             header.append(0x80 | 127)
             header += struct.pack(">Q", n)
         header += mask
-        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        masked = _xor_mask(payload, mask)
         with self._send_lock:
             self.sock.sendall(bytes(header) + masked)
 
@@ -93,6 +115,7 @@ class WSClient:
 
     def _read_frame(self):
         b1, b2 = self._recv_exact(2)
+        fin = bool(b1 & 0x80)
         opcode = b1 & 0x0F
         masked = b2 & 0x80
         length = b2 & 0x7F
@@ -103,23 +126,34 @@ class WSClient:
         mask = self._recv_exact(4) if masked else None
         payload = self._recv_exact(length) if length else b""
         if mask:
-            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-        return opcode, payload
+            payload = _xor_mask(payload, mask)
+        return fin, opcode, payload
 
     def recv_loop(self) -> None:
+        parts: list[bytes] = []          # 分片消息（FIN=0 + 续帧）拼回完整一条
         try:
             while True:
-                opcode, payload = self._read_frame()
+                fin, opcode, payload = self._read_frame()
                 if opcode == 0x8:
+                    self.close_reason = "对端关闭连接"
                     break
                 if opcode == 0x9:
                     self._send_frame(payload, opcode=0xA)
                     continue
-                if opcode in (0x1, 0x2, 0x0):
-                    if self.on_message:
-                        self.on_message(payload.decode("utf-8", "ignore"))
-        except Exception:  # noqa: BLE001
-            pass
+                if opcode == 0xA:
+                    continue
+                if opcode in (0x1, 0x2):
+                    parts = [payload]
+                elif opcode == 0x0:
+                    parts.append(payload)
+                else:
+                    continue
+                if fin and self.on_message:
+                    data, parts = b"".join(parts), []
+                    self.on_message(data.decode("utf-8", "ignore"))
+        except Exception as exc:  # noqa: BLE001
+            if not self.close_reason:
+                self.close_reason = str(exc) or exc.__class__.__name__
         finally:
             if self.on_close:
                 self.on_close()
@@ -154,13 +188,18 @@ class DeviceWS:
         self.stats = {"read": 0, "data": 0, "none": 0, "err": 0}
         self._read_errors = 0
         self.info = {}
+        # SDK 原生 GIF：由 SDK 自己按帧率循环播放，主机只发一次文件路径
+        self.gif_native = False
+        self.gif_running = False
+        self.session = 0                 # 每次重新连上 +1，上层据此判断 GIF 状态是否失效
+        self._gif_status = threading.Event()
 
     # -- 进程/连接 ---------------------------------------------------------- #
     def _start_server(self) -> bool:
         if port_open(self.port):
             return True
         if not self.exe or not os.path.isfile(self.exe):
-            self.error = "找不到 StreamDockWebsocketSDK.exe"
+            self.error = f"找不到 StreamDockWebsocketSDK.exe，请把官方 WebSocket SDK 放到：{self.exe}"
             return False
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self._proc = subprocess.Popen(
@@ -182,9 +221,12 @@ class DeviceWS:
             try:
                 if not self._start_server():
                     return False
+                # 旧连接（设备拔掉后留下的）先关掉，否则每次重连都会多出一条
+                self._drop_ws()
                 ws = WSClient("127.0.0.1", self.port)
-                ws.on_message = self._on_message
-                ws.on_close = self._on_close
+                # 回调绑定到「这一条」连接：旧连接迟到的消息 / 关闭事件一律忽略
+                ws.on_message = lambda raw, _ws=ws: self._on_message(raw, _ws)
+                ws.on_close = lambda _ws=ws: self._on_close(_ws)
                 ws.connect()
                 self._ws = ws
                 self._dev_ready.clear()
@@ -195,17 +237,34 @@ class DeviceWS:
                     return False
                 # 开始监听按键
                 self._send("read", {})
+                self._probe_gif()
+                self.session += 1
                 return True
             except Exception as exc:  # noqa: BLE001
                 self.error = f"连接 SDK 失败：{exc}"
                 return False
 
+    def _probe_gif(self) -> None:
+        """探测 SDK 是否支持原生 GIF；支持的话先清掉上一次会话留下的 GIF（SDK 断开后仍会继续播）。"""
+        self._gif_status.clear()
+        self._send("gifLoopStatus", {})
+        self.gif_native = self._gif_status.wait(1.0)
+        if self.gif_native:
+            self._send("stopGifLoop", {})
+            for key in range(1, 16):
+                self._send("clearKeyGif", {"keyIndex": key})
+            self.gif_running = False
+
+    def _drop_ws(self) -> None:
+        """只断开 WebSocket，不动 SDK 进程。"""
+        ws, self._ws = self._ws, None
+        if ws:
+            ws.close()
+
     def disconnect(self) -> None:
         with self._lock:
             self.connected = False
-            if self._ws:
-                self._ws.close()
-                self._ws = None
+            self._drop_ws()
             if self._proc:
                 try:
                     self._proc.terminate()
@@ -213,11 +272,17 @@ class DeviceWS:
                     pass
                 self._proc = None
 
-    def _on_close(self) -> None:
+    def _on_close(self, ws: WSClient | None = None) -> None:
+        if ws is not None and ws is not self._ws:
+            return                       # 已被替换掉的旧连接
+        if self.connected and ws is not None and ws.close_reason:
+            self.error = f"SDK 连接断开：{ws.close_reason}"
         self.connected = False
 
     # -- 消息 --------------------------------------------------------------- #
-    def _on_message(self, raw: str) -> None:
+    def _on_message(self, raw: str, ws: WSClient | None = None) -> None:
+        if ws is not None and ws is not self._ws:
+            return
         try:
             msg = json.loads(raw)
         except ValueError:
@@ -225,9 +290,9 @@ class DeviceWS:
         event = msg.get("event")
         payload = msg.get("payload") or {}
         if event == "deviceDidConnect":
-            self.path = msg.get("path") or payload.get("path") or ""
-            self.firmware = payload.get("firmwareVersion") or ""
-            self.product = payload.get("product") or ""
+            self.path = msg.get("path") or _field(payload, "path") or ""
+            self.firmware = str(_field(payload, "firmwareVersion", default=""))
+            self.product = str(_field(payload, "product", "type", default=""))
 
             def _hex(value, default):
                 try:
@@ -236,9 +301,9 @@ class DeviceWS:
                     return default
 
             self.info = {
-                "vid": f"0x{_hex(payload.get('vendorID'), 0x6603):04X}",
-                "pid": f"0x{_hex(payload.get('productID'), 0x1012):04X}",
-                "serial": str(payload.get("serialNumber") or ""),
+                "vid": f"0x{_hex(_field(payload, 'vendorID'), 0x6603):04X}",
+                "pid": f"0x{_hex(_field(payload, 'productID'), 0x1012):04X}",
+                "serial": str(_field(payload, "serialNumber", default="")),
                 "firmware": self.firmware,
                 "keys": 15,
                 "leds": 24,
@@ -249,7 +314,15 @@ class DeviceWS:
             self.error = ""
             self._dev_ready.set()
         elif event == "deviceDidDisconnect":
+            # 关掉这条连接，让热插拔线程走完整的 connect()：
+            # 新连接 → 等 deviceDidConnect → 重新发 read → 上层重推画面/灯光
             self.connected = False
+            self.error = "设备已断开"
+            if ws is not None and ws is self._ws:
+                self._drop_ws()
+        elif event == "gifLoopStatus":
+            self.gif_running = bool(payload.get("running"))
+            self._gif_status.set()
         elif event == "read":
             key = payload.get("keyId")
             state = payload.get("keyUpOrKeyDown")
@@ -267,11 +340,18 @@ class DeviceWS:
                 self.error = f"{event}: {payload}"
 
     def check_present(self) -> bool:
-        return self.connected
+        """连接仍然可用：设备在线、WebSocket 没断、我们拉起的 SDK 进程还活着。"""
+        if not self.connected or self._ws is None or self._ws.sock is None:
+            return False
+        if self._proc is not None and self._proc.poll() is not None:
+            return False
+        return True
 
     def mark_lost(self, reason: str = "") -> None:
         self.error = reason
         self.connected = False
+        with self._lock:
+            self._drop_ws()
 
     def _send(self, event: str, payload: dict) -> bool:
         try:
@@ -292,6 +372,24 @@ class DeviceWS:
 
     def refresh(self) -> bool:
         return self._send("refresh", {})
+
+    # -- 原生 GIF（SDK 内部按帧率循环推送，不占主机带宽） -------------------- #
+    def set_key_gif(self, key: int, path: str) -> bool:
+        return self._send("setKeyGif", {"keyIndex": key, "imagePath": os.path.normpath(path)})
+
+    def clear_key_gif(self, key: int) -> bool:
+        return self._send("clearKeyGif", {"keyIndex": key})
+
+    def start_gif_loop(self) -> bool:
+        ok = self._send("startGifLoop", {})
+        self.gif_running = self.gif_running or ok
+        return ok
+
+    def stop_gif_loop(self) -> bool:
+        ok = self._send("stopGifLoop", {})
+        if ok:
+            self.gif_running = False
+        return ok
 
     def clear_keys(self) -> bool:
         return self._send("clearAllIcon", {})

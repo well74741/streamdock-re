@@ -17,6 +17,7 @@ import colorsys
 import copy
 import ctypes
 import glob
+import hashlib
 import io
 import json
 import math
@@ -29,12 +30,14 @@ import sys
 import threading
 import time
 import traceback
+import urllib.parse
 import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence
 
+import official
 from wssdk import DeviceWS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,11 +64,34 @@ CANDIDATES = [(0x6603, 0x1012), (0x6603, 0x1009), (0x5548, 0x1000)]
 CONFIG_BAK_DIR = os.path.join(HERE, "config-backups")
 ICON_DIR = os.path.join(HERE, "assets", "icons")
 SCENE_DIR = os.path.join(HERE, "scenes")
-SD_ROOT = r"D:\Program Files\Stream Dock"
+def _find_sd_root() -> str:
+    """定位官方 Stream Dock 安装目录（图标库 / 插件索引用）。
+
+    优先级：环境变量 M18_SD_ROOT → 各盘常见安装位置。config.json 的
+    officialRoot 会在加载配置时再覆盖一次。找不到时返回第一个候选（相关功能为空列表）。
+    """
+    env = os.environ.get("M18_SD_ROOT", "")
+    if env and os.path.isdir(env):
+        return env
+    candidates = []
+    for drive in "CDEFG":
+        for base in ("Program Files", "Program Files (x86)"):
+            candidates.append(rf"{drive}:\{base}\Stream Dock")
+            candidates.append(rf"{drive}:\{base}\StreamDock")
+            candidates.append(rf"{drive}:\{base}\HotSpot\StreamDock")
+    for path in candidates:
+        if os.path.isfile(os.path.join(path, "StreamDock.exe")):
+            return path
+    return candidates[0]
+
+
+SD_ROOT = _find_sd_root()
 WALLPAPER = os.path.join(HERE, "assets", "wallpaper.jpg")
-WS_SDK_EXE = os.path.join(HERE, "..", "ws-sdk", "StreamDockWebsocketSDK.exe")
+WS_SDK_EXE = os.environ.get("M18_WS_SDK") or os.path.normpath(
+    os.path.join(HERE, "..", "ws-sdk", "StreamDockWebsocketSDK.exe"))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 UPLOAD_DIR = os.path.join(HERE, "assets", "uploads")
+GIF_CACHE = os.path.join(HERE, "assets", "gifcache")   # 交给 SDK 原生播放的 64×64 动图
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
@@ -95,6 +121,22 @@ VK_NAMES = {
     "mediaplaypause": 0xB3, "mediaplay": 0xB3, "mediastop": 0xB2,
     "mediaprev": 0xB1, "medianext": 0xB0,
     "volumemute": 0xAD, "volumeup": 0xAF, "volumedown": 0xAE,
+    # 其他常用键
+    "printscreen": 0x2C, "prtsc": 0x2C, "pause": 0x13, "capslock": 0x14,
+    "numlock": 0x90, "scrolllock": 0x91, "apps": 0x5D, "menu": 0x5D,
+    "num*": 0x6A, "num+": 0x6B, "num-": 0x6D, "num.": 0x6E, "num/": 0x6F,
+    # 兼容旧版录制器按 e.key 存下来的写法
+    "arrowup": 0x26, "arrowdown": 0x28, "arrowleft": 0x25, "arrowright": 0x27,
+    "meta": 0x5B, "os": 0x5B, "del": 0x2E, "ins": 0x2D,
+}
+
+# 这些键在键盘上属于「扩展键」，不带 KEYEVENTF_EXTENDEDKEY 发出去
+# 会被不少程序当成小键盘上的同名键（例如方向键变成小键盘 2/4/6/8）
+EXTENDED_VKS = {
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,   # PgUp/PgDn/End/Home/方向键
+    0x2C, 0x2D, 0x2E,                                 # PrintScreen/Insert/Delete
+    0x5B, 0x5D, 0x6F, 0x90,                           # Win/Apps/小键盘除号/NumLock
+    0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3,         # 多媒体
 }
 
 MEDIA_LABELS = {
@@ -105,20 +147,56 @@ MEDIA_LABELS = {
     "mute": ("volumemute", "静音"),
     "volup": ("volumeup", "音量 +"),
     "voldown": ("volumedown", "音量 −"),
+    # 不是系统按键，由控制台自己调屏幕亮度（官方「亮度」动作导入后也落到这里）
+    "brightup": ("", "屏幕亮度 +"),
+    "brightdown": ("", "屏幕亮度 −"),
 }
-for _i in range(1, 13):
-    VK_NAMES[f"f{_i}"] = 0x6F + _i
+for _i in range(1, 25):
+    VK_NAMES[f"f{_i}"] = 0x6F + _i          # F1–F24
+for _i in range(10):
+    VK_NAMES[f"num{_i}"] = 0x60 + _i        # 小键盘 0–9
+# 旧录制器会把 Shift+1 存成 shift+!：符号映射回它所在的物理键（shift 已在组合里）
+for _sym, _base in zip('!@#$%^&*()_{}|:"<>?~', "1234567890-[]\\;',./`"):
+    VK_NAMES.setdefault(_sym, VK_NAMES.get(_base) or ord(_base))
+
+KEYEVENTF_EXTENDEDKEY = 0x1
+KEYEVENTF_KEYUP = 0x2
+
+
+def _key_event(vk: int, up: bool) -> None:
+    flags = KEYEVENTF_KEYUP if up else 0
+    if vk in EXTENDED_VKS:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    user32 = ctypes.windll.user32
+    scan = user32.MapVirtualKeyW(vk, 0) & 0xFF
+    user32.keybd_event(vk, scan, flags, 0)
+
+
+def _split_combo(combo: str) -> list:
+    """按 + 拆组合键，但允许加号本身作为按键：ctrl++ → [ctrl, +]，num+ → [num+]。"""
+    parts, cur = [], ""
+    for ch in combo.replace(" ", "").lower():
+        if ch == "+" and cur not in ("", "num"):
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if cur:
+        parts.append(cur)
+    return parts
 
 
 def send_hotkey(combo: str) -> bool:
     """用 Win32 keybd_event 发一组组合键，例如 ctrl+shift+s。"""
-    parts = [p for p in combo.replace(" ", "").lower().split("+") if p]
+    parts = _split_combo(combo)
     if not parts:
         return False
     vks = []
     for p in parts:
         if p in VK_NAMES:
             vks.append(VK_NAMES[p])
+        elif p == "+":
+            vks.append(0xBB)          # 主键盘的 =/+ 键
         elif len(p) == 1 and (p.isalnum()):
             vks.append(ord(p.upper()))
         else:
@@ -128,14 +206,13 @@ def send_hotkey(combo: str) -> bool:
     if not keys:
         return False
     try:
-        user32 = ctypes.windll.user32
         for m in mods:
-            user32.keybd_event(m, 0, 0, 0)
+            _key_event(m, up=False)
         for k in keys:
-            user32.keybd_event(k, 0, 0, 0)
-            user32.keybd_event(k, 0, 2, 0)
+            _key_event(k, up=False)
+            _key_event(k, up=True)
         for m in reversed(mods):
-            user32.keybd_event(m, 0, 2, 0)
+            _key_event(m, up=True)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -153,7 +230,9 @@ def action_label(spec: dict) -> str:
         return f"宏 · {len(spec.get('steps') or [])} 步"
     if kind == "url":
         return spec.get("url", "")
-    return os.path.basename(spec.get("path", ""))
+    path = spec.get("path", "")
+    # 盘符 / 以斜杠结尾的文件夹取不到 basename，直接显示路径
+    return os.path.basename(path.rstrip("\\/")) or path
 
 
 def log(msg: str) -> None:
@@ -442,6 +521,12 @@ def hsv(h, s, v):
 class App:
     def __init__(self):
         self.lock = threading.RLock()
+        # 可重入：保存配置时会顺带读配置写回场景
+        self._save_lock = threading.RLock()
+        self._gif_lock = threading.RLock()
+        self._gif_active: dict[int, str] = {}   # 正在由 SDK 原生播放的键 → GIF 文件
+        self._gif_session = -1
+        self.official_root_cfg = ""      # config.json 里手动指定的官方软件目录
         self.clients: list[queue.Queue] = []
         self.events = deque(maxlen=40)
         self.device = DeviceWS(self._on_input, exe=WS_SDK_EXE)
@@ -477,7 +562,7 @@ class App:
         self.input_muted = False
         self.repaint_on_press = False
         self.keep_awake = False
-        self.standby_sec = 60
+        self.standby_sec = 300
         self.standby_brightness = 60
         self.in_standby = False
         self.selected_key = 0
@@ -529,6 +614,9 @@ class App:
         threading.Thread(target=self._standby_loop, daemon=True).start()
         threading.Thread(target=self._diag_loop, daemon=True).start()
         threading.Thread(target=self._official_loop, daemon=True).start()
+        threading.Thread(target=self._auto_sync_official, daemon=True).start()
+        threading.Thread(target=self._warm_gif_cache, daemon=True).start()
+        threading.Thread(target=self.index_official_sources, daemon=True).start()
 
     # -- 热插拔 ------------------------------------------------------------ #
     def _watch_loop(self) -> None:
@@ -713,6 +801,7 @@ class App:
             self.key_styles.pop(key, None)
         self._save_config()
         if self.device.connected:
+            self._gif_update_key(key)          # 标题变了，动图要重新叠字
             self.device.send_image(key, self._number_tile(key))
             self.device.refresh()
         return True
@@ -750,7 +839,8 @@ class App:
         self._anim_pause_until = time.time() + 1.2
         if self.device.connected and not self.in_standby:
             for k in (old, key):
-                if k and 1 <= k <= KEY_COUNT:
+                # SDK 正在原生播放的动图键不重画，免得闪一下静态帧
+                if k and 1 <= k <= KEY_COUNT and k not in self._gif_active:
                     self.device.send_image(k, self._render_key(k))
             self.device.refresh()
         return True
@@ -778,11 +868,13 @@ class App:
         if not self.device.connected or self.writes_paused or self.quiet or self.lighting_only or self.yielded:
             return False
         if self.screen_off:
+            self._gif_stop_all()
             try:
                 self.device.set_screen_brightness(0)
             except Exception:  # noqa: BLE001
                 pass
             return False
+        self._gif_stop_all()
         # 先发亮度命令唤醒面板，否则设备睡过去后写进去的图不会显示
         try:
             self.device.set_screen_brightness(self.screen_brightness)
@@ -802,12 +894,149 @@ class App:
             self.device.refresh()
         finally:
             self._pushing = False
+        self._gif_start_all()
         self._last_paint = time.time()
         self._last_activity = time.time()   # 刚画完键面就重置待机计时，避免立刻又进待机
-        import inspect
-        log(f"重画按键画面（自定义 {len(self.key_overrides)} 个）来自 {inspect.stack()[1].function}"
+        caller = sys._getframe(1).f_code.co_name
+        log(f"重画按键画面（自定义 {len(self.key_overrides)} 个，原生动图 {len(self._gif_active)} 个）来自 {caller}"
             + ("" if ok else "  ⚠ 有命令没发出去"))
         return ok
+
+    # -- 动图：交给 SDK 原生播放 ------------------------------------------- #
+    def _gif_allowed(self) -> bool:
+        d = self.device
+        return bool(getattr(d, "gif_native", False) and d.connected
+                    and not (self.writes_paused or self.quiet or self.lighting_only or self.yielded
+                             or self.screen_off or self.in_standby))
+
+    def _gif_sync_session(self) -> None:
+        """设备重连后 SDK 里的 GIF 已被清空，本地记录也要作废。"""
+        session = getattr(self.device, "session", 0)
+        if session != self._gif_session:
+            self._gif_session = session
+            self._gif_active = {}
+
+    def _gif_path_for(self, key: int, item: dict | None, style: dict | None = None) -> str | None:
+        """把动图渲染成 64×64 GIF（叠好标题），按内容缓存，交给 SDK 直接播。"""
+        if not item or item.get("type") != "anim":
+            return None
+        src = item.get("file") or ""
+        try:
+            mtime = os.path.getmtime(src)
+        except OSError:
+            return None
+        if style is None:
+            style = self.key_styles.get(key) or {}
+        text = {k: style.get(k) for k in ("text", "color", "opacity", "size", "pos")} \
+            if (style.get("text") or "").strip() else {}
+        sig = hashlib.sha1(json.dumps([os.path.abspath(src), mtime, text], sort_keys=True,
+                                      ensure_ascii=False).encode()).hexdigest()[:20]
+        out = os.path.join(GIF_CACHE, f"{sig}.gif")
+        if os.path.isfile(out):
+            return out
+        frames, durations = [], []
+        try:
+            with Image.open(src) as im:
+                for i, frame in enumerate(ImageSequence.Iterator(im)):
+                    if i >= 240:
+                        break
+                    rgb = ImageOps.fit(self._flat_rgb(frame), (KEY_SIZE, KEY_SIZE),
+                                       Image.Resampling.LANCZOS)
+                    if text:
+                        rgb = self._draw_text(rgb, text)
+                    frames.append(rgb)
+                    durations.append(max(20, int(frame.info.get("duration", 100) or 100)))
+            if len(frames) < 2:
+                return None
+            os.makedirs(GIF_CACHE, exist_ok=True)
+            tmp = out + ".tmp"
+            frames[0].save(tmp, "GIF", save_all=True, append_images=frames[1:],
+                           duration=durations, loop=0, disposal=1, optimize=False)
+            os.replace(tmp, out)
+            return out
+        except Exception as exc:  # noqa: BLE001
+            log(f"动图转换失败 {src}: {exc}")
+            return None
+
+    def _warm_gif_cache(self) -> None:
+        """后台把所有场景里的动图预先转好，第一次切场景 / 翻页也不用等渲染。"""
+        time.sleep(3)
+        made = 0
+        for f in glob.glob(os.path.join(SCENE_DIR, "*.json")):
+            try:
+                with open(f, encoding="utf-8-sig") as fh:
+                    cfg = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            for page in cfg.get("pages") or []:
+                styles = page.get("styles") or {}
+                for key, name in (page.get("images") or {}).items():
+                    path = os.path.join(UPLOAD_DIR, os.path.basename(str(name)))
+                    if not path.lower().endswith(".gif") or not os.path.isfile(path):
+                        continue
+                    try:
+                        with Image.open(path) as im:
+                            if getattr(im, "n_frames", 1) < 2:
+                                continue
+                    except Exception:  # noqa: BLE001
+                        continue
+                    before = len(os.listdir(GIF_CACHE)) if os.path.isdir(GIF_CACHE) else 0
+                    self._gif_path_for(int(key), {"type": "anim", "file": path},
+                                       styles.get(str(key)) or {})
+                    made += (len(os.listdir(GIF_CACHE)) if os.path.isdir(GIF_CACHE) else 0) - before
+        if made:
+            log(f"动图预渲染完成：新增 {made} 个")
+
+    def _gif_stop_all(self) -> None:
+        """整屏换画面（待机 / 壁纸 / 息屏 / 重画）前先停掉 SDK 的动图，否则会盖掉新画面。"""
+        with self._gif_lock:
+            self._gif_sync_session()
+            if not self._gif_active:
+                return
+            self.device.stop_gif_loop()
+            for key in list(self._gif_active):
+                self.device.clear_key_gif(key)
+            self._gif_active = {}
+
+    def _gif_start_all(self) -> None:
+        with self._gif_lock:
+            self._gif_sync_session()
+            if not self._gif_allowed():
+                return
+            want = {}
+            for key, item in self.key_overrides.items():
+                if 1 <= key <= KEY_COUNT:
+                    path = self._gif_path_for(key, item)
+                    if path:
+                        want[key] = path
+            for key in [k for k in self._gif_active if k not in want]:
+                self.device.clear_key_gif(key)
+            for key, path in want.items():
+                if self._gif_active.get(key) != path:
+                    self.device.set_key_gif(key, path)
+            self._gif_active = want
+            if want:
+                self.device.start_gif_loop()
+            else:
+                self.device.stop_gif_loop()
+
+    def _gif_update_key(self, key: int) -> None:
+        """单个键换图 / 改标题：只动这一个键。要在写静态画面之前调用。"""
+        with self._gif_lock:
+            self._gif_sync_session()
+            want = self._gif_path_for(key, self.key_overrides.get(key)) if self._gif_allowed() else None
+            old = self._gif_active.get(key)
+            if old == want:
+                return
+            if old:
+                self.device.clear_key_gif(key)
+                self._gif_active.pop(key, None)
+            if want:
+                self.device.set_key_gif(key, want)
+                self._gif_active[key] = want
+                self.device.start_gif_loop()
+            elif not self._gif_active:
+                self.device.stop_gif_loop()
 
     def apply_standby(self) -> bool:
         """待机：整屏铺壁纸（壁纸亮度在渲染层调暗，屏幕亮度保持正常）。"""
@@ -910,6 +1139,7 @@ class App:
 
     def blank_screen(self) -> None:
         """把所有键清成空白，确保息屏时屏幕上没有任何内容。"""
+        self._gif_stop_all()
         try:
             self.device.clear_keys()
             self.device.refresh()
@@ -1036,10 +1266,24 @@ class App:
         elif name == "主页":
             self.goto_page(0)
 
+    def _read_config_file(self) -> dict:
+        """读 config.json。Windows 上文件正被原子替换的瞬间会 PermissionError，
+        这不是损坏，重试即可——以前这里直接回退到旧备份，刚改的设置（如待机时间）就被冲掉了。"""
+        last = None
+        for _ in range(20):
+            try:
+                with self._save_lock:
+                    with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
+                        data = json.load(fh)
+                return data if isinstance(data, dict) else {}
+            except PermissionError as exc:
+                last = exc
+                time.sleep(0.05)
+        raise last
+
     def _load_config(self) -> None:
         try:
-            with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
-                cfg = json.load(fh)
+            cfg = self._read_config_file()
         except (OSError, ValueError) as exc:
             example = os.path.join(HERE, "config.example.json")
             if not os.path.isfile(CONFIG_PATH) and os.path.isfile(example):
@@ -1072,7 +1316,7 @@ class App:
             self.wallpaper_zoom = max(0.2, min(4.0, float(cfg.get("zoom", 1.0))))
             self.wallpaper_ox = int(cfg.get("ox", 0))
             self.wallpaper_oy = int(cfg.get("oy", 0))
-            self.standby_sec = max(3, min(300, int(cfg.get("standby", 60))))
+            self.standby_sec = max(5, min(1800, int(cfg.get("standby", 300))))
             self.standby_brightness = max(0, min(100, int(cfg.get("standbyBrightness", 60))))
             self.custom_scene_name = str(cfg.get("customScene") or "自定义")[:40]
             self.active_scene = str(cfg.get("activeScene") or "")
@@ -1121,6 +1365,11 @@ class App:
                             self.pages[0]["images"][int(key)] = data
                 self.page = 0
             self.led_reverse = bool(cfg.get("ledReverse", False))
+            root = str(cfg.get("officialRoot") or "")
+            if root and os.path.isdir(root):
+                global SD_ROOT
+                SD_ROOT = root
+                self.official_root_cfg = root
             wp = cfg.get("wallpaper")
             if wp:
                 path = wp if os.path.isabs(wp) else os.path.join(HERE, wp)
@@ -1176,6 +1425,11 @@ class App:
         return self.import_config(data)
 
     def _save_config(self) -> None:
+        # 多个请求线程可能同时保存，共用同一个 .tmp 会互相覆盖 / os.replace 报错
+        with self._save_lock:
+            self._save_config_locked()
+
+    def _save_config_locked(self) -> None:
         self._backup_config()
         cfg = {
             "gap": self.wallpaper_gap,
@@ -1207,6 +1461,8 @@ class App:
             ],
             "wallpaper": os.path.relpath(self.wallpaper_file, HERE) if self.wallpaper_file else "",
         }
+        if self.official_root_cfg:
+            cfg["officialRoot"] = self.official_root_cfg
         try:
             tmp = CONFIG_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
@@ -1235,6 +1491,16 @@ class App:
         return out
 
     # -- 按键素材 ---------------------------------------------------------- #
+    @staticmethod
+    def _flat_rgb(img):
+        """带透明通道的图先铺黑底再转 RGB（直接 convert 会露出透明区域的杂色）。"""
+        if img.mode in ("RGBA", "LA", "P") and (img.mode != "P" or "transparency" in img.info):
+            rgba = img.convert("RGBA")
+            bg = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+            bg.alpha_composite(rgba)
+            return bg.convert("RGB")
+        return img.convert("RGB")
+
     def _load_image_source(self, path: str):
         try:
             img = Image.open(path)
@@ -1246,14 +1512,14 @@ class App:
                 frames = []
                 for i in range(min(n, 80)):
                     img.seek(i)
-                    frame = ImageOps.fit(img.convert("RGB"),
+                    frame = ImageOps.fit(self._flat_rgb(img),
                                          (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
                     buf = io.BytesIO()
                     frame.save(buf, "JPEG", quality=70, subsampling=2)
                     dur = int(img.info.get("duration", 100) or 100)
                     frames.append((buf.getvalue(), max(40, min(1000, dur))))
                 return {"type": "anim", "frames": frames, "idx": 0, "next": 0.0, "file": path}
-            static = ImageOps.fit(img.convert("RGB"), (KEY_SIZE, KEY_SIZE),
+            static = ImageOps.fit(self._flat_rgb(img), (KEY_SIZE, KEY_SIZE),
                                   Image.Resampling.LANCZOS)
             buf = io.BytesIO()
             static.save(buf, "JPEG", quality=90, subsampling=0)
@@ -1299,6 +1565,7 @@ class App:
         return self.apply_wallpaper()
 
     def _apply_key(self, key: int) -> None:
+        self._gif_update_key(key)
         if not self.key_overrides.get(key):
             return
         self.device.send_image(key, self._render_key(key))
@@ -1330,24 +1597,24 @@ class App:
                 continue
             now = time.time()
             pushed = 0
-            anim_count = sum(1 for it in self.key_overrides.values()
-                             if it.get("type") == "anim" and it.get("frames"))
-            # USB 带宽有限：同时播多个动图时按总量分配帧率，避免抢带宽导致整体变慢
-            total_fps = 12 if anim_count <= 1 else max(6, 18 // anim_count)
-            min_gap = 1.0 / max(1, total_fps)
-            for key, item in list(self.key_overrides.items()):
-                if item.get("type") != "anim" or not item.get("frames"):
+            # SDK 原生播放的键不归这里管
+            host_keys = [k for k, it in self.key_overrides.items()
+                         if it.get("type") == "anim" and it.get("frames") and k not in self._gif_active]
+            if not host_keys:
+                continue
+            # SDK 写图没有回执、也没有背压：所有动图合计每秒最多 20 帧，
+            # 超出就丢帧而不是排队，否则积压会拖慢之后的灯光 / 换页 / 切场景
+            per_key_fps = max(2.0, 20.0 / len(host_keys))
+            min_gap = 1.0 / per_key_fps
+            for key in host_keys:
+                item = self.key_overrides.get(key)
+                if not item or now < item.get("next", 0):
                     continue
-                guard = 0
-                while now >= item.get("next", 0) and guard < 2:
-                    guard += 1
-                    item["idx"] = (item["idx"] + 1) % len(item["frames"])
-                    jpeg, dur = item["frames"][item["idx"]]
-                    item["next"] = item.get("next", now) + max(min_gap, dur / 1000.0)
-                    self.device.send_image(key, self._styled_frame(key, jpeg))
-                    pushed += 1
-                if item.get("next", 0) < now - 5:
-                    item["next"] = now
+                item["idx"] = (item["idx"] + 1) % len(item["frames"])
+                jpeg, dur = item["frames"][item["idx"]]
+                item["next"] = now + max(min_gap, dur / 1000.0)
+                self.device.send_image(key, self._styled_frame(key, jpeg))
+                pushed += 1
             if pushed and now - last_refresh >= 0.05:
                 self.device.refresh()
                 last_refresh = now
@@ -1487,6 +1754,7 @@ class App:
         canvas = self._canvas()
         if canvas is None:
             return False
+        self._gif_stop_all()
         gap = self._gap()
         pitch = KEY_SIZE + gap
         ok = True
@@ -1658,8 +1926,7 @@ class App:
 
     def export_config(self) -> dict:
         try:
-            with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
-                return json.load(fh)
+            return self._read_config_file()
         except (OSError, ValueError):
             return {}
 
@@ -1667,8 +1934,11 @@ class App:
         if not isinstance(data, dict) or "pages" not in data:
             return False
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
+            with self._save_lock:
+                tmp = CONFIG_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False, indent=2)
+                os.replace(tmp, CONFIG_PATH)
         except OSError as exc:
             log(f"导入配置失败：{exc}")
             return False
@@ -1691,6 +1961,7 @@ class App:
         return os.path.join(SCENE_DIR, safe.strip() + ".json")
 
     def list_scenes(self) -> list:
+        official_names = self.official_scene_names()
         items = [{"name": self.custom_scene_name, "custom": True,
                   "active": self.active_scene in ("", self.custom_scene_name)}]
         try:
@@ -1698,10 +1969,11 @@ class App:
         except OSError:
             files = []
         for f in files:
-            if not f.lower().endswith(".json") or f.startswith("__"):
+            if not f.lower().endswith(".json") or f.startswith(("__", ".")):
                 continue
             name = os.path.splitext(f)[0]
             items.append({"name": name, "custom": False,
+                          "official": name in official_names,
                           "active": name == self.active_scene})
         return items
 
@@ -1763,6 +2035,10 @@ class App:
         self._save_config()
         return True
 
+    # 场景只负责「按键内容」：页面、图片、动作、标题样式、当前页。
+    # 待机时间、亮度、壁纸、间隙、灯带等是全局设置，切场景时保持不变。
+    SCENE_KEYS = ("pages", "page")
+
     def _apply_scene_file(self, path: str) -> bool:
         if not os.path.isfile(path):
             return False
@@ -1771,7 +2047,16 @@ class App:
                 data = json.load(fh)
         except (OSError, ValueError):
             return False
-        return self.import_config(data)
+        if not isinstance(data, dict) or not isinstance(data.get("pages"), list):
+            return False
+        merged = self.export_config()
+        if not merged:
+            log("读取当前配置失败，取消切换场景（避免全局设置被清空）")
+            return False
+        for k in self.SCENE_KEYS:
+            if k in data:
+                merged[k] = data[k]
+        return self.import_config(merged)
 
     def apply_scene(self, name: str) -> bool:
         self._applying_scene = True
@@ -1799,28 +2084,42 @@ class App:
         path = self._scene_path(name)
         if not os.path.isfile(path):
             return False
+        if self.active_scene == name:
+            self.apply_scene(self.custom_scene_name)
         try:
             os.remove(path)
         except OSError:
             return False
-        if self.active_scene == name:
-            self.active_scene = ""
-            self._save_config()
         return True
 
     def _snapshot_custom_scene(self) -> None:
-        """把当前配置同步成"自定义"场景快照（切到别的场景时用来切回来）。"""
+        """每次保存配置，把当前按键内容写回「正在使用的场景」——各场景各记各的改动。"""
         if getattr(self, "_suspend_snapshot", False) or getattr(self, "_applying_scene", False):
             return
-        # 当前用的是别的场景时，别把那个场景的内容覆盖到自定义快照上
-        if self.active_scene and self.active_scene != self.custom_scene_name:
-            return
+        name = self.active_scene or self.custom_scene_name
+        custom = name == self.custom_scene_name
+        path = os.path.join(SCENE_DIR, "__custom__.json") if custom else self._scene_path(name)
+        if not custom and not os.path.isfile(path):
+            return                      # 场景文件已被删掉，不要再凭空建回来
+        cfg = self.export_config()
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        for k in self.SCENE_KEYS:
+            if k in cfg:
+                data[k] = cfg[k]
         try:
             os.makedirs(SCENE_DIR, exist_ok=True)
-            with open(os.path.join(SCENE_DIR, "__custom__.json"), "w", encoding="utf-8") as fh:
-                json.dump(self.export_config(), fh, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError as exc:
+            log(f"保存场景「{name}」失败：{exc}")
 
     def _ensure_custom_snapshot(self) -> None:
         path = os.path.join(SCENE_DIR, "__custom__.json")
@@ -1835,141 +2134,212 @@ class App:
             pass
 
     # -- 官方场景 ---------------------------------------------------------- #
-    @staticmethod
-    def _official_profile_root() -> str:
-        return os.path.join(os.environ.get("APPDATA", ""), "HotSpot", "StreamDock", "profiles")
+    # -- 官方场景同步 ------------------------------------------------------ #
+    OFFICIAL_MARK = ".official-scenes.json"
 
-    @staticmethod
-    def _vk_combo(settings: dict) -> str:
+    def _official_mark_path(self) -> str:
+        return os.path.join(SCENE_DIR, self.OFFICIAL_MARK)
+
+    def official_scene_names(self) -> set:
         try:
-            hk = (settings.get("Hotkeys") or [{}])[0]
-        except (AttributeError, IndexError):
-            return ""
-        parts = []
-        if hk.get("KeyCtrl"):
-            parts.append("ctrl")
-        if hk.get("KeyShift"):
-            parts.append("shift")
-        if hk.get("KeyOption"):
-            parts.append("alt")
-        if hk.get("KeyCmd"):
-            parts.append("win")
-        vk = int(hk.get("VKeyCode") or 0)
-        if not vk:
-            return ""
-        if 65 <= vk <= 90:
-            parts.append(chr(vk).lower())
-        elif 48 <= vk <= 57:
-            parts.append(chr(vk))
-        elif 0x70 <= vk <= 0x7B:
-            parts.append(f"f{vk - 0x6F}")
-        else:
-            rev = {v: k for k, v in VK_NAMES.items()}
-            name = rev.get(vk)
-            if not name:
-                return ""
-            parts.append(name)
-        return "+".join(parts)
+            with open(self._official_mark_path(), encoding="utf-8") as fh:
+                return set(json.load(fh).get("names") or [])
+        except (OSError, ValueError, AttributeError):
+            return set()
 
-    def scan_official_scenes(self) -> list:
-        best = {}
-        for folder in glob.glob(os.path.join(self._official_profile_root(), "*.sdProfile")):
-            man = os.path.join(folder, "manifest.json")
+    @staticmethod
+    def _vk_reverse() -> dict:
+        rev = {}
+        for name, vk in VK_NAMES.items():
+            rev.setdefault(vk, name)
+        return rev
+
+    SOURCES_FILE = os.path.join(UPLOAD_DIR, ".sources.json")
+
+    def _sources(self) -> dict:
+        cache = getattr(self, "_sources_cache", None)
+        if cache is None:
             try:
-                with open(man, encoding="utf-8-sig") as fh:
-                    data = json.load(fh)
+                with open(self.SOURCES_FILE, encoding="utf-8") as fh:
+                    cache = json.load(fh)
+                if not isinstance(cache, dict):
+                    cache = {}
             except (OSError, ValueError):
-                continue
-            name = str(data.get("Name") or os.path.basename(folder).split(".")[0][:8]).strip()
-            count = len(data.get("Actions") or {})
-            item = {
-                "id": os.path.basename(folder),
-                "name": name,
-                "count": count,
-                "imported": os.path.isfile(self._scene_path(name)),
-                "match": count == KEY_COUNT,
-            }
-            old = best.get(name)
-            # 同名场景保留"15 键（本机布局）"那一份，避免重复
-            if old is None or (item["match"] and not old["match"]):
-                best[name] = item
-        items = sorted(best.values(), key=lambda x: (not x["match"], x["name"]))
-        return items
+                cache = {}
+            self._sources_cache = cache
+        return cache
 
-    def import_official_scene(self, profile_id: str) -> bool:
-        folder = os.path.join(self._official_profile_root(), os.path.basename(profile_id or ""))
-        man = os.path.join(folder, "manifest.json")
+    def _record_sources(self, mapping: dict) -> None:
+        """记下 uploads 里每个副本的原始来源（官方图标包 / 场景 / 插件），供「打开图标位置」用。"""
+        src = self._sources()
+        changed = False
+        for name, path in mapping.items():
+            if path and src.get(name) != path:
+                src[name] = path
+                changed = True
+        if not changed:
+            return
         try:
-            with open(man, encoding="utf-8-sig") as fh:
-                data = json.load(fh)
-        except (OSError, ValueError):
-            return False
-        actions, styles = {}, {}
-        for pos, act in (data.get("Actions") or {}).items():
-            try:
-                col_s, row_s = pos.split(",")
-                col, row = int(col_s), int(row_s)
-            except ValueError:
-                continue
-            key = (2 - row) * 5 + col + 1
-            if not (1 <= key <= KEY_COUNT):
-                continue
-            uuid = act.get("UUID") or ""
-            settings = act.get("Settings") or {}
-            title = str(act.get("Name") or "")[:12]
-            supported = False
-            if uuid.endswith("system.website"):
-                url = str(settings.get("path") or "").strip()
-                if url:
-                    actions[key] = {"type": "url", "url": url}
-                    supported = True
-            elif uuid.endswith("system.open"):
-                path = str(settings.get("path") or "").strip()
-                if path:
-                    actions[key] = {"type": "launch", "path": path}
-                    supported = True
-            elif uuid.endswith("system.hotkey"):
-                combo = self._vk_combo(settings)
-                if combo:
-                    actions[key] = {"type": "hotkey", "keys": combo}
-                    supported = True
-            if title:
-                # 能执行的动作标题亮色，官方控件（时钟/天气等）灰色提示暂不支持
-                styles[key] = {"text": title,
-                               "color": "#e8eefc" if supported else "#6f7c8f",
-                               "bg": "#000000", "opacity": 100,
-                               "size": 16, "pos": "bottom"}
-                if not supported:
-                    self._last_import_unsupported = getattr(self, "_last_import_unsupported", 0) + 1
-        name = str(data.get("Name") or "官方场景").strip()[:40]
-        # 官方 .mbg 图标解不开，用图标库里合适的图标顶上，避免整页只有文字
-        icons = self.list_icons()
-        images = {}
-        if icons:
-            for idx, key in enumerate(sorted(styles)):
-                images[str(key)] = icons[(key * 17 + idx * 5) % len(icons)]
-        cfg = self.export_config()
-        cfg["pages"] = [{"name": name, "images": images, "actions": actions, "styles": styles}]
-        cfg["page"] = 0
-        try:
-            os.makedirs(SCENE_DIR, exist_ok=True)
-            with open(self._scene_path(name), "w", encoding="utf-8") as fh:
-                json.dump(cfg, fh, ensure_ascii=False, indent=2)
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            with open(self.SOURCES_FILE, "w", encoding="utf-8") as fh:
+                json.dump(src, fh, ensure_ascii=False, indent=1)
         except OSError as exc:
-            log(f"导入官方场景失败：{exc}")
-            return False
-        unsupported = len(styles) - len(actions)
-        self._last_import = {"supported": len(actions), "unsupported": max(0, unsupported),
-                            "total": len(styles), "name": name}
-        log(f"已导入官方场景「{name}」：可执行 {len(actions)} / 共 {len(styles)} 个键")
-        self._applying_scene = True
+            log(f"记录图标来源失败：{exc}")
+
+    def _store_scene_image(self, img, source: str | None = None) -> str:
+        """场景图标按内容哈希存进 uploads（同一张图只存一份），并记下原始来源。"""
+        ext, data = img[0], img[1]
+        source = source or (img[2] if len(img) > 2 else None)
+        name = f"sd_{hashlib.sha1(data).hexdigest()[:16]}{ext}"
+        path = os.path.join(UPLOAD_DIR, name)
+        if not os.path.isfile(path):
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(data)
+        if source and name not in self._sources():
+            self._record_sources({name: source})
+        return name
+
+    def key_image_info(self, key: int) -> dict:
+        """按键图标的本地副本和原始位置。"""
+        item = self.key_overrides.get(key) or {}
+        copy = item.get("file") or ""
+        if not copy or not os.path.isfile(copy):
+            return {"ok": False}
+        source = copy
+        if os.path.normpath(os.path.dirname(copy)) == os.path.normpath(UPLOAD_DIR):
+            source = self._sources().get(os.path.basename(copy)) or ""
+        low = source.lower()
+        return {"ok": True, "copy": copy, "source": source,
+                "sourceExists": bool(source and os.path.exists(source)),
+                "sameFile": bool(source) and os.path.normpath(source) == os.path.normpath(copy),
+                # 官方场景图标是加密的 .mbg，或者打包在预设压缩包里，直接看不了
+                "encrypted": low.endswith((".mbg", ".streamdockprofile"))}
+
+    def export_key_image(self, key: int) -> str | None:
+        """把按键图标（已解密）复制到「图片 › M18 图标」，起个看得懂的名字。"""
+        info = self.key_image_info(key)
+        if not info.get("ok"):
+            return None
+        pictures = os.path.join(os.environ.get("USERPROFILE") or HERE, "Pictures", "M18 图标")
+        scene = self.active_scene or self.custom_scene_name
+        page = self.pages[self.page].get("name", "") if 0 <= self.page < len(self.pages) else ""
+        stem = f"{scene}-{page}-键{key}" if page and page != scene else f"{scene}-键{key}"
+        stem = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in stem).strip()
+        ext = os.path.splitext(info["copy"])[1].lower() or ".png"
         try:
-            ok = self.import_config(cfg)
-            if ok:
-                self.active_scene = name
-                self._save_config()
-        finally:
-            self._applying_scene = False
+            os.makedirs(pictures, exist_ok=True)
+            dst = os.path.join(pictures, stem + ext)
+            shutil.copyfile(info["copy"], dst)
+            return dst
+        except OSError as exc:
+            log(f"导出图标失败：{exc}")
+            return None
+
+    @staticmethod
+    def reveal_in_explorer(path: str) -> bool:
+        """在资源管理器里打开所在文件夹并选中该文件。"""
+        path = os.path.normpath(path or "")
+        if not path or not os.path.exists(path):
+            return False
+        try:
+            subprocess.Popen(f'explorer /select,"{path}"')
+            return True
+        except OSError as exc:
+            log(f"打开文件位置失败：{exc}")
+            return False
+
+    def index_official_sources(self) -> None:
+        """老版本同步的官方场景没记来源：只转换不写场景文件，把来源补上。"""
+        if any(str(v).startswith(SD_ROOT) or "HotSpot" in str(v) for v in self._sources().values()):
+            return
+        try:
+            plugins = official.PluginIndex(SD_ROOT)
+            rev = self._vk_reverse()
+            mapping = {}
+            for item in official.list_scene_sources():
+                sc = official.convert_scene(item, plugins, SD_ROOT, rev)
+                for page in sc["pages"]:
+                    for img in page["images"].values():
+                        if len(img) > 2 and img[2]:
+                            name = f"sd_{hashlib.sha1(img[1]).hexdigest()[:16]}{img[0]}"
+                            mapping.setdefault(name, img[2])
+            self._record_sources(mapping)
+            log(f"已补记官方场景图标来源 {len(mapping)} 个")
+        except Exception as exc:  # noqa: BLE001
+            log(f"补记图标来源失败：{exc}")
+
+    def sync_official_scenes(self) -> dict:
+        """把官方驱动里 M18 的全部场景（含预设）转换后写进场景列表。不会切换当前场景。"""
+        plugins = official.PluginIndex(SD_ROOT)
+        rev = self._vk_reverse()
+        base = self.export_config()
+        report, names = [], []
+        os.makedirs(SCENE_DIR, exist_ok=True)
+        for item in official.list_scene_sources():
+            try:
+                sc = official.convert_scene(item, plugins, SD_ROOT, rev)
+            except Exception as exc:  # noqa: BLE001
+                log(f"官方场景「{item.get('name')}」转换失败：{exc}")
+                continue
+            multi = len(sc["pages"]) > 1
+            pages = []
+            for i, page in enumerate(sc["pages"]):
+                images = {}
+                for key, img in page["images"].items():
+                    try:
+                        images[str(key)] = self._store_scene_image(img)
+                    except OSError as exc:
+                        log(f"保存场景图标失败：{exc}")
+                actions = {str(k): v for k, v in page["actions"].items()}
+                for k, nav in ((16, "上一页"), (17, "主页"), (18, "下一页")):
+                    actions.setdefault(str(k), {"type": "nav", "name": nav})
+                pages.append({
+                    "name": f"第 {i + 1} 页" if multi else sc["name"],
+                    "images": images,
+                    "actions": actions,
+                    "styles": {str(k): v for k, v in page["styles"].items()},
+                })
+            name = sc["name"].strip()[:40]
+            cfg = dict(base)
+            cfg.update({"pages": pages, "page": 0, "officialSource": item["id"],
+                        "activeScene": name})
+            try:
+                with open(self._scene_path(name), "w", encoding="utf-8") as fh:
+                    json.dump(cfg, fh, ensure_ascii=False, indent=2)
+            except OSError as exc:
+                log(f"写入场景「{name}」失败：{exc}")
+                continue
+            names.append(name)
+            report.append({"name": name, "kind": item["kind"], **sc["stats"]})
+        try:
+            with open(self._official_mark_path(), "w", encoding="utf-8") as fh:
+                json.dump({"names": names, "time": int(time.time())}, fh, ensure_ascii=False)
+        except OSError:
+            pass
+        log("官方场景同步完成：" + "，".join(
+            f"{r['name']}（{r['supported']}/{r['total']} 键可执行，{r['pages']} 页）" for r in report))
+        return {"scenes": report}
+
+    def _auto_sync_official(self) -> None:
+        """首次启动自动同步一次；之后用户删掉的官方场景不会再自己冒出来。"""
+        if os.path.isfile(self._official_mark_path()):
+            return
+        try:
+            self.sync_official_scenes()
+        except Exception as exc:  # noqa: BLE001
+            log(f"自动同步官方场景失败：{exc}")
+
+    def next_scene(self) -> bool:
+        """官方「场景切换」键：按场景列表顺序切到下一个。"""
+        names = [it["name"] for it in self.list_scenes()]
+        if len(names) < 2:
+            return False
+        cur = self.active_scene or self.custom_scene_name
+        idx = names.index(cur) if cur in names else -1
+        target = names[(idx + 1) % len(names)]
+        ok = self.apply_scene(target)
+        self.broadcast({"type": "scene", "name": target, "ok": ok})
         return ok
 
     def swap_keys(self, a: int, b: int) -> bool:
@@ -2040,6 +2410,8 @@ class App:
             name = act.get("name") or ""
             if name in ("上一页", "下一页", "主页"):
                 self.add_nav_pages(name)
+            elif name == "下一场景":
+                self.next_scene()
             elif name.startswith("跳到第"):
                 digits = "".join(ch for ch in name if ch.isdigit())
                 if digits:
@@ -2052,6 +2424,14 @@ class App:
         if kind == "macro":
             steps = act.get("steps") or []
             threading.Thread(target=self._run_macro, args=(key, steps), daemon=True).start()
+            return
+
+        if kind == "media" and act.get("action") in ("brightup", "brightdown"):
+            step = 10 if act.get("action") == "brightup" else -10
+            self.screen_brightness = max(0, min(100, int(self.screen_brightness) + step))
+            self.device.set_screen_brightness(self.screen_brightness)
+            self.broadcast({"type": "status", "screenBrightness": self.screen_brightness})
+            log(f"按键 {key} → 屏幕亮度 {self.screen_brightness}")
             return
 
         if kind == "media":
@@ -2184,79 +2564,77 @@ class App:
             return False
 
     # -- 官方资源库 -------------------------------------------------------- #
-    def _icon_pack_dirs(self) -> list:
-        roots = [
-            os.path.join(SD_ROOT, "icons"),
-            os.path.join(os.environ.get("APPDATA", ""), "HotSpot", "StreamDock", "icons"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "HotSpot", "StreamDock", "icons"),
-            os.path.join(SD_ROOT, "store"),
-        ]
-        packs = []
-        for root in roots:
-            if not os.path.isdir(root):
-                continue
-            for dirpath, dirnames, _ in os.walk(root):
-                for d in list(dirnames):
-                    if d.lower().endswith(".sdiconpack"):
-                        packs.append(os.path.join(dirpath, d))
+    # -- 官方图标包 / 插件（直接读官方目录，不复制） ------------------------ #
+    _catalog_lock = threading.Lock()
+
+    def _catalog(self, refresh: bool = False) -> dict:
+        with self._catalog_lock:          # 图标包和插件两个请求常同时到，只扫一遍
+            return self._catalog_locked(refresh)
+
+    def _catalog_locked(self, refresh: bool) -> dict:
+        cat = getattr(self, "_catalog_cache", None)
+        if cat is None or refresh:
+            packs = {}
+            for folder in official.icon_pack_dirs(SD_ROOT):
+                info = official.icon_pack_info(folder)
+                if info["files"] and info["id"] not in packs:
+                    packs[info["id"]] = info
+            plugins = {p["id"]: p for p in official.plugin_list(SD_ROOT)}
+            cat = self._catalog_cache = {"packs": packs, "plugins": plugins}
+            log(f"官方资源：图标包 {len(packs)} 个（{sum(len(p['files']) for p in packs.values())} 个图标），"
+                f"插件 {len(plugins)} 个")
+        return cat
+
+    def icon_packs(self, refresh: bool = False) -> list:
+        packs = [{
+            "id": p["id"], "name": p["name"], "author": p["author"],
+            "count": len(p["files"]),
+            "files": [os.path.basename(f) for f in p["files"]],
+        } for p in self._catalog(refresh)["packs"].values()]
+        packs.sort(key=lambda p: p["name"].lower())
+        names = [p["name"] for p in packs]
+        for p in packs:            # 同名图标包（官方有两个 "Icons for Designer"）加上来源后缀
+            if names.count(p["name"]) > 1:
+                p["name"] += f" · {p['id'].rsplit('.', 1)[-1]}"
+        local = self.list_icons()
+        if local:
+            packs.append({"id": "local", "name": "本地图标", "author": "", "count": len(local),
+                          "files": local})
         return packs
 
-    def sync_icon_library(self) -> int:
-        """把官方驱动里的图标包/插件图标抽出来，统一成 64×64 PNG（GIF 保留）。"""
-        os.makedirs(ICON_DIR, exist_ok=True)
-        sources = []
-        exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
-        for pack in self._icon_pack_dirs():
-            pack_id = os.path.basename(pack)
-            icon_dir = os.path.join(pack, "icons")
-            if not os.path.isdir(icon_dir):
-                icon_dir = pack
-            for path in glob.glob(os.path.join(icon_dir, "*")):
-                if os.path.splitext(path)[1].lower() not in exts:
-                    continue
-                sources.append((f"{pack_id}__{os.path.splitext(os.path.basename(path))[0]}", path))
-        for path in glob.glob(os.path.join(SD_ROOT, "icons", "*", "icons", "*")):
-            if os.path.splitext(path)[1].lower() not in exts:
-                continue
-            pack = os.path.basename(os.path.dirname(os.path.dirname(path)))
-            sources.append((f"{pack}__{os.path.splitext(os.path.basename(path))[0]}", path))
-        for pattern in ("*.png", "*.jpg", "*.jpeg"):
-            for path in glob.glob(os.path.join(SD_ROOT, "plugins", "*.sdPlugin", pattern)):
-                sources.append((os.path.splitext(os.path.basename(path))[0], path))
-        made = 0
-        for name, src in sources[:500]:
-            ext = os.path.splitext(src)[1].lower()
-            safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)[:80]
-            if ext == ".gif":
-                # 动图原样保留，前端 <img> 会自动播放
-                dst = os.path.join(ICON_DIR, safe + ".gif")
-                if os.path.exists(dst):
-                    continue
-                try:
-                    with open(src, "rb") as fh:
-                        data = fh.read()
-                    if len(data) > 4 * 1024 * 1024:
-                        continue
-                    with open(dst, "wb") as fh:
-                        fh.write(data)
-                    made += 1
-                except OSError:
-                    continue
-                continue
-            dst = os.path.join(ICON_DIR, safe + ".png")
-            if os.path.exists(dst):
-                continue
-            try:
-                img = Image.open(src).convert("RGBA")
-                img.thumbnail((64, 64), Image.LANCZOS)
-                canvas = Image.new("RGBA", (KEY_SIZE, KEY_SIZE), (0, 0, 0, 0))
-                canvas.paste(img, ((KEY_SIZE - img.width) // 2, (KEY_SIZE - img.height) // 2), img)
-                canvas.save(dst, "PNG")
-                made += 1
-            except Exception:  # noqa: BLE001
-                continue
-        log(f"图标库同步完成，新增 {made} 个（共 {len(self.list_icons())} 个）")
-        return made
+    def icon_pack_file(self, pack_id: str, fname: str) -> str | None:
+        fname = os.path.basename(fname or "")
+        if pack_id == "local":
+            path = os.path.join(ICON_DIR, fname)
+            return path if fname and os.path.isfile(path) else None
+        pack = self._catalog()["packs"].get(pack_id)
+        if not pack:
+            return None
+        for f in pack["files"]:
+            if os.path.basename(f) == fname:
+                return f
+        return None
+
+    def plugin_catalog(self, refresh: bool = False) -> list:
+        out = []
+        for p in self._catalog(refresh)["plugins"].values():
+            out.append({
+                "id": p["id"], "name": p["name"], "author": p["author"],
+                "version": p["version"], "description": p["description"],
+                "downloaded": p["downloaded"], "hasIcon": bool(p["icon"]),
+                "actions": [{"name": a["name"], "tooltip": a["tooltip"], "hasIcon": bool(a["icon"])}
+                            for a in p["actions"]],
+            })
+        return out
+
+    def plugin_icon_path(self, plugin_id: str, idx: int) -> str | None:
+        p = self._catalog()["plugins"].get(plugin_id)
+        if not p:
+            return None
+        if idx < 0:
+            return p["icon"]
+        acts = p["actions"]
+        return acts[idx]["icon"] if 0 <= idx < len(acts) else None
 
     def list_icons(self) -> list:
         try:
@@ -2267,7 +2645,26 @@ class App:
         return [f for f in files if f.lower().endswith(exts)]
 
     def set_key_icon(self, key: int, name: str) -> bool:
-        safe = os.path.basename(name or "")
+        name = name or ""
+        src = None
+        if name.startswith("pack:"):
+            pack_id, _, fname = name[5:].partition("/")
+            src = self.icon_pack_file(pack_id, fname)
+        elif name.startswith("plugin:"):
+            plugin_id, _, idx = name[7:].rpartition("/")
+            try:
+                src = self.plugin_icon_path(plugin_id, int(idx))
+            except ValueError:
+                src = None
+        if name.startswith(("pack:", "plugin:")):
+            img = official.read_image(src) if src else None
+            if not img or not (1 <= key <= KEY_COUNT):
+                return False
+            # 复制一份进 uploads：官方删了图标包，按键图也不会丢
+            stored = self._store_scene_image(img, src)
+            self._anim_pause_until = time.time() + 1.0
+            return self.set_key_image(key, os.path.join(UPLOAD_DIR, stored))
+        safe = os.path.basename(name)
         path = os.path.join(ICON_DIR, safe)
         if not safe or not os.path.isfile(path):
             return False
@@ -2289,38 +2686,6 @@ class App:
             self.device.refresh()
         return True
 
-    def scan_plugins(self) -> list:
-        """收集官方插件的清单（只读索引）。"""
-        items = []
-        for manifest in glob.glob(os.path.join(SD_ROOT, "plugins", "*.sdPlugin", "manifest.json")):
-            try:
-                with open(manifest, encoding="utf-8-sig") as fh:
-                    data = json.load(fh)
-            except (OSError, ValueError):
-                continue
-            items.append({
-                "id": data.get("UUID") or os.path.basename(os.path.dirname(manifest)),
-                "name": data.get("Name") or "",
-                "author": data.get("Author") or "",
-                "version": data.get("Version") or "",
-                "actions": len(data.get("Actions") or []),
-            })
-        items.sort(key=lambda x: x["name"] or x["id"])
-        return items
-
-    def scan_profiles(self) -> list:
-        """官方场景/配置目录里的条目（只读索引）。"""
-        names = []
-        for root in (os.path.join(SD_ROOT, "defaultData"),
-                     os.path.join(SD_ROOT, "profiles")):
-            if not os.path.isdir(root):
-                continue
-            for entry in os.listdir(root):
-                p = os.path.join(root, entry)
-                if os.path.isdir(p) or entry.lower().endswith((".json", ".sdprofile")):
-                    names.append(entry)
-        return sorted(set(names))
-
     def _official_loop(self) -> None:
         """官方驱动在跑就让路，退出后自动接管。"""
         while True:
@@ -2330,6 +2695,10 @@ class App:
                 if running and not self.yielded:
                     self.yielded = True
                     log("检测到官方驱动运行，控制台自动退让（不再写设备）")
+                    try:
+                        self._gif_stop_all()
+                    except Exception:  # noqa: BLE001
+                        pass
                     try:
                         self.device.disconnect()
                     except Exception:  # noqa: BLE001
@@ -2417,7 +2786,7 @@ class App:
 
     def _engine_loop(self) -> None:
         t0 = time.time()
-        last_push = 0.0
+        ui_hash = None
         while True:
             time.sleep(1 / 30)
             t = time.time() - t0
@@ -2428,20 +2797,22 @@ class App:
                 frame = self._compute(t)
             static = self.lighting["mode"] in ("off", "solid", "gradient", "custom")
             h = hash(tuple(tuple(c) for c in frame))
+            # 让位 / 静默 / 暂停写入 / 图片传输中，一律不碰灯带
+            can_write = not (self._pushing or self.writes_paused or self.quiet or self.yielded)
 
             if static:
-                if self._dirty and h != self._frame_hash and not self._pushing:
+                if can_write and self._dirty and h != self._frame_hash:
                     self.device.set_leds(self._to_hw(frame))
                     self._frame_hash = h
                     self._dirty = False
-            elif not self._pushing and not self.writes_paused and not self.quiet and not self.yielded:
+            elif can_write:
                 self.device.set_leds(self._to_hw(frame))
                 self._frame_hash = h
 
-            now = time.time()
-            if h != self._frame:
+            # 只在画面真的变了时才推给界面（静态灯效不再每秒刷 30 条 SSE）
+            if h != ui_hash:
+                ui_hash = h
                 self._frame = frame
-                last_push = now
                 if self.clients:
                     self.broadcast({"type": "frame", "colors": frame})
 
@@ -2517,6 +2888,9 @@ class App:
                     for k, v in self.key_actions.items()
                 },
                 "keyImages": {str(k): v.get("type") for k, v in self.key_overrides.items()},
+                # 图片换了文件名就变：界面据此决定要不要重新拉预览（切场景 / 翻页时同一个键会换图）
+                "keyImageRev": {str(k): os.path.basename(v.get("file") or "") or str(id(v))
+                                for k, v in self.key_overrides.items()},
                 "ledCount": LED_COUNT,
                 "keyCount": KEY_COUNT,
                 "officialRunning": self.official_running,
@@ -2532,6 +2906,7 @@ def _shutdown() -> None:
     time.sleep(0.25)
     try:
         if APP is not None:
+            APP._gif_stop_all()          # SDK 进程不一定随我们退出，别让它继续播旧动图
             APP.device.disconnect()
     except Exception:  # noqa: BLE001
         pass
@@ -2576,8 +2951,41 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             return {}
 
+    # -- 访问控制 ---------------------------------------------------------- #
+    def _allowed_hosts(self) -> set:
+        return {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+
+    def _check_access(self, write: bool) -> bool:
+        """只服务本机自己的界面，挡掉别的网页对本地接口的跨站调用。
+
+        - Host 必须是 127.0.0.1/localhost:端口（防 DNS rebinding）
+        - 写操作：浏览器发来的必须同源（Origin / Sec-Fetch-Site），且必须是 JSON，
+          这样跨站请求会先触发 CORS 预检，而本服务从不放行预检。
+        """
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in self._allowed_hosts():
+            self.send_error(403, "Forbidden host")
+            return False
+        if not write:
+            return True
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if origin and origin not in {f"http://{h}" for h in self._allowed_hosts()}:
+            self.send_error(403, "Cross-origin request blocked")
+            return False
+        site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if site and site not in ("same-origin", "none"):
+            self.send_error(403, "Cross-site request blocked")
+            return False
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if int(self.headers.get("Content-Length") or 0) and ctype != "application/json":
+            self.send_error(415, "JSON only")
+            return False
+        return True
+
     # -- 路由 -------------------------------------------------------------- #
     def do_GET(self):  # noqa: N802
+        if not self._check_access(write=False):
+            return
         path = self.path.split("?")[0]
         if path == "/api/state":
             self._json(APP.snapshot())
@@ -2618,6 +3026,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/api/iconpacks":
+            self._json({"ok": True, "packs": APP.icon_packs()})
+        elif path == "/api/plugins":
+            self._json({"ok": True, "plugins": APP.plugin_catalog()})
+        elif path.startswith("/api/iconpack/"):
+            parts = path.split("/", 4)
+            fp = APP.icon_pack_file(urllib.parse.unquote(parts[3]), urllib.parse.unquote(parts[4])) \
+                if len(parts) == 5 else None
+            self._image_file(fp)
+        elif path.startswith("/api/plugin-icon/"):
+            parts = path.split("/")
+            try:
+                fp = APP.plugin_icon_path(urllib.parse.unquote(parts[3]), int(parts[4]))
+            except (IndexError, ValueError):
+                fp = None
+            self._image_file(fp)
         elif path.startswith("/api/icons/"):
             safe = os.path.basename(path[len("/api/icons/"):])
             fp = os.path.join(ICON_DIR, safe)
@@ -2683,6 +3107,8 @@ class Handler(BaseHTTPRequestHandler):
             self._static(path.lstrip("/"))
 
     def do_POST(self):  # noqa: N802
+        if not self._check_access(write=True):
+            return
         path = self.path.split("?")[0]
         body = self._body()
         if path == "/api/lighting":
@@ -2738,11 +3164,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
         elif path == "/api/device/pause-writes":
             APP.writes_paused = bool(body.get("value"))
+            if APP.writes_paused:
+                APP._gif_stop_all()
             if not APP.writes_paused and APP.device.connected:
                 threading.Thread(target=APP.apply_keys, daemon=True).start()
             self._json({"ok": True, "value": APP.writes_paused})
         elif path == "/api/device/lighting-only":
             APP.lighting_only = bool(body.get("value"))
+            if APP.lighting_only:
+                APP._gif_stop_all()
             APP._save_config()
             if not APP.lighting_only and APP.device.connected:
                 threading.Thread(target=APP.apply_keys, daemon=True).start()
@@ -2776,8 +3206,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/config/import":
             self._json({"ok": APP.import_config(body.get("config") or {})})
         elif path == "/api/scenes":
-            if body.get("official"):
-                self._json({"ok": True, "items": APP.scan_official_scenes()})
+            if body.get("syncOfficial"):
+                result = APP.sync_official_scenes()
+                self._json({"ok": True, **result, "items": APP.list_scenes()})
             elif body.get("rename_custom"):
                 self._json({"ok": APP.rename_custom_scene(str(body["rename_custom"])),
                             "items": APP.list_scenes()})
@@ -2787,10 +3218,6 @@ class Handler(BaseHTTPRequestHandler):
                             "items": APP.list_scenes()})
             elif body.get("duplicate"):
                 self._json({"ok": APP.duplicate_scene(str(body["duplicate"])),
-                            "items": APP.list_scenes()})
-            elif body.get("import"):
-                ok = APP.import_official_scene(str(body["import"]))
-                self._json({"ok": ok, "stats": getattr(APP, "_last_import", {}),
                             "items": APP.list_scenes()})
             elif body.get("save"):
                 self._json({"ok": APP.save_scene(str(body.get("name") or body.get("save") or "")),
@@ -2813,16 +3240,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": APP.clear_key_all(int(body.get("key", 0)))})
         elif path == "/api/icons":
             self._json({"ok": True, "items": APP.list_icons()})
-        elif path == "/api/icons/sync":
-            made = APP.sync_icon_library()
-            self._json({"ok": True, "added": made, "count": len(APP.list_icons())})
+        elif path == "/api/key/image-info":
+            self._json(APP.key_image_info(int(body.get("key", 0))))
+        elif path == "/api/key/reveal":
+            info = APP.key_image_info(int(body.get("key", 0)))
+            if body.get("target") == "export":
+                target = APP.export_key_image(int(body.get("key", 0)))
+            elif body.get("target") == "copy":
+                target = info.get("copy")
+            else:
+                target = info.get("source")
+            self._json({"ok": bool(info.get("ok")) and APP.reveal_in_explorer(target or ""),
+                        "path": target or ""})
         elif path == "/api/key/icon":
             self._json({"ok": APP.set_key_icon(int(body.get("key", 0)),
                                                str(body.get("name") or ""))})
-        elif path == "/api/library":
-            self._json({"ok": True,
-                        "plugins": APP.scan_plugins(),
-                        "profiles": APP.scan_profiles()})
+        elif path == "/api/catalog/refresh":
+            self._json({"ok": True, "packs": APP.icon_packs(refresh=True),
+                        "plugins": APP.plugin_catalog()})
         elif path == "/api/config/backups":
             self._json({"ok": True, "items": APP.list_config_backups()})
         elif path == "/api/config/restore":
@@ -2833,7 +3268,7 @@ class Handler(BaseHTTPRequestHandler):
             ok = APP.apply_standby() if APP.device.connected else True
             self._json({"ok": bool(ok), "value": APP.standby_brightness})
         elif path == "/api/standby":
-            APP.standby_sec = max(3, min(300, int(body.get("sec", 60))))
+            APP.standby_sec = max(5, min(1800, int(body.get("sec", 300))))
             APP._save_config()
             self._json({"ok": True, "sec": APP.standby_sec})
         elif path == "/api/wallpaper":
@@ -3011,6 +3446,22 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json({"error": "not found"}, 404)
 
+    def _image_file(self, fp: str | None) -> None:
+        """官方图标 / 插件图：按内容判断类型；.mbg 解密成 GIF。"""
+        img = official.read_image(fp) if fp else None
+        if not img:
+            self.send_error(404)
+            return
+        ext, data = img
+        ctype = {".png": "image/png", ".gif": "image/gif", ".jpg": "image/jpeg",
+                 ".webp": "image/webp", ".bmp": "image/bmp"}.get(ext, "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
+
     # -- 静态文件 ---------------------------------------------------------- #
     def _static(self, name: str):
         safe = os.path.normpath(os.path.join(UI_DIR, name))
@@ -3085,23 +3536,27 @@ def free_port(start=8642, tries=12) -> int:
 
 
 def open_window(url: str) -> bool:
-    """用独立配置目录启动一个应用窗口；启动前先关掉旧的同名窗口。"""
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-Process msedge -ErrorAction SilentlyContinue | "
-             "Where-Object { $_.MainWindowTitle -like '*M18*' } | Stop-Process -Force"],
-            capture_output=True, timeout=10,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except Exception:  # noqa: BLE001
-        pass
-
+    """用独立配置目录启动一个应用窗口；启动前先关掉旧的控制台窗口。"""
     profile = os.path.join(os.environ.get("LOCALAPPDATA") or HERE, "M18Console", "browser")
     try:
         os.makedirs(profile, exist_ok=True)
     except OSError:
         profile = ""
+
+    # 只关「用本控制台独立配置目录启动」的浏览器进程，不误伤用户自己的 Edge/Chrome 窗口
+    if profile:
+        marker = profile.replace("'", "''")
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' OR Name='chrome.exe'\" | "
+                 f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{marker}') }} | "
+                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+                capture_output=True, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     for exe in (
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",

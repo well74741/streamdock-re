@@ -10,7 +10,7 @@
   "ox": 0,
   "oy": 0,
   "page": 0,
-  "standby": 40,
+  "standby": 300,
   "standbyBrightness": 60,
   "lightingOnly": false,
   "wallpaperEnabled": true,

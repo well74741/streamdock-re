@@ -22,7 +22,7 @@ const SWATCHES = [
 ];
 
 const NAV_PRESETS = [
-  "上一页", "下一页", "主页",
+  "上一页", "下一页", "主页", "下一场景",
   "左选", "确认", "右选",
   "参数-", "参数+", "音量-", "音量+", "无",
 ];
@@ -68,6 +68,31 @@ async function post(url, body) {
     body: JSON.stringify(body || {}),
   });
   return res.json().catch(() => ({}));
+}
+
+/* KeyboardEvent.code → 后端 send_hotkey 认识的键名；修饰键本身返回 null */
+const CODE_NAMES = {
+  Space: "space", Enter: "enter", NumpadEnter: "enter", Tab: "tab", Backspace: "backspace",
+  Delete: "delete", Insert: "insert", Home: "home", End: "end",
+  PageUp: "pageup", PageDown: "pagedown",
+  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+  Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\",
+  Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/", Backquote: "`",
+  PrintScreen: "printscreen", Pause: "pause", CapsLock: "capslock",
+  ContextMenu: "apps", NumLock: "numlock", ScrollLock: "scrolllock",
+  NumpadMultiply: "num*", NumpadAdd: "num+", NumpadSubtract: "num-",
+  NumpadDecimal: "num.", NumpadDivide: "num/",
+};
+
+function codeToKeyName(code) {
+  if (!code) return null;
+  if (CODE_NAMES[code]) return CODE_NAMES[code];
+  let m;
+  if ((m = code.match(/^Key([A-Z])$/))) return m[1].toLowerCase();
+  if ((m = code.match(/^Digit(\d)$/))) return m[1];
+  if ((m = code.match(/^Numpad(\d)$/))) return `num${m[1]}`;
+  if ((m = code.match(/^F(\d{1,2})$/)) && Number(m[1]) <= 24) return `f${m[1]}`;
+  return null;   // Control/Shift/Alt/Meta 等修饰键，或不支持的键
 }
 
 function throttle(fn, wait = 60) {
@@ -127,7 +152,7 @@ function hardenBrowser() {
   const noMouseButton = (e) => { if (e.button !== 0) e.preventDefault(); };
 
   document.addEventListener("contextmenu", (e) => {
-    if (e.target.closest(".ring-board .cell, .ring-btn, .icon-group img, .key-menu")) return;
+    if (e.target.closest(".ring-board .cell, .ring-btn, .icon-group img, .key-menu, #sel-thumb")) return;
     e.preventDefault();
   }, { capture: true });
   document.addEventListener("selectstart", noDefault, { capture: true });
@@ -273,9 +298,11 @@ function refreshCells() {
     if (imgEl) {
       if (hasImg) {
         // 用原始文件（GIF 会实时播放），和控制台"所见即所得"
-        if (imgEl.dataset.v !== `${n}-${hasImg}`) {
+        // 按图片版本判断：切场景 / 翻页后同一个键换了图，也要重新加载
+        const rev = `${n}-${state?.keyImageRev?.[n] || imgs[n]}`;
+        if (imgEl.dataset.v !== rev) {
           imgEl.src = `/api/key/${n}/raw?v=${stamp}`;
-          imgEl.dataset.v = `${n}-${hasImg}`;
+          imgEl.dataset.v = rev;
         }
         imgEl.hidden = false;
       } else {
@@ -444,82 +471,224 @@ function bindRingPainting() {
 }
 
 /* ------------------------------------------------------------------ 选中与编辑 */
-async function loadIcons() {
+/* 官方图标包 + 插件：直接读官方驱动目录，按包分组、展开时才加载图片 */
+let iconPacks = null;
+let pluginItems = null;
+const SIDE_STATE_KEY = "m18.sidebar.v2";
+const sideState = (() => {
+  try { return JSON.parse(localStorage.getItem(SIDE_STATE_KEY) || "{}"); } catch { return {}; }
+})();
+sideState.collapsed ||= {};          // 侧栏分区：scenes / icons / plugins
+sideState.openPacks ||= [];          // 展开着的图标包
+function saveSideState() {
+  try { localStorage.setItem(SIDE_STATE_KEY, JSON.stringify(sideState)); } catch { /* ignore */ }
+}
+
+const escHtml = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const packIconUrl = (pack, file) =>
+  `/api/iconpack/${encodeURIComponent(pack)}/${encodeURIComponent(file)}`;
+const pluginIconUrl = (id, idx) => `/api/plugin-icon/${encodeURIComponent(id)}/${idx}`;
+
+function iconTile(pack, file) {
+  const label = file.replace(/\.[^.]+$/, "");
+  return `<img loading="lazy" draggable="false" data-name="pack:${escHtml(pack)}/${escHtml(file)}"`
+    + ` src="${packIconUrl(pack, file)}" title="${escHtml(label)}" alt="" />`;
+}
+
+function fillPackTiles(details) {
+  const tiles = details.querySelector(".tiles");
+  if (!tiles || tiles.dataset.filled) return;
+  const pack = iconPacks.find((p) => p.id === details.dataset.pack);
+  if (!pack) return;
+  tiles.innerHTML = pack.files.map((f) => iconTile(pack.id, f)).join("");
+  tiles.dataset.filled = "1";
+}
+
+async function loadIcons(refresh = false) {
   const box = $("#icon-groups");
   if (!box) return;
-  let items = [];
-  try {
-    items = (await post("/api/icons", {})).items || [];
-  } catch (_) {
-    items = [];
+  if (!iconPacks || refresh) {
+    try {
+      iconPacks = (await (await fetch("/api/iconpacks", { cache: "no-store" })).json()).packs || [];
+    } catch (_) {
+      iconPacks = [];
+    }
   }
+  const total = iconPacks.reduce((n, p) => n + p.count, 0);
   const cnt = $("#icon-count");
-  if (cnt) cnt.textContent = String(items.length);
+  if (cnt) cnt.textContent = String(total);
   const q = ($("#icon-search")?.value || "").toLowerCase().trim();
-  const groups = new Map();
-  items.forEach((name) => {
-    if (q && !name.toLowerCase().includes(q)) return;
-    const sep = name.indexOf("__");
-    const group = sep > 0 ? name.slice(0, sep) : "通用";
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(name);
-  });
-  const stamp = Date.now();
-  let html = "";
-  for (const [group, names] of groups) {
-    const label = group.replace(/^com[._]/, "").replace(/[._]/g, " ");
-    html += `<details class="icon-group" open><summary>${label}<em>${names.length}</em></summary><div class="tiles">`;
-    html += names.map((n) =>
-      `<img data-name="${n}" draggable="true" src="/api/icons/${encodeURIComponent(n)}?v=${stamp}" title="${n}" alt="" />`,
-    ).join("");
-    html += "</div></details>";
+
+  if (!iconPacks.length) {
+    box.innerHTML = `<div class="side-empty">没找到官方图标包。装了官方 Stream Dock 并下载过图标包后点「刷新」。</div>`;
+    return;
   }
-  box.innerHTML = html || `<div class="muted" style="font-size:12px">没有图标，点「同步」从官方驱动抓取</div>`;
-  box.querySelectorAll("img").forEach((img) => {
-    img.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      const start = { x: e.clientX, y: e.clientY };
-      let dragging = false;
-      const onMove = (ev) => {
-        const dx = ev.clientX - start.x;
-        const dy = ev.clientY - start.y;
-        if (!dragging && Math.hypot(dx, dy) > 6) {
-          dragging = true;
-          startGhost(img, ev.clientX, ev.clientY);
-        }
-        if (!dragging) return;
-        moveGhost(ev.clientX, ev.clientY);
-        clearDropHover();
-        const t = dropTargetAt(ev.clientX, ev.clientY);
-        if (t && !t.classList.contains("icon-group")) t.classList.add("drop-hover");
-      };
-      const onUp = async (ev) => {
-        document.removeEventListener("pointermove", onMove, true);
-        document.removeEventListener("pointerup", onUp, true);
-        endGhost();
-        clearDropHover();
-        const t = dropTargetAt(ev.clientX, ev.clientY);
-        let key = 0;
-        if (t?.dataset?.key) key = Number(t.dataset.key);
-        else if (t?.classList.contains("thumb")) key = selectedKey;
-        if (!dragging) {
-          // 单击：应用到当前选中键
-          if (!selectedKey) {
-            toast("先选一个按键，或直接把图标拖到按键上", 1600);
-            return;
-          }
-          key = selectedKey;
-        }
-        if (!key) return;
-        const ok = await post("/api/key/icon", { key, name: img.dataset.name });
-        toast(ok.ok ? `图标已应用到按键 ${key}` : "应用失败", 1300);
-        if (ok.ok) await refreshState();
-      };
-      document.addEventListener("pointermove", onMove, true);
-      document.addEventListener("pointerup", onUp, true);
+  if (q) {
+    // 搜索：跨所有图标包匹配文件名 / 包名，最多显示 240 个
+    const hits = [];
+    for (const p of iconPacks) {
+      const packHit = p.name.toLowerCase().includes(q);
+      for (const f of p.files) {
+        if (packHit || f.toLowerCase().includes(q)) hits.push([p.id, f]);
+        if (hits.length >= 240) break;
+      }
+      if (hits.length >= 240) break;
+    }
+    box.innerHTML = hits.length
+      ? `<div class="icon-group search"><div class="group-title">搜索结果<em>${hits.length >= 240 ? "240+" : hits.length}</em></div>`
+        + `<div class="tiles">${hits.map(([id, f]) => iconTile(id, f)).join("")}</div></div>`
+      : `<div class="side-empty">没有匹配「${escHtml(q)}」的图标</div>`;
+    return;
+  }
+  box.innerHTML = iconPacks.map((p) => {
+    const open = sideState.openPacks.includes(p.id);
+    const cover = p.files[0] ? `<img class="cover" src="${packIconUrl(p.id, p.files[0])}" alt="" />` : "";
+    return `<details class="icon-group" data-pack="${escHtml(p.id)}"${open ? " open" : ""}>`
+      + `<summary>${cover}<span class="g-name" title="${escHtml(p.author ? `${p.name} · ${p.author}` : p.name)}">${escHtml(p.name)}</span><em>${p.count}</em></summary>`
+      + `<div class="tiles"></div></details>`;
+  }).join("");
+  box.querySelectorAll("details.icon-group").forEach((d) => {
+    if (d.open) fillPackTiles(d);
+    d.addEventListener("toggle", () => {
+      const id = d.dataset.pack;
+      sideState.openPacks = sideState.openPacks.filter((x) => x !== id);
+      if (d.open) {
+        fillPackTiles(d);
+        sideState.openPacks.push(id);
+      }
+      saveSideState();
     });
   });
+}
+
+async function loadPlugins(refresh = false) {
+  const box = $("#plugin-list");
+  if (!box) return;
+  if (!pluginItems || refresh) {
+    try {
+      pluginItems = (await (await fetch("/api/plugins", { cache: "no-store" })).json()).plugins || [];
+    } catch (_) {
+      pluginItems = [];
+    }
+  }
+  const q = ($("#icon-search")?.value || "").toLowerCase().trim();
+  const match = (p) => !q || [p.name, p.author, p.id, ...p.actions.map((a) => a.name)]
+    .some((v) => String(v || "").toLowerCase().includes(q));
+  const list = pluginItems.filter(match);
+  const cnt = $("#plugin-count");
+  if (cnt) cnt.textContent = String(pluginItems.length);
+  if (!list.length) {
+    box.innerHTML = `<div class="side-empty">${pluginItems.length ? "没有匹配的插件" : "没找到官方插件"}</div>`;
+    return;
+  }
+  const row = (p) => {
+    const icon = p.hasIcon ? `<img class="pl-icon" src="${pluginIconUrl(p.id, -1)}" alt="" />` : `<span class="pl-icon none">◇</span>`;
+    const acts = p.actions.map((a, i) =>
+      `<div class="pl-act" title="${escHtml(a.tooltip || a.name)}">`
+      + (a.hasIcon
+        ? `<img loading="lazy" draggable="false" data-name="plugin:${escHtml(p.id)}/${i}" src="${pluginIconUrl(p.id, i)}" alt="" />`
+        : `<span class="pl-act-noimg">—</span>`)
+      + `<span>${escHtml(a.name)}</span></div>`).join("");
+    return `<details class="plugin${p.downloaded ? " downloaded" : ""}">`
+      + `<summary>${icon}<span class="pl-meta"><b>${escHtml(p.name)}</b>`
+      + `<small>${escHtml([p.author, p.version && `v${p.version}`].filter(Boolean).join(" · "))}</small></span>`
+      + `<em>${p.actions.length}</em></summary>`
+      + (p.description ? `<p class="pl-desc">${escHtml(p.description)}</p>` : "")
+      + `<div class="pl-acts">${acts || "<span class='side-empty'>没有动作</span>"}</div></details>`;
+  };
+  const groups = [
+    ["downloaded", "已下载", list.filter((p) => p.downloaded)],
+    ["builtin", "官方内置", list.filter((p) => !p.downloaded)],
+  ];
+  // 分组也可折叠：默认展开「已下载」、收起「官方内置」；搜索时全部展开
+  box.innerHTML = groups.filter(([, , items]) => items.length).map(([id, label, items]) => {
+    const open = q || (sideState.pluginGroups?.[id] ?? id === "downloaded");
+    return `<details class="pl-groupbox" data-group="${id}"${open ? " open" : ""}>`
+      + `<summary class="pl-group"><i class="chev"></i><span>${label}</span><em>${items.length}</em></summary>`
+      + `${items.map(row).join("")}</details>`;
+  }).join("");
+  box.querySelectorAll(".pl-groupbox").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (q) return;
+      sideState.pluginGroups = { ...(sideState.pluginGroups || {}), [d.dataset.group]: d.open };
+      saveSideState();
+    });
+  });
+}
+
+/* 图标瓦片 / 插件动作图标：单击 = 应用到选中键，拖动 = 放到目标键（事件委托，几千个图标只绑一次） */
+function bindIconDrag(container) {
+  container.addEventListener("pointerdown", (e) => {
+    const img = e.target.closest("img[data-name]");
+    if (!img || e.button !== 0) return;
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY };
+    let dragging = false;
+    const onMove = (ev) => {
+      if (!dragging && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 6) {
+        dragging = true;
+        startGhost(img, ev.clientX, ev.clientY);
+      }
+      if (!dragging) return;
+      moveGhost(ev.clientX, ev.clientY);
+      clearDropHover();
+      const t = dropTargetAt(ev.clientX, ev.clientY);
+      if (t && !t.closest(".side-scroll")) t.classList.add("drop-hover");
+    };
+    const onUp = async (ev) => {
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerup", onUp, true);
+      endGhost();
+      clearDropHover();
+      let key = 0;
+      if (dragging) {
+        const t = dropTargetAt(ev.clientX, ev.clientY);
+        if (t?.dataset?.key) key = Number(t.dataset.key);
+        else if (t?.classList.contains("thumb")) key = selectedKey;
+      } else {
+        if (!selectedKey) {
+          toast("先选一个按键，或直接把图标拖到按键上", 1600);
+          return;
+        }
+        key = selectedKey;
+      }
+      if (!key) return;
+      if (key > 15) {
+        toast("底部三个实体键没有屏幕，不能放图标", 1600);
+        return;
+      }
+      const ok = await post("/api/key/icon", { key, name: img.dataset.name });
+      const fromPlugin = img.dataset.name.startsWith("plugin:");
+      toast(!ok.ok ? "应用失败"
+        : fromPlugin ? `已把插件图标放到按键 ${key}（只是图标：插件功能要等插件宿主做好后才能运行）`
+          : `图标已应用到按键 ${key}`, fromPlugin ? 3200 : 1300);
+      if (ok.ok) await refreshState();
+    };
+    document.addEventListener("pointermove", onMove, true);
+    document.addEventListener("pointerup", onUp, true);
+  });
+}
+
+/* 侧栏分区折叠（记住状态） */
+function bindSidebar() {
+  document.querySelectorAll(".side-sec[data-sec]").forEach((sec) => {
+    const id = sec.dataset.sec;
+    sec.classList.toggle("collapsed", !!sideState.collapsed[id]);
+    sec.querySelector(".sec-toggle")?.addEventListener("click", () => {
+      const now = !sec.classList.contains("collapsed");
+      sec.classList.toggle("collapsed", now);
+      sideState.collapsed[id] = now;
+      saveSideState();
+    });
+  });
+  $("#icon-collapse")?.addEventListener("click", () => {
+    sideState.openPacks = [];
+    saveSideState();
+    document.querySelectorAll("#icon-groups details[open]").forEach((d) => { d.open = false; });
+  });
+  bindIconDrag($("#icon-groups"));
+  bindIconDrag($("#plugin-list"));
 }
 
 /* ------------------------------------------------------- 拖拽幽灵（通用） */
@@ -600,6 +769,57 @@ function showKeyMenu(x, y, key) {
 
 function hideKeyMenu() {
   if (keyMenuEl) keyMenuEl.hidden = true;
+  if (thumbMenuEl) thumbMenuEl.hidden = true;
+}
+
+/* 按键编辑预览区右键：在资源管理器里定位图标（原始来源 / 控制台里的副本） */
+let thumbMenuEl = null;
+async function showThumbMenu(x, y) {
+  if (!selectedKey) {
+    toast("先选一个按键", 1200);
+    return;
+  }
+  const info = await post("/api/key/image-info", { key: selectedKey });
+  if (!info.ok) {
+    toast("这个按键没有设置图标", 1400);
+    return;
+  }
+  if (!thumbMenuEl) {
+    thumbMenuEl = document.createElement("div");
+    thumbMenuEl.className = "key-menu";
+    document.body.appendChild(thumbMenuEl);
+    thumbMenuEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+    thumbMenuEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn || btn.disabled) return;
+      thumbMenuEl.hidden = true;
+      const r = await post("/api/key/reveal", { key: Number(thumbMenuEl.dataset.key), target: btn.dataset.target });
+      if (!r.ok) toast("打不开这个位置（文件可能已被移动或删除）", 1800);
+      else if (btn.dataset.target === "export") toast(`已导出：${r.path}`, 2600);
+    });
+  }
+  const items = [];
+  if (info.sameFile) {
+    items.push(`<button data-target="source" title="${escHtml(info.source)}">打开图标位置</button>`);
+  } else if (info.encrypted) {
+    // 官方场景图标是加密的 .mbg：主入口给解密后的普通 GIF/PNG，原文件放在后面
+    items.push(`<button data-target="copy" title="${escHtml(info.copy)}">打开图标位置（已解密，可直接查看）</button>`);
+    if (info.sourceExists) {
+      items.push(`<button data-target="source" title="${escHtml(info.source)}">打开官方原文件（加密格式）</button>`);
+    }
+  } else {
+    items.push(info.sourceExists
+      ? `<button data-target="source" title="${escHtml(info.source)}">打开图标位置</button>`
+      : `<button disabled title="来源未知（例如从浏览器拖入的文件）">打开图标位置（来源未知）</button>`);
+    items.push(`<button data-target="copy" title="${escHtml(info.copy)}">打开控制台副本位置</button>`);
+  }
+  items.push(`<button data-target="export" title="复制到「图片 › M18 图标」，按场景和键号命名">导出到图片文件夹</button>`);
+  thumbMenuEl.innerHTML = items.join("");
+  thumbMenuEl.dataset.key = String(selectedKey);
+  thumbMenuEl.hidden = false;
+  const w = 230, h = 30 * items.length + 10;
+  thumbMenuEl.style.left = `${Math.min(x, window.innerWidth - w - 8)}px`;
+  thumbMenuEl.style.top = `${Math.min(y, window.innerHeight - h - 8)}px`;
 }
 
 let lastPointer = { x: 0, y: 0 };
@@ -815,7 +1035,7 @@ function renderEditor() {
 
   if (actType === "nav") {
     const jumps = Array.from({ length: state?.pageCount || 1 }, (_, i) => `跳到第 ${i + 1} 页`);
-    const opts = [...NAV_PRESETS.slice(0, 3), ...jumps, ...NAV_PRESETS.slice(3)];
+    const opts = [...NAV_PRESETS.slice(0, 4), ...jumps, ...NAV_PRESETS.slice(4)];
     nav.innerHTML = opts
       .map((p) => `<option value="${p}"${act === p ? " selected" : ""}>${p}</option>`)
       .join("");
@@ -1017,7 +1237,7 @@ function applyState(s) {
   const gap = s.wallpaper?.gap ?? 27;
   $("#wallpaper-gap").value = gap;
   updateGapLabel(gap);
-  const standby = s.standby ?? 60;
+  const standby = s.standby ?? 300;
   $("#standby-sec").value = standby;
   $("#standby-sec-val").textContent = fmtSec(standby);
   $("#reverse-led").classList.toggle("on", !!s.effectReverse);
@@ -1103,7 +1323,9 @@ function renderLog(events) {
 }
 
 function fmtSec(v) {
-  return `${v}s`;
+  const m = Math.floor(v / 60), sec = v % 60;
+  if (!m) return `${sec} 秒`;
+  return sec ? `${m} 分 ${sec} 秒` : `${m} 分钟`;
 }
 
 function updateGapLabel(gap) {
@@ -1575,10 +1797,13 @@ function bindUI() {
     if (e.ctrlKey) parts.push("ctrl");
     if (e.shiftKey) parts.push("shift");
     if (e.altKey) parts.push("alt");
-    const k = String(e.key).toLowerCase();
-    if (!["control", "shift", "alt", "meta"].includes(k)) parts.push(k);
-    if (parts.length < 2) {
-      toast("至少要包含一个修饰键（Ctrl/Alt/Shift）", 1600);
+    if (e.metaKey) parts.push("win");
+    // 用物理键位 e.code 而不是 e.key：Shift+1 录成 shift+1 而不是 shift+!
+    const k = codeToKeyName(e.code);
+    if (k) parts.push(k);
+    const fnKey = /^f\d+$/.test(k || "");
+    if (!k || (parts.length < 2 && !fnKey)) {
+      toast(k ? "至少要包含一个修饰键（Ctrl/Alt/Shift/Win），F 键除外" : "这个键暂不支持", 1600);
       return;
     }
     $("#sel-value").value = parts.join("+");
@@ -1669,15 +1894,29 @@ function bindUI() {
     if (ok.ok) await refreshState();
   });
 
-  $("#icon-sync").addEventListener("click", async () => {
-    toast("正在同步图标库…", 1500);
-    const r = await post("/api/icons/sync", {});
-    toast(`图标库已更新：新增 ${r.added}，共 ${r.count} 个`, 2200);
-    await loadIcons();
-    await refreshState();
+  $("#sel-thumb").addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    hideKeyMenu();
+    showThumbMenu(e.clientX, e.clientY);
   });
-  $("#icon-search").addEventListener("input", () => loadIcons());
+  $("#catalog-refresh").addEventListener("click", async () => {
+    toast("正在读取官方图标包和插件…", 1200);
+    const r = await post("/api/catalog/refresh", {});
+    iconPacks = r.packs || [];
+    pluginItems = r.plugins || [];
+    await loadIcons();
+    await loadPlugins();
+    toast(`图标包 ${iconPacks.length} 个，插件 ${pluginItems.length} 个`, 1800);
+  });
+  let searchTimer = null;
+  $("#icon-search").addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { loadIcons(); loadPlugins(); }, 160);
+  });
+  bindSidebar();
   loadIcons();
+  loadPlugins();
 
   let selectedScene = null;
   let sceneMenuEl = null;
@@ -1770,49 +2009,52 @@ function bindUI() {
         const name = typeof it === "string" ? it : it.name;
         const active = typeof it === "string" ? false : it.active;
         const custom = typeof it === "string" ? false : it.custom;
+        const isOfficial = typeof it === "string" ? false : it.official;
         const picked = selectedScene === name;
-        return `<div class="row scene-row${active ? " active" : ""}${custom ? " custom" : ""}${picked ? " picked" : ""}"`
+        return `<div class="row scene-row${active ? " active" : ""}${custom ? " custom" : ""}${isOfficial ? " official" : ""}${picked ? " picked" : ""}"`
           + ` data-name="${name}" data-custom="${custom ? 1 : 0}">`
-          + `<b>${name}</b>`
-          + `<span class="scene-ops">${active ? "使用中" : (picked ? `<button class="scene-apply">切换</button>` : "")}</span>`
+          + `<b title="${isOfficial ? "来自官方驱动的场景" : ""}">${name}</b>`
+          + `<span class="scene-ops">${active ? "使用中" : ""}</span>`
           + "</div>";
       }).join("")
       : "<div class='row'>还没有场景，点 ＋ 新建</div>";
     box.querySelectorAll(".scene-row").forEach((row) => {
       const name = row.dataset.name;
-      row.addEventListener("click", (e) => {
-        if (e.target.classList.contains("scene-apply")) return;
+      row.addEventListener("click", async () => {
+        if (row.querySelector(".scene-rename")) return;      // 正在改名
         selectedScene = name;
-        renderScenes(items);
+        if (row.classList.contains("active") || row.classList.contains("switching")) return;
+        box.querySelectorAll(".scene-row.switching").forEach((r) => r.classList.remove("switching"));
+        row.classList.add("switching");
+        const r = await post("/api/scenes", { apply: name });
+        if (!r.ok) {
+          row.classList.remove("switching");
+          toast("切换失败", 1600);
+          return;
+        }
+        toast(`已切换到「${name}」`, 1200);
+        await refreshState();
+        await reloadScenes();
       });
       row.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
         showSceneMenu(e.clientX, e.clientY, name, row.dataset.custom === "1");
       });
-      const apply = row.querySelector(".scene-apply");
-      if (apply) {
-        apply.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          const r = await post("/api/scenes", { apply: name });
-          toast(r.ok ? `已切换到「${name}」` : "切换失败", 1600);
-          if (r.ok) {
-            await refreshState();
-            await reloadScenes();
-          }
-        });
-      }
     });
   };
   const reloadScenes = async () => {
     const r = await post("/api/scenes", {});
     renderScenes(r.items || []);
+    const c = $("#scene-count");
+    if (c) c.textContent = String((r.items || []).length);
   };
+  window.m18ReloadScenes = reloadScenes;
   $("#scene-add").addEventListener("click", async () => {
     const name = window.prompt("新场景名称", `场景 ${new Date().toLocaleDateString()}`);
     if (!name) return;
     const r = await post("/api/scenes", { save: name });
-    toast(r.ok ? `已新建「${name}」（点它再点切换才会应用）` : "新建失败", 2200);
+    toast(r.ok ? `已新建「${name}」（单击即可切换过去）` : "新建失败", 2200);
     selectedScene = name;
     renderScenes(r.items || []);
   });
@@ -1833,50 +2075,7 @@ function bindUI() {
     selectedScene = null;
     renderScenes(r.items || []);
   });
-  $("#scene-official").addEventListener("click", async () => {
-    const r = await post("/api/scenes", { official: true });
-    const items = r.items || [];
-    const box = $("#scene-list");
-    if (!items.length) {
-      box.innerHTML = "<div class='row'>没找到官方场景</div>";
-      return;
-    }
-    box.innerHTML = `<div class="row scene-back" id="scene-back">← 返回场景列表</div>`
-      + items.map((it) =>
-        `<div class="row scene-row official" data-id="${it.id}" data-name="${it.name}">` +
-        `<b>${it.name}</b><span>${it.count} 键</span></div>`).join("");
-    $("#scene-back").addEventListener("click", () => reloadScenes());
-    box.querySelectorAll(".official").forEach((row) => {
-      row.addEventListener("click", async () => {
-        toast("正在导入官方场景…", 1500);
-        const res = await post("/api/scenes", { import: row.dataset.id });
-        if (res.ok) {
-          const info = res.stats || {};
-          toast(`已导入「${row.dataset.name}」：可执行 ${info.supported ?? "-"} / 共 ${info.total ?? "-"} 键（灰色键为官方控件，暂不支持）`, 4600);
-        } else {
-          toast("导入失败", 2200);
-        }
-        if (res.ok) {
-          await refreshState();
-          await reloadScenes();
-        }
-      });
-    });
-  });
   reloadScenes();
-
-  $("#library-btn").addEventListener("click", async () => {
-    const r = await post("/api/library", {});
-    const plugins = r.plugins || [];
-    const profiles = r.profiles || [];
-    const head = document.querySelectorAll(".side-sec-head span")[2];
-    if (head) head.textContent = `资源库 · ${plugins.length}`;
-    const rows = plugins.slice(0, 80).map((p) =>
-      `<div class="row"><b>${p.name || p.id}</b><span>${p.actions} 动作</span></div>`).join("")
-      + profiles.slice(0, 30).map((n) =>
-        `<div class="row"><b>${n}</b><span>场景</span></div>`).join("");
-    $("#lib-list").innerHTML = rows || "<div class='row'>没有找到资源</div>";
-  });
 
   $("#lightonly-btn").addEventListener("click", async () => {
     const v = !(state?.lightingOnly);
@@ -1945,6 +2144,10 @@ function connectEvents() {
       toast(`导航：${msg.name}`, 1200);
     } else if (msg.type === "page") {
       refreshState();
+    } else if (msg.type === "scene") {
+      toast(msg.ok ? `场景：${msg.name}` : "切换场景失败", 1400);
+      refreshState();
+      window.m18ReloadScenes?.();
     } else if (msg.type === "status") {
       refreshState();
     }

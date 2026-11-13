@@ -6,6 +6,7 @@ app/config.json.tmp
 app/config-backups/
 app/scenes/
 app/assets/uploads/
+app/assets/gifcache/
 app/assets/icons/
 
 # ---- 第三方/体积较大的本地依赖 ----

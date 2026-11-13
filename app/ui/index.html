@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261112b" />
+  <link rel="stylesheet" href="style.css?v=20261113b" />
 </head>
 <body>
 <div class="app">
@@ -19,35 +19,45 @@
     </div>
 
     <div class="side-search">
-      <input id="icon-search" class="sel-input" placeholder="搜索图标 / 分类" />
-      <button class="seg small" id="icon-sync" title="从官方驱动同步图标">同步</button>
+      <input id="icon-search" class="sel-input" placeholder="搜索图标 / 插件" />
+      <button class="seg small" id="catalog-refresh" title="重新读取官方驱动里的图标包和插件">刷新</button>
     </div>
 
     <div class="side-scroll">
-      <div class="side-sec">
+      <section class="side-sec" data-sec="scenes">
         <div class="side-sec-head">
-          <span>场景</span>
+          <button class="sec-toggle" type="button"><i class="chev"></i><span>场景</span><b id="scene-count"></b></button>
           <span class="side-sec-actions">
-            <button class="seg tiny" id="scene-official">官方</button>
             <button class="seg tiny icon-btn" id="scene-add" title="新建场景">＋</button>
             <button class="seg tiny icon-btn" id="scene-del-btn" title="删除选中场景">－</button>
           </span>
         </div>
-        <div class="lib-list" id="scene-list"></div>
-      </div>
-
-      <div class="side-sec">
-        <div class="side-sec-head"><span>图标库</span><b id="icon-count">0</b></div>
-        <div class="icon-groups" id="icon-groups"></div>
-      </div>
-
-      <div class="side-sec">
-        <div class="side-sec-head">
-          <span>资源库</span>
-          <button class="seg tiny" id="library-btn">扫描</button>
+        <div class="side-sec-body">
+          <div class="lib-list" id="scene-list"></div>
         </div>
-        <div class="lib-list" id="lib-list"></div>
-      </div>
+      </section>
+
+      <section class="side-sec" data-sec="icons">
+        <div class="side-sec-head">
+          <button class="sec-toggle" type="button"><i class="chev"></i><span>图标库</span><b id="icon-count">0</b></button>
+          <span class="side-sec-actions">
+            <button class="seg tiny" id="icon-collapse" title="收起全部图标包">收起</button>
+          </span>
+        </div>
+        <div class="side-sec-body">
+          <div class="icon-groups" id="icon-groups"></div>
+        </div>
+      </section>
+
+      <section class="side-sec" data-sec="plugins">
+        <div class="side-sec-head">
+          <button class="sec-toggle" type="button"><i class="chev"></i><span>插件</span><b id="plugin-count">0</b></button>
+        </div>
+        <div class="side-sec-body">
+          <div class="plugin-list" id="plugin-list"></div>
+          <p class="side-note">点插件展开动作；动作图标可拖到按键上使用。插件本身的运行需要插件宿主（后续版本）。</p>
+        </div>
+      </section>
     </div>
 
     <div class="sidebar-foot">
@@ -180,6 +190,8 @@
                     <option value="mute">静音</option>
                     <option value="volup">音量 +</option>
                     <option value="voldown">音量 −</option>
+                    <option value="brightup">屏幕亮度 +</option>
+                    <option value="brightdown">屏幕亮度 −</option>
                   </select>
                   <select id="sel-nav" class="sel-input" hidden></select>
                 </div>
@@ -250,8 +262,8 @@
             </div>
             <div class="slider-row tight">
               <span>待机</span>
-              <input id="standby-sec" type="range" min="3" max="300" step="1" value="60" />
-              <b id="standby-sec-val">60s</b>
+              <input id="standby-sec" type="range" min="5" max="1800" step="5" value="300" />
+              <b id="standby-sec-val">5 分钟</b>
             </div>
             <div class="slider-row tight">
               <span>亮度</span>
@@ -339,6 +351,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261112b"></script>
+<script src="app.js?v=20261113c"></script>
 </body>
 </html>
