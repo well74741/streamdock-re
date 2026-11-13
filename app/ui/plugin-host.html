@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>M18 插件宿主</title>
+</head>
+<body>
+<!--
+  后台无头浏览器打开的页面：
+  1) 用 iframe 加载网页类插件，并调用插件页里的 connectElgatoStreamDeckSocket 完成注册；
+  2) 把插件发来的 SVG 画成 PNG（Python 端的 Pillow 不会画 SVG）。
+-->
+<script>
+const params = new URLSearchParams(location.search);
+const port = params.get("ws");
+const frames = new Map();
+let ws = null;
+
+function log(message) {
+  try { ws && ws.readyState === 1 && ws.send(JSON.stringify({ event: "log", message: String(message) })); } catch (_) { /* ignore */ }
+}
+
+function connect() {
+  ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  ws.onopen = () => ws.send(JSON.stringify({ event: "registerHost" }));
+  ws.onmessage = (ev) => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (_) { return; }
+    if (m.event === "plugins") syncPlugins(m.items || [], m.port);
+    else if (m.event === "rasterize") rasterize(m);
+  };
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+
+function syncPlugins(items, wsPort) {
+  const want = new Set(items.map((i) => i.uuid));
+  for (const [uuid, f] of frames) {
+    if (!want.has(uuid)) { f.remove(); frames.delete(uuid); }
+  }
+  for (const it of items) {
+    if (frames.has(it.uuid)) continue;
+    const f = document.createElement("iframe");
+    f.style.cssText = "width:320px;height:240px;border:0";
+    f.addEventListener("load", () => {
+      if (f.dataset.registered) return;           // 插件页内部跳转不重复注册
+      const w = f.contentWindow;
+      const fn = w && (w.connectElgatoStreamDeckSocket || w.connectSocket);
+      if (typeof fn !== "function") {
+        log(`${it.uuid}：插件页没有 connectElgatoStreamDeckSocket`);
+        return;
+      }
+      try {
+        fn.call(w, wsPort, it.uuid, "registerPlugin", it.info);
+        f.dataset.registered = "1";
+        log(`${it.uuid}：网页插件已加载`);
+      } catch (e) {
+        log(`${it.uuid}：注册出错 ${e}`);
+      }
+    });
+    f.src = it.url;
+    document.body.appendChild(f);
+    frames.set(it.uuid, f);
+  }
+}
+
+async function rasterize(m) {
+  try {
+    const img = new Image();
+    img.src = m.image;
+    await img.decode();
+    const size = m.size || 144;
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    c.getContext("2d").drawImage(img, 0, 0, size, size);
+    ws.send(JSON.stringify({ event: "rasterized", id: m.id, image: c.toDataURL("image/png") }));
+  } catch (e) {
+    log(`SVG 转换失败：${e}`);
+  }
+}
+
+connect();
+</script>
+</body>
+</html>

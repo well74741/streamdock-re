@@ -296,7 +296,16 @@ function refreshCells() {
     const act = acts[n];
     const imgEl = $(".cell-img", cell);
     if (imgEl) {
-      if (hasImg) {
+      const plug = state?.keyPlugin?.[n];
+      if (plug && plug.rev > 0) {
+        // 插件在画这个键：显示服务端合成好的实时画面（已含标题）
+        const lv = `${n}-live-${plug.rev}`;
+        if (imgEl.dataset.v !== lv) {
+          imgEl.src = `/api/key/${n}/live.jpg?v=${plug.rev}`;
+          imgEl.dataset.v = lv;
+        }
+        imgEl.hidden = false;
+      } else if (hasImg) {
         // 用原始文件（GIF 会实时播放），和控制台"所见即所得"
         // 按图片版本判断：切场景 / 翻页后同一个键换了图，也要重新加载
         const rev = `${n}-${state?.keyImageRev?.[n] || imgs[n]}`;
@@ -312,7 +321,8 @@ function refreshCells() {
       }
     }
     cell.style.backgroundImage = "";
-    cell.style.backgroundColor = hasImg ? "" : (st.bg || "#000");
+    const live = (state?.keyPlugin?.[n]?.rev || 0) > 0;
+    cell.style.backgroundColor = hasImg || live ? "" : (st.bg || "#000");
     const label = $(".cell-label", cell);
     if (label) {
       label.innerHTML = splitLabel(st.text, st.size ?? 20).join("<br>");
@@ -324,7 +334,7 @@ function refreshCells() {
       label.style.lineHeight = "1.15";
       label.style.padding = `${Math.max(1, (3 * px) / 64)}px`;
       label.style.alignItems = st.pos === "top" ? "flex-start" : (st.pos === "bottom" ? "flex-end" : "center");
-      label.hidden = !st.text;
+      label.hidden = !st.text || live;
     }
     const badge = $(".badge", cell);
     if (badge) badge.hidden = !hasImg;
@@ -658,11 +668,16 @@ function bindIconDrag(container) {
         toast("底部三个实体键没有屏幕，不能放图标", 1600);
         return;
       }
+      if (img.dataset.name.startsWith("plugin:")) {
+        const m = img.dataset.name.slice(7).match(/^(.*)\/(\d+)$/);
+        const r = m ? await post("/api/key/plugin", { key, plugin: m[1], index: Number(m[2]) }) : { ok: false };
+        const name = img.closest(".pl-act")?.querySelector("span")?.textContent || "插件动作";
+        toast(r.ok ? `按键 ${key} 已绑定「${name}」，按下由插件处理` : "绑定失败", 2200);
+        if (r.ok) await refreshState();
+        return;
+      }
       const ok = await post("/api/key/icon", { key, name: img.dataset.name });
-      const fromPlugin = img.dataset.name.startsWith("plugin:");
-      toast(!ok.ok ? "应用失败"
-        : fromPlugin ? `已把插件图标放到按键 ${key}（只是图标：插件功能要等插件宿主做好后才能运行）`
-          : `图标已应用到按键 ${key}`, fromPlugin ? 3200 : 1300);
+      toast(ok.ok ? `图标已应用到按键 ${key}` : "应用失败", 1300);
       if (ok.ok) await refreshState();
     };
     document.addEventListener("pointermove", onMove, true);
@@ -770,6 +785,47 @@ function showKeyMenu(x, y, key) {
 function hideKeyMenu() {
   if (keyMenuEl) keyMenuEl.hidden = true;
   if (thumbMenuEl) thumbMenuEl.hidden = true;
+}
+
+/* 插件设置页（Property Inspector）：iframe 加载插件自带的设置网页，按官方协议注册 */
+async function openPluginSettings(key) {
+  const r = await post("/api/plugin/pi", { key });
+  if (!r.ok) {
+    toast(r.error || "打不开插件设置", 1800);
+    return;
+  }
+  const modal = document.createElement("div");
+  modal.className = "modal pi-modal";
+  modal.innerHTML = `<div class="modal-card pi-card">
+      <div class="modal-head"><h2>插件设置 · ${escHtml(r.name)}（按键 ${key}）</h2>
+        <button class="seg small" data-close>关闭</button></div>
+      <iframe class="pi-frame" title="插件设置"></iframe>
+    </div>`;
+  document.body.appendChild(modal);
+  const frame = modal.querySelector("iframe");
+  frame.addEventListener("load", () => {
+    if (frame.dataset.registered) return;
+    const w = frame.contentWindow;
+    const fn = w && (w.connectElgatoStreamDeckSocket || w.connectSocket);
+    if (typeof fn !== "function") {
+      toast("这个插件的设置页不兼容", 1800);
+      return;
+    }
+    try {
+      fn.call(w, r.port, r.uuid, "registerPropertyInspector", r.info, r.actionInfo);
+      frame.dataset.registered = "1";
+    } catch (e) {
+      toast(`插件设置页出错：${e}`, 2200);
+    }
+  });
+  frame.src = r.url;
+  const close = async () => {
+    modal.remove();                       // iframe 卸载即断开设置页连接
+    await post("/api/plugin/pi-closed", { key });
+    await refreshState();
+  };
+  modal.querySelector("[data-close]").addEventListener("click", close);
+  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
 }
 
 /* 按键编辑预览区右键：在资源管理器里定位图标（原始来源 / 控制台里的副本） */
@@ -970,8 +1026,10 @@ function renderEditor() {
       thumb.innerHTML = `<span class="thumb-hint">导航键无屏幕</span>`;
     } else {
       const parts = [];
-      if (img) parts.push(`<img class="thumb-img" src="/api/key/${n}/raw?v=${Date.now()}" alt="" />`);
-      const label = st.text || (img ? "" : String(n));
+      const plugLive = (state?.keyPlugin?.[n]?.rev || 0) > 0;
+      if (plugLive) parts.push(`<img class="thumb-img" src="/api/key/${n}/live.jpg?v=${Date.now()}" alt="" />`);
+      else if (img) parts.push(`<img class="thumb-img" src="/api/key/${n}/raw?v=${Date.now()}" alt="" />`);
+      const label = plugLive ? "" : (st.text || (img ? "" : String(n)));
       if (label) {
         const tw = thumb.clientWidth || 96;
         const fs = Math.max(6, (st.size ?? 20) * (tw / 64));
@@ -993,7 +1051,20 @@ function renderEditor() {
   $("#sel-size-val").textContent = `${st.size ?? 20}`;
   $("#sel-pos").value = st.pos || "center";
 
-  $("#sel-action").textContent = act ? (type === "nav" ? `导航：${act}` : `打开：${act}`) : "未绑定";
+  $("#sel-action").textContent = !act ? "未绑定"
+    : type === "nav" ? `导航：${act}` : type === "plugin" ? act : `打开：${act}`;
+  const plug = state?.keyPlugin?.[n];
+  const plugRow = $("#row-plugin");
+  if (plugRow) {
+    plugRow.hidden = !plug;
+    if (plug) {
+      $("#sel-plugin-status").textContent = {
+        connected: "运行中", starting: "启动中…", idle: "未启动（显示时自动启动）",
+        failed: "启动失败（见 plugin-data\\logs）", unavailable: "插件宿主不可用",
+      }[plug.status] || plug.status;
+      $("#sel-plugin-status").dataset.status = plug.status;
+    }
+  }
   $("#sel-image").textContent = isNav ? "导航键无屏幕" : (img ? "单独图片 / 动图" : "无（标题 / 编号）");
 
   const nav = $("#sel-nav");
@@ -1041,9 +1112,11 @@ function renderEditor() {
       .join("");
   }
 
-  $("#sel-hint").textContent = isNav
-    ? "导航键默认：左=上一页，中=主页，右=下一页；也可以改成打开程序、网页或热键。"
-    : "拖图片换画面；拖程序 / 快捷方式 / 脚本 / 文件夹绑定动作，按下即打开。";
+  $("#sel-hint").textContent = actType === "plugin"
+    ? "插件动作：按下由插件处理，画面也由插件更新；点「插件设置」配置。改成别的类型即解除绑定。"
+    : isNav
+      ? "导航键默认：左=上一页，中=主页，右=下一页；也可以改成打开程序、网页或热键。"
+      : "拖图片换画面；拖程序 / 快捷方式 / 脚本 / 文件夹绑定动作，按下即打开。";
 }
 
 /* ------------------------------------------------------------------ 拖放绑定 */
@@ -1894,6 +1967,9 @@ function bindUI() {
     if (ok.ok) await refreshState();
   });
 
+  $("#sel-plugin-pi").addEventListener("click", () => {
+    if (selectedKey) openPluginSettings(selectedKey);
+  });
   $("#sel-thumb").addEventListener("contextmenu", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2144,6 +2220,19 @@ function connectEvents() {
       toast(`导航：${msg.name}`, 1200);
     } else if (msg.type === "page") {
       refreshState();
+    } else if (msg.type === "keyvisual") {
+      const p = state?.keyPlugin?.[msg.key];
+      if (p) {
+        p.rev = msg.rev;
+        refreshCells();
+        if (selectedKey === msg.key) {
+          const ti = $("#sel-thumb .thumb-img");
+          if (ti) ti.src = `/api/key/${msg.key}/live.jpg?v=${msg.rev}`;
+          else renderEditor();
+        }
+      } else {
+        refreshState();
+      }
     } else if (msg.type === "scene") {
       toast(msg.ok ? `场景：${msg.name}` : "切换场景失败", 1400);
       refreshState();

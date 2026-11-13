@@ -208,12 +208,17 @@ class PluginIndex:
         self.install_root = install_root
         self.by_action: dict[str, tuple[str, dict]] = {}
         self.plugins: list[dict] = []
+        self.uid_of_folder: dict[str, str] = {}
+        self.private: set[str] = set()          # 官方内置（宿主实现）的插件目录
         seen = set()
         for folder in plugin_dirs(install_root):
             man = _plugin_manifest(folder)
             if not man:
                 continue
             uid = str(man.get("UUID") or os.path.basename(folder)[:-len(".sdPlugin")])
+            self.uid_of_folder[folder] = uid
+            if man.get("PrivateAPI"):
+                self.private.add(folder)
             for act in man.get("Actions") or []:
                 if isinstance(act, dict) and act.get("UUID"):
                     self.by_action.setdefault(str(act["UUID"]), (folder, act))
@@ -382,6 +387,31 @@ def convert_action(act: dict, vk_names: dict) -> tuple[dict | None, list]:
     return None, []
 
 
+def plugin_action(act: dict, plugins: PluginIndex) -> dict | None:
+    """官方场景里的第三方插件动作（时钟、天气、日历…）→ 本控制台的插件动作，带上官方存的设置。"""
+    uuid = str(act.get("UUID") or "")
+    hit = plugins.by_action.get(uuid)
+    if not hit or hit[0] in plugins.private:
+        return None
+    folder, man_act = hit
+    state = act.get("State", 0)
+    st = _state(act)
+    title_params = {k: st.get(src) for k, src in (
+        ("fontFamily", "FontFamily"), ("fontSize", "FontSize"), ("fontStyle", "FontStyle"),
+        ("fontUnderline", "FontUnderline"), ("showTitle", "ShowTitle"),
+        ("titleAlignment", "TitleAlignment"), ("titleColor", "TitleColor")) if st.get(src) is not None}
+    return {
+        "titleParameters": title_params,
+        "type": "plugin",
+        "plugin": plugins.uid_of_folder.get(folder, ""),
+        "action": uuid,
+        "name": str(man_act.get("Name") or act.get("Name") or uuid.rsplit(".", 1)[-1]),
+        "settings": act.get("Settings") if isinstance(act.get("Settings"), dict) else {},
+        "context": os.urandom(16).hex(),
+        "state": state if isinstance(state, int) else 0,
+    }
+
+
 def _state(act: dict) -> dict:
     states = act.get("States") or [{}]
     idx = act.get("State", 0)
@@ -473,6 +503,8 @@ def convert_page(manifest: dict, page_src, plugins: PluginIndex, install_root: s
             continue
         total += 1
         spec, _ = convert_action(act, vk_names)
+        if not spec:
+            spec = plugin_action(act, plugins)
         if spec:
             actions[key] = spec
             supported += 1

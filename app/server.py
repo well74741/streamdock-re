@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence
 
 import official
+from pluginhost import PluginHost
 from wssdk import DeviceWS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,6 +93,7 @@ WS_SDK_EXE = os.environ.get("M18_WS_SDK") or os.path.normpath(
 CONFIG_PATH = os.path.join(HERE, "config.json")
 UPLOAD_DIR = os.path.join(HERE, "assets", "uploads")
 GIF_CACHE = os.path.join(HERE, "assets", "gifcache")   # 交给 SDK 原生播放的 64×64 动图
+PLUGIN_DATA = os.path.join(HERE, "plugin-data")          # 插件全局设置、进程日志
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
@@ -228,6 +230,8 @@ def action_label(spec: dict) -> str:
         return MEDIA_LABELS.get(spec.get("action", ""), ("", ""))[1]
     if kind == "macro":
         return f"宏 · {len(spec.get('steps') or [])} 步"
+    if kind == "plugin":
+        return f"插件 · {spec.get('name') or spec.get('action', '').rsplit('.', 1)[-1]}"
     if kind == "url":
         return spec.get("url", "")
     path = spec.get("path", "")
@@ -524,6 +528,14 @@ class App:
         # 可重入：保存配置时会顺带读配置写回场景
         self._save_lock = threading.RLock()
         self._gif_lock = threading.RLock()
+        # 插件运行时状态：画面 / 标题都按动作实例 context 记（不落盘）
+        self.plugin_host: PluginHost | None = None
+        self._plugins_live = False
+        self._plugin_lock = threading.RLock()
+        self.plugin_visual: dict[str, dict] = {}
+        self._plugin_visible: dict[str, tuple] = {}   # context -> (键号, 动作)
+        self._plugin_dirty: dict[int, float] = {}
+        self._raster_pending: dict[str, str] = {}     # SVG 光栅化请求 id -> context
         self._gif_active: dict[int, str] = {}   # 正在由 SDK 原生播放的键 → GIF 文件
         self._gif_session = -1
         self.official_root_cfg = ""      # config.json 里手动指定的官方软件目录
@@ -589,6 +601,7 @@ class App:
         self._calib_until = 0.0
         self._identify = None
         self._pushing = False
+        self._migrate_official_plugins()
         self._load_config()
         self._bind_page()
         self._ensure_custom_snapshot()
@@ -688,7 +701,9 @@ class App:
         shadow = Image.new("RGBA", (KEY_SIZE, KEY_SIZE), (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
         lines = [text]
-        if od.textlength(text, font=font) > KEY_SIZE - 6 and len(text) > 3:
+        if "\n" in text:
+            lines = [ln for ln in text.split("\n") if ln.strip()][:3] or [""]
+        elif od.textlength(text, font=font) > KEY_SIZE - 6 and len(text) > 3:
             mid = (len(text) + 1) // 2
             lines = [text[:mid], text[mid:]]
         line_h = size + 3
@@ -708,6 +723,21 @@ class App:
             y += line_h
         img = Image.alpha_composite(img.convert("RGBA"), shadow)
         return Image.alpha_composite(img, overlay).convert("RGB")
+
+    @staticmethod
+    def _draw_flash(img, kind: str):
+        """插件 showOk / showAlert：在键面上盖一个对勾 / 感叹号。"""
+        img = img.convert("RGB")
+        d = ImageDraw.Draw(img, "RGBA")
+        d.rectangle([0, 0, KEY_SIZE, KEY_SIZE], fill=(0, 0, 0, 120))
+        if kind == "ok":
+            d.ellipse([16, 16, 48, 48], fill=(40, 180, 90, 255))
+            d.line([(24, 32), (30, 39), (41, 25)], fill=(255, 255, 255, 255), width=4)
+        else:
+            d.polygon([(32, 13), (52, 48), (12, 48)], fill=(230, 160, 30, 255))
+            d.rectangle([30, 24, 34, 38], fill=(255, 255, 255, 255))
+            d.rectangle([30, 41, 34, 45], fill=(255, 255, 255, 255))
+        return img
 
     def _styled_frame(self, key: int, jpeg: bytes) -> bytes:
         """动图帧也要叠标题，保证控制台和屏幕一致。"""
@@ -748,7 +778,14 @@ class App:
         size = max(8, min(40, int(style.get("size", 20))))
         pos = style.get("pos") or "center"
         base = self._key_jpeg(key)
-        ck = (key, text, bg, fg, opacity, size, pos, hash(base) if base else 0)
+        vis = self._plugin_vis(key)
+        flash = ""
+        if vis:
+            if vis.get("title") is not None:
+                text = str(vis["title"]).strip()
+            if vis.get("flash") and vis["flash"][1] > time.time():
+                flash = vis["flash"][0]
+        ck = (key, text, bg, fg, opacity, size, pos, hash(base) if base else 0, flash)
         if ck in self._num_cache:
             return self._num_cache[ck]
 
@@ -764,7 +801,9 @@ class App:
             d0.rounded_rectangle([1, 1, KEY_SIZE - 2, KEY_SIZE - 2], radius=8,
                                  outline=(max(bg[0], 30), max(bg[1], 36), max(bg[2], 48)), width=1)
 
-        img = self._draw_text(img, dict(style, text=text or ("" if base else str(key))))
+        img = self._draw_text(img, dict(style, text=text or ("" if base or vis else str(key))))
+        if flash:
+            img = self._draw_flash(img, flash)
 
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=92)
@@ -845,7 +884,16 @@ class App:
             self.device.refresh()
         return True
 
+    def _plugin_vis(self, key: int) -> dict | None:
+        spec = self.key_actions.get(key)
+        if isinstance(spec, dict) and spec.get("type") == "plugin":
+            return self.plugin_visual.get(spec.get("context") or "")
+        return None
+
     def _key_jpeg(self, key: int) -> bytes | None:
+        vis = self._plugin_vis(key)
+        if vis and vis.get("jpeg"):
+            return vis["jpeg"]
         item = self.key_overrides.get(key)
         if not item:
             return None
@@ -987,6 +1035,13 @@ class App:
         if made:
             log(f"动图预渲染完成：新增 {made} 个")
 
+    def _gif_want(self, key: int) -> str | None:
+        """这个键应该由 SDK 播哪个 GIF：插件发来的动图 > 插件静态图（不播）> 按键自己的动图。"""
+        vis = self._plugin_vis(key)
+        if vis and (vis.get("gif") or vis.get("jpeg")):
+            return vis.get("gif")
+        return self._gif_path_for(key, self.key_overrides.get(key))
+
     def _gif_stop_all(self) -> None:
         """整屏换画面（待机 / 壁纸 / 息屏 / 重画）前先停掉 SDK 的动图，否则会盖掉新画面。"""
         with self._gif_lock:
@@ -1004,11 +1059,10 @@ class App:
             if not self._gif_allowed():
                 return
             want = {}
-            for key, item in self.key_overrides.items():
-                if 1 <= key <= KEY_COUNT:
-                    path = self._gif_path_for(key, item)
-                    if path:
-                        want[key] = path
+            for key in range(1, KEY_COUNT + 1):
+                path = self._gif_want(key)
+                if path:
+                    want[key] = path
             for key in [k for k in self._gif_active if k not in want]:
                 self.device.clear_key_gif(key)
             for key, path in want.items():
@@ -1024,7 +1078,7 @@ class App:
         """单个键换图 / 改标题：只动这一个键。要在写静态画面之前调用。"""
         with self._gif_lock:
             self._gif_sync_session()
-            want = self._gif_path_for(key, self.key_overrides.get(key)) if self._gif_allowed() else None
+            want = self._gif_want(key) if self._gif_allowed() else None
             old = self._gif_active.get(key)
             if old == want:
                 return
@@ -1201,6 +1255,7 @@ class App:
         self.key_overrides = page["images"]
         self.key_actions = page["actions"]
         self.key_styles = page.setdefault("styles", {})
+        self._plugin_sync()
 
     def goto_page(self, index: int) -> bool:
         if not self.pages:
@@ -1428,6 +1483,7 @@ class App:
         # 多个请求线程可能同时保存，共用同一个 .tmp 会互相覆盖 / os.replace 报错
         with self._save_lock:
             self._save_config_locked()
+        self._plugin_sync()
 
     def _save_config_locked(self) -> None:
         self._backup_config()
@@ -1599,7 +1655,8 @@ class App:
             pushed = 0
             # SDK 原生播放的键不归这里管
             host_keys = [k for k, it in self.key_overrides.items()
-                         if it.get("type") == "anim" and it.get("frames") and k not in self._gif_active]
+                         if it.get("type") == "anim" and it.get("frames") and k not in self._gif_active
+                         and not self._plugin_vis(k)]
             if not host_keys:
                 continue
             # SDK 写图没有回执、也没有背压：所有动图合计每秒最多 20 帧，
@@ -1856,6 +1913,10 @@ class App:
         self.events.appendleft(item)
         self.broadcast(item)
         log(f"按键事件 key={key} state={state} standby={self.in_standby}")
+        act = self.key_actions.get(key)
+        if isinstance(act, dict) and act.get("type") == "plugin":
+            self._plugin_key(key, act, state)
+            return
         if state == 1:
             if self.repaint_on_press:
                 self._maybe_repaint()
@@ -1977,6 +2038,15 @@ class App:
                           "active": name == self.active_scene})
         return items
 
+    @staticmethod
+    def _fresh_contexts(data: dict) -> dict:
+        """场景另存 / 复制后，里面的插件实例要换新 context，否则和原场景共用同一个实例。"""
+        for page in data.get("pages") or []:
+            for spec in (page.get("actions") or {}).values():
+                if isinstance(spec, dict) and spec.get("type") == "plugin":
+                    spec["context"] = os.urandom(16).hex()
+        return data
+
     def save_scene(self, name: str) -> bool:
         name = (name or "").strip()[:40]
         if not name:
@@ -1984,7 +2054,7 @@ class App:
         try:
             os.makedirs(SCENE_DIR, exist_ok=True)
             with open(self._scene_path(name), "w", encoding="utf-8") as fh:
-                json.dump(self.export_config(), fh, ensure_ascii=False, indent=2)
+                json.dump(self._fresh_contexts(self.export_config()), fh, ensure_ascii=False, indent=2)
         except OSError as exc:
             log(f"保存场景失败：{exc}")
             return False
@@ -2020,7 +2090,7 @@ class App:
             i += 1
         try:
             with open(src, encoding="utf-8-sig") as fh:
-                data = json.load(fh)
+                data = self._fresh_contexts(json.load(fh))
             with open(self._scene_path(target), "w", encoding="utf-8") as fh:
                 json.dump(data, fh, ensure_ascii=False, indent=2)
         except (OSError, ValueError):
@@ -2321,6 +2391,66 @@ class App:
             f"{r['name']}（{r['supported']}/{r['total']} 键可执行，{r['pages']} 页）" for r in report))
         return {"scenes": report}
 
+    def _migrate_official_plugins(self) -> None:
+        """已同步过的官方场景里，插件控件（时钟 / 天气等）当时没接上：一次性补上插件动作。
+        只补「没有动作」的键，不覆盖用户改过的内容；当前正在用的场景也同步改 config.json。"""
+        mark = self._official_mark_path()
+        try:
+            with open(mark, encoding="utf-8") as fh:
+                meta = json.load(fh)
+        except (OSError, ValueError):
+            return
+        if meta.get("pluginsMigrated") or not meta.get("names"):
+            return
+        try:
+            with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
+                live = json.load(fh)
+        except (OSError, ValueError):
+            live = {}
+        plugins = official.PluginIndex(SD_ROOT)
+        rev = self._vk_reverse()
+        sources = {it["name"]: it for it in official.list_scene_sources()}
+        added_total = 0
+        for name in meta["names"]:
+            item = sources.get(name)
+            path = self._scene_path(name)
+            if not item or not os.path.isfile(path):
+                continue
+            try:
+                with open(path, encoding="utf-8-sig") as fh:
+                    scene = json.load(fh)
+                conv = official.convert_scene(item, plugins, SD_ROOT, rev)
+            except Exception as exc:  # noqa: BLE001
+                log(f"补全官方场景插件失败（{name}）：{exc}")
+                continue
+            targets = [scene["pages"]]
+            if live.get("activeScene") == name and isinstance(live.get("pages"), list):
+                targets.append(live["pages"])
+            added = 0
+            for pages in targets:
+                for i, page in enumerate(conv["pages"]):
+                    if i >= len(pages):
+                        break
+                    acts = pages[i].setdefault("actions", {})
+                    for key, spec in page["actions"].items():
+                        if spec.get("type") == "plugin" and str(key) not in acts:
+                            acts[str(key)] = dict(spec)
+                            added += 1
+            if added:
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(scene, fh, ensure_ascii=False, indent=2)
+                added_total += added
+        if live.get("pages") and added_total:
+            with self._save_lock:
+                tmp = CONFIG_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(live, fh, ensure_ascii=False, indent=2)
+                os.replace(tmp, CONFIG_PATH)
+        meta["pluginsMigrated"] = True
+        with open(mark, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False)
+        log(f"官方场景插件控件补全：新增 {added_total} 个插件动作")
+
     def _auto_sync_official(self) -> None:
         """首次启动自动同步一次；之后用户删掉的官方场景不会再自己冒出来。"""
         if os.path.isfile(self._official_mark_path()):
@@ -2380,6 +2510,8 @@ class App:
             val = self.clipboard.get(name)
             if val:
                 store[key] = copy.deepcopy(val)
+                if name == "action" and isinstance(store[key], dict) and store[key].get("type") == "plugin":
+                    store[key]["context"] = os.urandom(16).hex()
             else:
                 store.pop(key, None)
         self._save_config()
@@ -2686,6 +2818,451 @@ class App:
             self.device.refresh()
         return True
 
+    # -- 插件 ------------------------------------------------------------ #
+    PLUGIN_GLOBAL = os.path.join(PLUGIN_DATA, "global-settings.json")
+
+    def start_plugins(self) -> None:
+        """HTTP 服务起来之后再启动插件宿主（网页插件要从本服务加载）。"""
+        try:
+            os.makedirs(PLUGIN_DATA, exist_ok=True)
+            self.plugin_host = PluginHost(
+                install_root=SD_ROOT, data_dir=PLUGIN_DATA, http_port_fn=lambda: PORT, log=log,
+                on_plugin_message=self._on_plugin_msg, on_pi_message=self._on_pi_msg,
+                on_plugin_ready=self._on_plugin_ready, on_host_message=self._on_host_msg)
+            plugins = {}
+            for uid, p in self._catalog()["plugins"].items():
+                man = official._plugin_manifest(p["folder"])
+                if man:
+                    plugins[uid] = {"folder": p["folder"], "manifest": man}
+            self.plugin_host.register_plugins(plugins)
+            serial = (self.device.info or {}).get("serial") or "M18"
+            self.plugin_host.set_device(f"M18-{serial}")
+        except Exception as exc:  # noqa: BLE001
+            log(f"插件宿主启动失败：{exc}")
+            self.plugin_host = None
+            return
+        self._plugins_live = True
+        threading.Thread(target=self._plugin_flush_loop, daemon=True).start()
+        self._plugin_sync()
+
+    def _device_id(self) -> str:
+        return self.plugin_host.device_info()["id"] if self.plugin_host else "M18"
+
+    @staticmethod
+    def _coords(key: int) -> dict:
+        return {"column": (key - 1) % GRID_COLS, "row": (key - 1) // GRID_COLS}
+
+    def _plugin_payload(self, key: int, spec: dict) -> dict:
+        return {"settings": spec.get("settings") or {}, "coordinates": self._coords(key),
+                "state": int(spec.get("state") or 0), "isInMultiAction": False, "controller": "Keypad"}
+
+    def _plugin_event(self, event: str, key: int, spec: dict, payload: dict | None = None) -> None:
+        if not self.plugin_host:
+            return
+        msg = {"event": event, "action": spec.get("action"), "context": spec.get("context"),
+               "device": self._device_id(), "payload": payload or self._plugin_payload(key, spec)}
+        self.plugin_host.send(spec.get("plugin"), msg)
+
+    def _plugin_sync(self) -> None:
+        """当前页上的插件动作 = 可见实例：新出现的发 willAppear，离开的发 willDisappear。"""
+        if not self._plugins_live:
+            return
+        with self._plugin_lock:
+            now = {}
+            for key, spec in list(self.key_actions.items()):
+                if isinstance(spec, dict) and spec.get("type") == "plugin" and spec.get("context"):
+                    now[spec["context"]] = (key, spec)
+            for ctx, (key, spec) in list(self._plugin_visible.items()):
+                if ctx not in now or now[ctx][0] != key:
+                    self._plugin_event("willDisappear", key, spec)
+                    self._plugin_visible.pop(ctx, None)
+            for ctx, (key, spec) in now.items():
+                if ctx not in self._plugin_visible:
+                    self._plugin_visible[ctx] = (key, spec)
+                    self._plugin_appear(key, spec)
+                else:
+                    self._plugin_visible[ctx] = (key, spec)
+
+    def _title_params(self, spec: dict) -> dict:
+        """标题样式：官方场景里存的 > 插件 manifest 里该状态的默认值 > 通用默认。"""
+        tp = spec.get("titleParameters")
+        if isinstance(tp, dict) and tp:
+            src = tp
+        else:
+            states, _ = self._plugin_states(spec)
+            st = int(spec.get("state") or 0)
+            raw = states[st] if 0 <= st < len(states) and isinstance(states[st], dict) else {}
+            src = {"fontFamily": raw.get("FontFamily"), "fontSize": raw.get("FontSize"),
+                   "fontStyle": raw.get("FontStyle"), "fontUnderline": raw.get("FontUnderline"),
+                   "showTitle": raw.get("ShowTitle"), "titleAlignment": raw.get("TitleAlignment"),
+                   "titleColor": raw.get("TitleColor")}
+        try:
+            size = int(float(src.get("fontSize") or 10))
+        except (TypeError, ValueError):
+            size = 10
+        return {
+            "fontFamily": str(src.get("fontFamily") or ""),
+            "fontSize": size,
+            "fontStyle": str(src.get("fontStyle") or "Regular"),
+            "fontUnderline": bool(src.get("fontUnderline")),
+            "showTitle": src.get("showTitle") is not False,
+            "titleAlignment": str(src.get("titleAlignment") or "bottom"),
+            "titleColor": str(src.get("titleColor") or "#ffffff"),
+        }
+
+    def _plugin_appear(self, key: int, spec: dict) -> None:
+        """willAppear 后紧跟 titleParametersDidChange——不少插件要拿到字体 / 颜色才开始画（官方也是这个顺序）。"""
+        self._plugin_event("willAppear", key, spec)
+        payload = dict(self._plugin_payload(key, spec))
+        payload.update({"title": "", "titleParameters": self._title_params(spec)})
+        self._plugin_event("titleParametersDidChange", key, spec, payload=payload)
+
+    def _on_plugin_ready(self, uid: str) -> None:
+        with self._plugin_lock:
+            for ctx, (key, spec) in self._plugin_visible.items():
+                if spec.get("plugin") == uid:
+                    self._plugin_appear(key, spec)
+
+    def _plugin_key(self, key: int, spec: dict, state: int) -> None:
+        self._plugin_event("keyDown" if state == 1 else "keyUp", key, spec)
+        if state != 0:
+            return
+        # 多状态动作：松开后宿主自动切到下一个状态（官方 / Elgato 的默认行为）
+        states, auto = self._plugin_states(spec)
+        if len(states) > 1 and auto:
+            spec["state"] = (int(spec.get("state") or 0) + 1) % len(states)
+            self._plugin_state_image(spec)
+            self._save_config()
+
+    def _plugin_manifest_action(self, spec: dict) -> tuple[str | None, dict]:
+        p = self._catalog()["plugins"].get(spec.get("plugin") or "")
+        if not p:
+            return None, {}
+        man = official._plugin_manifest(p["folder"]) or {}
+        for act in man.get("Actions") or []:
+            if isinstance(act, dict) and act.get("UUID") == spec.get("action"):
+                return p["folder"], act
+        return p["folder"], {}
+
+    def _plugin_states(self, spec: dict) -> tuple[list, bool]:
+        _, act = self._plugin_manifest_action(spec)
+        return list(act.get("States") or []), not act.get("DisableAutomaticStates")
+
+    def _plugin_state_image(self, spec: dict) -> None:
+        folder, act = self._plugin_manifest_action(spec)
+        states = act.get("States") or []
+        st = int(spec.get("state") or 0)
+        if not (0 <= st < len(states)):
+            return
+        path = official.find_file(folder, (states[st] or {}).get("Image"))
+        img = official.read_image(path) if path else None
+        if img:
+            self._plugin_apply_raster(spec.get("context"), img[1])
+
+    def _find_context(self, ctx: str):
+        """在当前场景所有页里找这个实例。返回 (页号, 键号, 动作)。"""
+        for pi, page in enumerate(self.pages):
+            for key, spec in page.get("actions", {}).items():
+                if isinstance(spec, dict) and spec.get("context") == ctx:
+                    return pi, key, spec
+        return None, None, None
+
+    def _plugin_mark(self, ctx: str) -> None:
+        hit = self._plugin_visible.get(ctx)
+        if hit:
+            self._plugin_dirty[hit[0]] = time.time()
+
+    def _vis(self, ctx: str) -> dict:
+        return self.plugin_visual.setdefault(ctx, {"rev": 0})
+
+    def _plugin_apply_raster(self, ctx: str, raw: bytes) -> None:
+        """插件发来的位图（PNG/JPG/GIF）→ 64×64 键面；多帧 GIF 交给 SDK 原生播放。"""
+        try:
+            im = Image.open(io.BytesIO(raw))
+            frames = int(getattr(im, "n_frames", 1) or 1)
+            first = ImageOps.fit(self._flat_rgb(im), (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
+        except Exception as exc:  # noqa: BLE001
+            log(f"插件图片解析失败：{exc}")
+            return
+        buf = io.BytesIO()
+        first.save(buf, "JPEG", quality=90)
+        vis = self._vis(ctx)
+        vis["jpeg"] = buf.getvalue()
+        vis["gif"] = None
+        if frames > 1:
+            os.makedirs(GIF_CACHE, exist_ok=True)
+            path = os.path.join(GIF_CACHE, f"plg_{hashlib.sha1(raw).hexdigest()[:16]}.gif")
+            if not os.path.isfile(path):
+                with open(path, "wb") as fh:
+                    fh.write(raw)
+            vis["gif"] = path
+        vis["rev"] += 1
+        self._plugin_mark(ctx)
+
+    def _plugin_set_image(self, uid: str, ctx: str, image) -> None:
+        if not ctx:
+            return
+        if not image:
+            vis = self._vis(ctx)
+            vis["jpeg"] = vis["gif"] = None
+            vis["rev"] += 1
+            self._plugin_mark(ctx)
+            return
+        image = str(image)
+        raw, is_svg = None, False
+        if image.startswith("data:"):
+            header, _, data = image.partition(",")
+            is_svg = "svg" in header
+            try:
+                raw = base64.b64decode(data) if ";base64" in header else \
+                    urllib.parse.unquote(data).encode("utf-8")
+            except Exception:  # noqa: BLE001
+                return
+        else:
+            folder = (self._catalog()["plugins"].get(uid) or {}).get("folder")
+            path = official.find_file(folder, image)
+            if path:
+                with open(path, "rb") as fh:
+                    raw = fh.read()
+                is_svg = path.lower().endswith(".svg")
+        if not raw:
+            return
+        if is_svg or raw.lstrip()[:5] in (b"<svg ", b"<?xml") or raw.lstrip().startswith(b"<svg"):
+            # SVG 交给后台浏览器画成 PNG（Pillow 不会画 SVG）
+            rid = os.urandom(6).hex()
+            self._raster_pending[rid] = ctx
+            if len(self._raster_pending) > 200:
+                self._raster_pending.pop(next(iter(self._raster_pending)))
+            svg_uri = "data:image/svg+xml;base64," + base64.b64encode(raw).decode()
+            if self.plugin_host and not self.plugin_host.send_host(
+                    {"event": "rasterize", "id": rid, "image": svg_uri, "size": 144}):
+                self.plugin_host._ensure_browser()
+            return
+        self._plugin_apply_raster(ctx, raw)
+
+    def _on_host_msg(self, msg: dict) -> None:
+        if msg.get("event") == "rasterized":
+            ctx = self._raster_pending.pop(str(msg.get("id")), None)
+            data = str(msg.get("image") or "")
+            if ctx and "," in data:
+                try:
+                    self._plugin_apply_raster(ctx, base64.b64decode(data.split(",", 1)[1]))
+                except Exception:  # noqa: BLE001
+                    pass
+        elif msg.get("event") == "log":
+            log(f"[插件浏览器] {msg.get('message')}")
+
+    def _plugin_global(self) -> dict:
+        try:
+            with open(self.PLUGIN_GLOBAL, encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _set_plugin_global(self, uid: str, settings) -> None:
+        data = self._plugin_global()
+        data[uid] = settings if isinstance(settings, dict) else {}
+        try:
+            os.makedirs(PLUGIN_DATA, exist_ok=True)
+            with open(self.PLUGIN_GLOBAL, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=1)
+        except OSError as exc:
+            log(f"保存插件全局设置失败：{exc}")
+
+    def _did_receive_settings(self, key: int, spec: dict) -> dict:
+        return {"event": "didReceiveSettings", "action": spec.get("action"), "context": spec.get("context"),
+                "device": self._device_id(), "payload": self._plugin_payload(key, spec)}
+
+    def _common_plugin_msg(self, uid: str, ev: str, msg: dict, reply) -> bool:
+        """插件和设置页共有的消息。reply(obj) 回给发送方。"""
+        payload = msg.get("payload") or {}
+        if ev == "openUrl":
+            url = str(payload.get("url") or "")
+            if url.lower().startswith(("http://", "https://")):
+                try:
+                    os.startfile(url)
+                except OSError:
+                    pass
+            else:
+                log(f"插件 {uid} 试图打开非网页地址，已忽略：{url[:80]}")
+            return True
+        if ev == "logMessage":
+            log(f"[插件 {uid}] {str(payload.get('message'))[:300]}")
+            return True
+        if ev == "getGlobalSettings":
+            reply({"event": "didReceiveGlobalSettings",
+                   "payload": {"settings": self._plugin_global().get(uid) or {}}})
+            return True
+        if ev == "setGlobalSettings":
+            self._set_plugin_global(uid, payload)
+            return True
+        return False
+
+    def _on_plugin_msg(self, uid: str, msg: dict) -> None:
+        ev = msg.get("event")
+        ctx = msg.get("context") or ""
+        payload = msg.get("payload") or {}
+        host = self.plugin_host
+        if self._common_plugin_msg(uid, ev, msg, lambda m: host.send(uid, m)):
+            if ev == "setGlobalSettings":
+                # 设置页可能开着：同步给它
+                for c, (k, sp) in list(self._plugin_visible.items()):
+                    if sp.get("plugin") == uid:
+                        host.send_pi(c, {"event": "didReceiveGlobalSettings", "payload": {"settings": payload}})
+            return
+        if ev == "setImage":
+            self._plugin_set_image(uid, ctx, payload.get("image"))
+        elif ev == "setTitle":
+            vis = self._vis(ctx)
+            title = payload.get("title")
+            vis["title"] = None if title is None else str(title)
+            vis["rev"] += 1
+            self._plugin_mark(ctx)
+        elif ev == "setState":
+            _, key, spec = self._find_context(ctx)
+            if spec is not None:
+                spec["state"] = int(payload.get("state") or 0)
+                self._plugin_state_image(spec)
+        elif ev in ("showOk", "showAlert"):
+            vis = self._vis(ctx)
+            vis["flash"] = ("ok" if ev == "showOk" else "alert", time.time() + 1.2)
+            self._plugin_mark(ctx)
+            threading.Timer(1.3, self._plugin_mark, args=(ctx,)).start()
+        elif ev == "setSettings":
+            _, key, spec = self._find_context(ctx)
+            if spec is not None:
+                spec["settings"] = payload if isinstance(payload, dict) else {}
+                self._save_config()
+                host.send_pi(ctx, self._did_receive_settings(key, spec))
+        elif ev == "getSettings":
+            _, key, spec = self._find_context(ctx)
+            if spec is not None:
+                host.send(uid, self._did_receive_settings(key, spec))
+        elif ev == "sendToPropertyInspector":
+            host.send_pi(ctx, {"event": "sendToPropertyInspector", "action": msg.get("action"),
+                               "context": ctx, "payload": payload})
+
+    def _on_pi_msg(self, ctx: str, msg: dict) -> None:
+        ev = msg.get("event")
+        payload = msg.get("payload") or {}
+        _, key, spec = self._find_context(ctx)
+        if spec is None:
+            return
+        uid = spec.get("plugin")
+        host = self.plugin_host
+        if self._common_plugin_msg(uid, ev, msg, lambda m: host.send_pi(ctx, m)):
+            if ev == "setGlobalSettings":
+                host.send(uid, {"event": "didReceiveGlobalSettings", "payload": {"settings": payload}})
+            return
+        if ev == "setSettings":
+            spec["settings"] = payload if isinstance(payload, dict) else {}
+            self._save_config()
+            host.send(uid, self._did_receive_settings(key, spec))
+        elif ev == "getSettings":
+            host.send_pi(ctx, self._did_receive_settings(key, spec))
+        elif ev == "sendToPlugin":
+            host.send(uid, {"event": "sendToPlugin", "action": spec.get("action"),
+                            "context": ctx, "payload": payload})
+
+    def _plugin_flush_loop(self) -> None:
+        """插件画面推到设备：每键最快 10 帧/秒、每 50ms 最多推 2 个键，界面预览 2 次/秒。"""
+        last_dev: dict[int, float] = {}
+        last_ui: dict[int, float] = {}
+        ui_due: set[int] = set()          # 界面预览被节流掉、需要补发的键
+        while True:
+            time.sleep(0.05)
+            now = time.time()
+            for key in list(ui_due):
+                if now - last_ui.get(key, 0) >= 0.5:
+                    ui_due.discard(key)
+                    last_ui[key] = now
+                    vis = self._plugin_vis(key) or {}
+                    self.broadcast({"type": "keyvisual", "key": key, "rev": vis.get("rev", 0)})
+            if not self._plugin_dirty:
+                continue
+            ready = sorted((k for k, t in self._plugin_dirty.items()), key=lambda k: self._plugin_dirty[k])
+            can_dev = (self.device.connected and not (self.in_standby or self.writes_paused or self.quiet
+                                                      or self.lighting_only or self.yielded or self.screen_off))
+            pushed = 0
+            for key in ready:
+                if now - last_dev.get(key, 0) < 0.1:
+                    continue
+                self._plugin_dirty.pop(key, None)
+                last_dev[key] = now
+                if can_dev and 1 <= key <= KEY_COUNT:
+                    self._gif_update_key(key)
+                    if key not in self._gif_active:
+                        self.device.send_image(key, self._render_key(key))
+                    pushed += 1
+                if self.clients:
+                    ui_due.add(key)
+                if pushed >= 2:
+                    break
+            if pushed:
+                self.device.refresh()
+
+    def bind_plugin_action(self, key: int, plugin_id: str, idx: int) -> bool:
+        if not (1 <= key <= KEY_COUNT + 3):
+            return False
+        p = self._catalog()["plugins"].get(plugin_id)
+        if not p or not (0 <= idx < len(p["actions"])):
+            return False
+        act = p["actions"][idx]
+        self.key_actions[key] = {
+            "type": "plugin", "plugin": plugin_id, "action": act["uuid"], "name": act["name"],
+            "settings": {}, "context": os.urandom(16).hex(), "state": 0,
+        }
+        if act.get("icon") and key <= KEY_COUNT:
+            img = official.read_image(act["icon"])
+            if img:
+                stored = self._store_scene_image(img, act["icon"])
+                data = self._load_image_source(os.path.join(UPLOAD_DIR, stored))
+                if data:
+                    self.key_overrides[key] = data
+        self._save_config()
+        if self.device.connected and key <= KEY_COUNT:
+            self._apply_key(key)
+            self.device.refresh()
+        status = (self.plugin_host.status().get(plugin_id) if self.plugin_host else "unavailable")
+        log(f"按键 {key} 绑定插件动作 {act['name']}（{plugin_id}，{status}）")
+        return True
+
+    def plugin_pi(self, key: int) -> dict:
+        """打开插件设置页需要的参数（界面用 iframe 加载）。"""
+        spec = self.key_actions.get(key)
+        if not (isinstance(spec, dict) and spec.get("type") == "plugin") or not self.plugin_host:
+            return {"ok": False}
+        folder, act = self._plugin_manifest_action(spec)
+        man = official._plugin_manifest(folder) if folder else {}
+        pi_path = act.get("PropertyInspectorPath") or (man or {}).get("PropertyInspectorPath")
+        if not pi_path:
+            return {"ok": False, "error": "这个插件动作没有设置页"}
+        uid = spec["plugin"]
+        self.plugin_host.ensure_running(uid)
+        action_info = {"action": spec.get("action"), "context": spec.get("context"),
+                       "device": self._device_id(), "payload": self._plugin_payload(key, spec)}
+        self._plugin_event("propertyInspectorDidAppear", key, spec, payload={})
+        return {"ok": True, "url": f"/plugins/{uid}/{pi_path.replace(os.sep, '/')}",
+                "port": self.plugin_host.server.port, "uuid": spec.get("context"),
+                "info": self.plugin_host.info_json(uid), "actionInfo": json.dumps(action_info, ensure_ascii=False),
+                "name": spec.get("name") or ""}
+
+    def plugin_pi_closed(self, key: int) -> None:
+        spec = self.key_actions.get(key)
+        if isinstance(spec, dict) and spec.get("type") == "plugin":
+            self._plugin_event("propertyInspectorDidDisappear", key, spec, payload={})
+
+    def plugin_file(self, uid: str, rel: str) -> str | None:
+        p = self._catalog()["plugins"].get(uid)
+        if not p:
+            return None
+        root = os.path.normpath(p["folder"])
+        path = os.path.normpath(os.path.join(root, urllib.parse.unquote(rel)))
+        if not path.startswith(root + os.sep) or not os.path.isfile(path):
+            return None
+        return path
+
     def _official_loop(self) -> None:
         """官方驱动在跑就让路，退出后自动接管。"""
         while True:
@@ -2888,6 +3465,13 @@ class App:
                     for k, v in self.key_actions.items()
                 },
                 "keyImages": {str(k): v.get("type") for k, v in self.key_overrides.items()},
+                "keyPlugin": {
+                    str(k): {"plugin": v.get("plugin"), "name": v.get("name"),
+                             "status": (self.plugin_host.status().get(v.get("plugin"), "idle")
+                                        if self.plugin_host else "unavailable"),
+                             "rev": (self.plugin_visual.get(v.get("context") or "") or {}).get("rev", 0)}
+                    for k, v in self.key_actions.items()
+                    if isinstance(v, dict) and v.get("type") == "plugin"},
                 # 图片换了文件名就变：界面据此决定要不要重新拉预览（切场景 / 翻页时同一个键会换图）
                 "keyImageRev": {str(k): os.path.basename(v.get("file") or "") or str(id(v))
                                 for k, v in self.key_overrides.items()},
@@ -2906,6 +3490,8 @@ def _shutdown() -> None:
     time.sleep(0.25)
     try:
         if APP is not None:
+            if APP.plugin_host:
+                APP.plugin_host.stop_all()   # 插件子进程 / 后台浏览器一起收掉
             APP._gif_stop_all()          # SDK 进程不一定随我们退出，别让它继续播旧动图
             APP.device.disconnect()
     except Exception:  # noqa: BLE001
@@ -3085,6 +3671,46 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+        elif path.startswith("/plugins/"):
+            # 插件自己的网页 / 脚本 / 图片（网页插件和设置页从这里加载）
+            uid, _, rel = path[len("/plugins/"):].partition("/")
+            fp = APP.plugin_file(urllib.parse.unquote(uid), rel)
+            if not fp:
+                self.send_error(404)
+                return
+            ctype = {
+                ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8", ".mjs": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
+                ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                ".svg": "image/svg+xml", ".webp": "image/webp", ".ico": "image/x-icon",
+                ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+                ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+            }.get(os.path.splitext(fp)[1].lower(), "application/octet-stream")
+            with open(fp, "rb") as fh:
+                data = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        elif path.startswith("/api/key/") and path.endswith("/live.jpg"):
+            try:
+                key = int(path.split("/")[3])
+            except (IndexError, ValueError):
+                self.send_error(400)
+                return
+            data = APP._number_tile(key) if 1 <= key <= KEY_COUNT else None
+            if not data:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
         elif path.startswith("/api/key/") and path.endswith("/thumb.png"):
             try:
                 key = int(path.split("/")[3])
@@ -3240,6 +3866,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": APP.clear_key_all(int(body.get("key", 0)))})
         elif path == "/api/icons":
             self._json({"ok": True, "items": APP.list_icons()})
+        elif path == "/api/key/plugin":
+            self._json({"ok": APP.bind_plugin_action(int(body.get("key", 0)), str(body.get("plugin") or ""),
+                                                     int(body.get("index", -1)))})
+        elif path == "/api/plugin/pi":
+            self._json(APP.plugin_pi(int(body.get("key", 0))))
+        elif path == "/api/plugin/pi-closed":
+            APP.plugin_pi_closed(int(body.get("key", 0)))
+            self._json({"ok": True})
         elif path == "/api/key/image-info":
             self._json(APP.key_image_info(int(body.get("key", 0))))
         elif path == "/api/key/reveal":
@@ -3610,6 +4244,7 @@ def main() -> int:
     PORT = args.port or free_port(PORT)
     url = f"http://127.0.0.1:{PORT}/"
     server = QuietServer(("127.0.0.1", PORT), Handler)
+    threading.Timer(0.5, APP.start_plugins).start()
     server.daemon_threads = True
     log(f"控制台已启动 {url}")
     if not args.no_browser:

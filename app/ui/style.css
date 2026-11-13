@@ -1300,3 +1300,11 @@ html, body { overflow: hidden; height: 100%; }
 .scene-row.switching { opacity: .65; cursor: progress; }
 .scene-row.switching .scene-ops::after { content: "切换中…"; font-size: 10.5px; color: #2f6fe0; }
 .key-menu button:disabled { color: #9aa5b5; cursor: default; background: transparent; }
+
+/* 插件：编辑区状态行 + 设置弹窗 */
+.plugin-row { flex: 1 1 auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+#sel-plugin-status { font-size: 12px; }
+#sel-plugin-status[data-status="connected"] { color: #1f7a4d; }
+#sel-plugin-status[data-status="failed"], #sel-plugin-status[data-status="unavailable"] { color: #b23b3b; }
+.pi-card { width: min(560px, 94vw); height: min(640px, 88vh); }
+.pi-frame { flex: 1; width: 100%; border: 0; background: #2d2d2d; }
