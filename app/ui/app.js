@@ -1346,11 +1346,12 @@ function applyTypeVisibility(t) {
   show("#sel-media", t === "media");
   show("#sel-mouse", t === "mouse");
   show("#sel-scene", t === "scene");
+  show("#sel-window", t === "window");
   show("#sel-record", t === "hotkey" || t === "toggle");
   show("#sel-pick", t === "launch" || t === "sound");
   show("#row-macro", t === "macro");
   show("#row-text-opts", t === "text");
-  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "launch", "sound"].includes(t));
+  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "launch", "sound", "window"].includes(t));
   if (t !== "hotkey" && t !== "toggle") $("#sel-record")?.classList.remove("on");
 }
 
@@ -1367,10 +1368,11 @@ function fillActionForm(n) {
   const val = view?.value || "";
   const spec = view?.spec || {};
   $("#sel-type").value = t;
-  $("#sel-value").value = ["nav", "media", "macro", "scene", "plugin"].includes(t) ? "" : val;
+  $("#sel-value").value = ["nav", "media", "macro", "scene", "plugin", "window"].includes(t) ? "" : val;
   $("#sel-macro").value = t === "macro" ? val : "";
   if (t === "media" && (spec.action || val)) $("#sel-media").value = spec.action || val;
   if (t === "mouse") $("#sel-mouse").value = spec.button || "click";
+  if (t === "window") $("#sel-window").value = spec.op || "minimize";
   $("#sel-enter").checked = !!spec.enter;
   $("#sel-secret").checked = !!spec.secret;
   const nav = $("#sel-nav");
@@ -2183,6 +2185,7 @@ function bindUI() {
       spec.button = $("#sel-mouse").value;
       spec.pos = value.trim();
     } else if (type === "close") spec.target = value.trim();
+    else if (type === "window") spec.op = $("#sel-window").value;
     else if (type === "scene") spec.scene = $("#sel-scene").value;
     else if (type === "sound") spec.path = value.trim();
     else spec.path = value.trim();

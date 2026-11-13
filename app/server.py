@@ -342,6 +342,26 @@ def close_target(target: str) -> bool:
         return False
 
 
+WINDOW_LABELS = {"minimize": "最小化当前窗口", "maximize": "最大化 / 还原当前窗口", "desktop": "显示桌面"}
+
+
+def window_action(op: str) -> bool:
+    """对前台窗口操作。按 Dock 不会抢焦点，所以「前台窗口」就是你正在用的那个程序。"""
+    if op == "desktop":
+        return send_hotkey("win+d")
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    if op == "minimize":
+        user32.ShowWindowAsync(hwnd, 6)                                  # SW_MINIMIZE
+        return True
+    if op == "maximize":
+        user32.ShowWindowAsync(hwnd, 9 if user32.IsZoomed(hwnd) else 3)  # SW_RESTORE / SW_MAXIMIZE
+        return True
+    return False
+
+
 class SoundPlayer:
     """播放音效（wav / mp3 / wma…），走 Windows MCI，独立线程排队执行。"""
 
@@ -415,6 +435,8 @@ def action_label(spec: dict) -> str:
         return MOUSE_LABELS.get(spec.get("button", ""), "鼠标")
     if kind == "close":
         return f"关闭：{spec.get('target') or '当前窗口'}"
+    if kind == "window":
+        return WINDOW_LABELS.get(spec.get("op", ""), "窗口操作")
     if kind == "scene":
         return f"场景：{spec.get('scene', '')}"
     if kind == "sound":
@@ -725,6 +747,7 @@ class App:
         self._raster_pending: dict[str, str] = {}     # SVG 光栅化请求 id -> context
         self.key_gestures: dict = {}                  # 当前页：键号 -> {"long": 动作, "double": 动作}
         self._press: dict[int, dict] = {}             # 长按 / 双击判定
+        self._wake_swallow: set[int] = set()          # 待机时按下、只用来唤醒的键（连同它的松开一起吞掉）
         self.sound = SoundPlayer()
         self._scene_history: list[str] = []           # 「返回上一场景」
         self._auto_scene = None                       # 因为前台程序自动切过去的场景
@@ -2121,15 +2144,24 @@ class App:
             return
         idle = time.time() - self._last_activity
         self._last_activity = time.time()
+        was_standby = self.in_standby       # 唤醒线程会马上改掉它，先记下来
         # 只有真的在待机、或很久没操作（设备可能自己睡过去显示开机图）才整屏补画。
         # 以前是「距上次整屏绘制 > 1 秒」就补画，几乎每次按键都会先重写 15 个键、停启动图，
         # 这一大批数据堵在 SDK 队列前面，按键动作和插件画面就跟着延迟。
-        if self.in_standby or idle > 600:
+        if was_standby or idle > 600:
             threading.Thread(target=self._wake_from_standby, daemon=True).start()
         item = {"type": "input", "key": key, "state": state, "t": time.time()}
         self.events.appendleft(item)
         self.broadcast(item)
-        log(f"按键事件 key={key} state={state} standby={self.in_standby}")
+        log(f"按键事件 key={key} state={state} standby={was_standby}")
+        # 待机壁纸状态下的第一次按键只用来唤醒：按下和随后的松开都不触发动作（插件也收不到）
+        if state == 1 and was_standby:
+            self._wake_swallow.add(key)
+            log(f"按键 {key}：待机中，仅唤醒，不执行动作")
+            return
+        if state == 0 and key in self._wake_swallow:
+            self._wake_swallow.discard(key)
+            return
         act = self.key_actions.get(key)
         if isinstance(act, dict) and act.get("type") == "plugin":
             self._plugin_key(key, act, state)
@@ -2917,6 +2949,11 @@ class App:
             log(f"按键 {key} → {MOUSE_LABELS.get(act.get('button', ''), '鼠标')} {'✓' if ok else '✗'}")
             return
 
+        if kind == "window":
+            ok = window_action(act.get("op", ""))
+            log(f"按键 {key} → {WINDOW_LABELS.get(act.get('op', ''), '窗口操作')} {'✓' if ok else '✗'}")
+            return
+
         if kind == "close":
             ok = close_target(act.get("target", ""))
             log(f"按键 {key} → 关闭 {act.get('target') or '前台窗口'} {'✓' if ok else '✗'}")
@@ -3024,6 +3061,9 @@ class App:
                 if button in MOUSE_LABELS else None
         if kind == "close":
             return {"type": "close", "target": str(spec.get("target") or "").strip()}
+        if kind == "window":
+            op = str(spec.get("op") or "")
+            return {"type": "window", "op": op} if op in WINDOW_LABELS else None
         if kind == "scene":
             name = str(spec.get("scene") or "").strip()
             return {"type": "scene", "scene": name} if name else None
@@ -4230,13 +4270,13 @@ __CODE__
                 "keyStyles": {str(k): v for k, v in self.key_styles.items()},
                 "keyActionValues": {str(k): action_value(v) for k, v in self.key_actions.items()},
                 "keyActionSpecs": {str(k): {f: v.get(f) for f in ("enter", "secret", "button", "pos",
-                                                                  "action", "state")}
+                                                                  "action", "state", "op")}
                                    for k, v in self.key_actions.items() if isinstance(v, dict)},
                 "keyGestures": {
                     str(k): {gname: {"type": gv.get("type"), "label": action_label(gv),
                                      "value": action_value(gv),
                                      "spec": {f: gv.get(f) for f in ("enter", "secret", "button", "pos",
-                                                                     "action", "name", "macro")}}
+                                                                     "action", "name", "macro", "op")}}
                              for gname, gv in g.items() if isinstance(gv, dict)}
                     for k, g in self.key_gestures.items() if g},
                 "keyImages": {str(k): v.get("type") for k, v in self.key_overrides.items()},

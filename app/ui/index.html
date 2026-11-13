@@ -167,6 +167,7 @@
                     <option value="text">输入文本 / 密码</option>
                     <option value="toggle">双状态热键</option>
                     <option value="mouse">鼠标操作</option>
+                    <option value="window">窗口操作</option>
                     <option value="close">关闭程序</option>
                     <option value="scene">切换到场景</option>
                     <option value="sound">播放音效</option>
@@ -245,6 +246,11 @@
                     <option value="scrolldown">滚轮向下</option>
                   </select>
                   <select id="sel-scene" class="sel-input" hidden></select>
+                  <select id="sel-window" class="sel-input" hidden>
+                    <option value="minimize">最小化当前窗口</option>
+                    <option value="maximize">最大化 / 还原当前窗口</option>
+                    <option value="desktop">显示桌面</option>
+                  </select>
                   <button class="seg small" id="sel-pick" hidden>选择文件…</button>
                 </div>
                 <p class="hint-line" id="sel-hint">先点一下上面的按键。</p>
@@ -448,6 +454,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261113f"></script>
+<script src="app.js?v=20261113g"></script>
 </body>
 </html>
