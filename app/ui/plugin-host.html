@@ -15,6 +15,8 @@ const params = new URLSearchParams(location.search);
 const port = params.get("ws");
 const frames = new Map();
 let ws = null;
+let lastItems = [];
+let lastPort = null;
 
 function log(message) {
   try { ws && ws.readyState === 1 && ws.send(JSON.stringify({ event: "log", message: String(message) })); } catch (_) { /* ignore */ }
@@ -26,7 +28,13 @@ function connect() {
   ws.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch (_) { return; }
-    if (m.event === "plugins") syncPlugins(m.items || [], m.port);
+    if (m.event === "plugins") { lastItems = m.items || []; lastPort = m.port; syncPlugins(lastItems, lastPort); }
+    else if (m.event === "reload") {
+      const f = frames.get(m.uuid);
+      if (f) { f.remove(); frames.delete(m.uuid); }
+      syncPlugins(lastItems, lastPort);
+      log(`${m.uuid}：已热重载`);
+    }
     else if (m.event === "rasterize") rasterize(m);
   };
   ws.onclose = () => setTimeout(connect, 2000);

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261113d" />
+  <link rel="stylesheet" href="style.css?v=20261113f" />
 </head>
 <body>
 <div class="app">
@@ -20,7 +20,7 @@
 
     <div class="side-search">
       <input id="icon-search" class="sel-input" placeholder="搜索图标 / 插件" />
-      <button class="seg small" id="catalog-refresh" title="重新读取官方驱动里的图标包和插件">刷新</button>
+      <button class="seg small" id="official-sync" title="从官方 Stream Dock 驱动重新抓取场景、图标包和插件">同步官方</button>
     </div>
 
     <div class="side-scroll">
@@ -46,6 +46,19 @@
         </div>
         <div class="side-sec-body">
           <div class="icon-groups" id="icon-groups"></div>
+        </div>
+      </section>
+
+      <section class="side-sec" data-sec="custom">
+        <div class="side-sec-head">
+          <button class="sec-toggle" type="button"><i class="chev"></i><span>自制插件</span><b id="custom-count">0</b></button>
+          <span class="side-sec-actions">
+            <button class="seg tiny icon-btn" id="custom-new-side" title="新建自制插件">＋</button>
+          </span>
+        </div>
+        <div class="side-sec-body">
+          <div class="pl-acts custom-acts" id="custom-plugin-list"></div>
+          <p class="side-note">在主页下方「自制插件」里编写，拖到按键上即可使用。</p>
         </div>
       </section>
 
@@ -135,6 +148,14 @@
                 <div class="kv-line"><span>功能</span><b id="sel-action">未绑定</b></div>
                 <div class="kv-line"><span>画面</span><b id="sel-image">跟随壁纸</b></div>
                 <div class="kv-line">
+                  <span>触发</span>
+                  <span class="gesture-tabs" id="sel-gesture">
+                    <button class="on" data-g="press" title="按一下">短按</button>
+                    <button data-g="long" title="按住 0.5 秒">长按</button>
+                    <button data-g="double" title="快速按两下">双击</button>
+                  </span>
+                </div>
+                <div class="kv-line">
                   <span>类型</span>
                   <select id="sel-type" class="sel-input">
                     <option value="none">未绑定</option>
@@ -143,6 +164,12 @@
                     <option value="hotkey">热键</option>
                     <option value="media">媒体键</option>
                     <option value="macro">宏（多步）</option>
+                    <option value="text">输入文本 / 密码</option>
+                    <option value="toggle">双状态热键</option>
+                    <option value="mouse">鼠标操作</option>
+                    <option value="close">关闭程序</option>
+                    <option value="scene">切换到场景</option>
+                    <option value="sound">播放音效</option>
                     <option value="nav">导航</option>
                     <option value="plugin" disabled>插件动作（从侧栏拖入）</option>
                   </select>
@@ -161,6 +188,13 @@
                 <div class="kv-line">
                   <span>标题</span>
                   <input id="sel-text" class="sel-input" maxlength="12" placeholder="按键上显示的文字" />
+                </div>
+                <div class="kv-line" id="row-text-opts" hidden>
+                  <span></span>
+                  <span class="check-row">
+                    <label><input type="checkbox" id="sel-enter" /> 输完按回车</label>
+                    <label><input type="checkbox" id="sel-secret" /> 密码（界面隐藏）</label>
+                  </span>
                 </div>
                 <div class="kv-line" id="row-macro" hidden>
                   <span>宏</span>
@@ -202,12 +236,67 @@
                     <option value="brightdown">屏幕亮度 −</option>
                   </select>
                   <select id="sel-nav" class="sel-input" hidden></select>
+                  <select id="sel-mouse" class="sel-input" hidden>
+                    <option value="click">左键单击</option>
+                    <option value="double">左键双击</option>
+                    <option value="right">右键单击</option>
+                    <option value="middle">中键单击</option>
+                    <option value="scrollup">滚轮向上</option>
+                    <option value="scrolldown">滚轮向下</option>
+                  </select>
+                  <select id="sel-scene" class="sel-input" hidden></select>
+                  <button class="seg small" id="sel-pick" hidden>选择文件…</button>
                 </div>
                 <p class="hint-line" id="sel-hint">先点一下上面的按键。</p>
               </div>
             </div>
             <input type="file" id="key-file" accept="image/*,.gif" hidden />
             <input type="file" id="wallpaper-file" accept="image/*" hidden />
+          </div>
+
+          <div class="card custom-lab" id="custom-lab">
+            <div class="card-head">
+              <h2>自制插件</h2>
+              <span class="muted">写一小段 JavaScript 就是一个插件；保存后出现在左侧「自制插件」，拖到按键上使用</span>
+              <span class="spacer"></span>
+              <span class="editor-actions"><button class="seg small" id="cp-new">新建</button></span>
+            </div>
+            <div class="cp-body">
+              <div class="cp-list" id="cp-list"></div>
+              <div class="cp-editor">
+                <div class="cp-meta">
+                  <div class="cp-icon" id="cp-icon" title="把左侧图标库里的图标拖到这里，或点击上传图片">
+                    <img alt="" hidden /><span>图标</span>
+                  </div>
+                  <div class="cp-fields">
+                    <label><span>名称</span><input id="cp-name" class="sel-input" maxlength="30" placeholder="例如：番茄钟" /></label>
+                    <label><span>动作名</span><input id="cp-action" class="sel-input" maxlength="30" placeholder="可空，默认同名称" /></label>
+                    <label><span>说明</span><input id="cp-desc" class="sel-input" maxlength="200" placeholder="一句话说明（可空）" /></label>
+                    <label><span>模板</span><select id="cp-template" class="sel-input"></select></label>
+                  </div>
+                </div>
+                <textarea id="cp-code" class="cp-code" spellcheck="false" wrap="off"></textarea>
+                <div class="cp-actions">
+                  <button class="seg small on" id="cp-save">保存并运行</button>
+                  <button class="seg small" id="cp-reveal">打开插件文件夹</button>
+                  <button class="seg small" id="cp-delete">删除</button>
+                  <span class="muted" id="cp-status"></span>
+                </div>
+                <div class="cp-console" id="cp-console"></div>
+                <details class="cp-help"><summary>API 速查</summary><div class="cp-api">
+<p><b>事件</b>：<code>M18.on("事件", (key, payload) =&gt; { … })</code>
+<code>willAppear</code> 出现在屏幕上 · <code>willDisappear</code> 离开 · <code>keyDown</code> 按下 · <code>keyUp</code> 松开 · <code>ready</code> 插件启动</p>
+<p><b>按键</b>：<code>key.setTitle(文字)</code> · <code>key.setImage(dataURL)</code> · <code>key.draw((g, size) =&gt; { … })</code> 用 canvas 画（size = 144） ·
+<code>key.showOk()</code> · <code>key.showAlert()</code></p>
+<p><b>数据</b>：<code>key.settings</code> 读取 · <code>key.save({ … })</code> 保存（每个按键各一份，重启后还在）</p>
+<p><b>定时</b>：<code>key.every(毫秒, key =&gt; { … })</code>，按键离开屏幕自动停止 · <code>await M18.sleep(毫秒)</code></p>
+<p><b>系统</b>：<code>M18.hotkey("ctrl+c")</code> · <code>M18.type("文字", 回车?)</code> · <code>M18.launch("C:\\路径\\程序.exe")</code> ·
+<code>M18.openUrl(网址)</code> · <code>M18.media("playpause")</code>（next / prev / mute / volup / voldown）</p>
+<p><b>调试</b>：<code>M18.log(…)</code> 输出到下方日志；也可以直接用 <code>fetch()</code> 请求网络接口。</p>
+</div></details>
+              </div>
+            </div>
+            <input type="file" id="cp-icon-file" accept="image/*" hidden />
           </div>
         </div>
 
@@ -359,6 +448,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261113d"></script>
+<script src="app.js?v=20261113f"></script>
 </body>
 </html>

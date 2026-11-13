@@ -171,11 +171,14 @@ def list_scene_sources() -> list[dict]:
 # --------------------------------------------------------------------------- #
 # 插件索引：动作 UUID → 插件目录（找默认图标 / 插件自带图片）
 # --------------------------------------------------------------------------- #
+EXTRA_PLUGIN_ROOTS: list[str] = []      # 额外的插件目录（控制台的「自制插件」）
+
+
 def plugin_dirs(install_root: str) -> list[str]:
     roots = [os.path.join(SD_DATA, "plugins"), os.path.join(install_root, "plugins"),
              os.path.join(install_root, "defaultData", "defaultPlugins")]
     out = []
-    for root in roots:
+    for root in roots + EXTRA_PLUGIN_ROOTS:
         out.extend(sorted(glob.glob(os.path.join(root, "*.sdPlugin"))))
     return out
 
@@ -384,6 +387,30 @@ def convert_action(act: dict, vk_names: dict) -> tuple[dict | None, list]:
         return {"type": "nav", "name": f"跳到第 {max(1, n)} 页"}, []
     if uuid.endswith("profile.backtoparent"):
         return {"type": "nav", "name": "主页"}, []
+    # 官方内置动作的设置字段没有公开文档，本机场景里也没有样例：按常见字段名尽量兼容
+    pick = lambda *names: next((_clean(st.get(n)) for n in names if _clean(st.get(n))), "")  # noqa: E731
+    if uuid.endswith(("system.text", "plain.text", "system.password")):
+        text = pick("text", "content", "value", "inputText", "Text", "password")
+        if text:
+            spec = {"type": "text", "text": text, "enter": bool(st.get("enter") or st.get("isEnter")),
+                    "secret": uuid.endswith("password")}
+            return spec, [{"op": "text", "text": text}]
+        return None, []
+    if uuid.endswith("system.close"):
+        return {"type": "close", "target": os.path.basename(pick("path", "process", "app", "name"))}, []
+    if uuid.endswith("system.hotkeySwitch"):
+        combos = [c for c in (hotkey_combo(h, vk_names) for h in st.get("Hotkeys") or []
+                              if isinstance(h, dict)) if c]
+        if len(combos) >= 2:
+            return {"type": "toggle", "keys": combos[:2], "state": 0}, []
+        if combos:
+            return {"type": "hotkey", "keys": combos[0]}, [{"op": "hotkey", "keys": combos[0]}]
+        return None, []
+    if uuid.endswith("soundboard.playaudio"):
+        path = pick("path", "file", "audioPath", "filePath")
+        return ({"type": "sound", "path": path.replace("/", "\\")}, []) if path else (None, [])
+    if uuid.endswith("soundboard.stopaudioplay"):
+        return {"type": "sound", "path": ""}, []
     return None, []
 
 
@@ -628,7 +655,10 @@ def plugin_list(install_root: str) -> list[dict]:
                 "tooltip": str(aloc.get("Tooltip") or act.get("Tooltip") or ""),
                 "icon": a_icon,
             })
+        custom = any(os.path.normpath(folder).startswith(os.path.normpath(r) + os.sep)
+                     for r in EXTRA_PLUGIN_ROOTS)
         out.append({
+            "custom": custom,
             "id": uid,
             "name": str(loc.get("Name") or _plugin_name(folder, man)),
             "author": str(man.get("Author") or ""),
@@ -639,7 +669,7 @@ def plugin_list(install_root: str) -> list[dict]:
             "folder": folder,
             "icon": icon or next((a["icon"] for a in actions if a["icon"]), None),
         })
-    out.sort(key=lambda p: (not p["downloaded"], p["name"].lower()))
+    out.sort(key=lambda p: (not p["custom"], not p["downloaded"], p["name"].lower()))
     return out
 
 

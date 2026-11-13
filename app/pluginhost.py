@@ -480,6 +480,34 @@ class PluginHost:
         except OSError:
             pass
 
+    def reload(self, uid: str) -> None:
+        """自制插件保存后热重载：清掉失败记录；网页插件让宿主页重建它的 iframe。"""
+        with self.lock:
+            self.failed.pop(uid, None)
+            running_html = uid in self.html_wanted
+        if running_html and not self.send_host({"event": "reload", "uuid": uid}):
+            self._ensure_browser()
+
+    def forget(self, uid: str) -> None:
+        """删除插件：停掉并从列表里移除。"""
+        with self.lock:
+            self.html_wanted.discard(uid)
+            self.started.discard(uid)
+            self.failed.pop(uid, None)
+            self.plugins.pop(uid, None)
+            self.pending.pop(uid, None)
+            conn = self.conns.pop(uid, None)
+            proc = self.procs.pop(uid, None)
+        if conn:
+            conn.close()
+        if proc:
+            try:
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               capture_output=True, timeout=10, creationflags=NO_WINDOW)
+            except Exception:  # noqa: BLE001
+                pass
+        self._push_html_list()
+
     def stop_all(self) -> None:
         self._stopping = True
         with self.lock:

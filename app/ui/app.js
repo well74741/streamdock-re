@@ -585,9 +585,9 @@ async function loadPlugins(refresh = false) {
   const q = ($("#icon-search")?.value || "").toLowerCase().trim();
   const match = (p) => !q || [p.name, p.author, p.id, ...p.actions.map((a) => a.name)]
     .some((v) => String(v || "").toLowerCase().includes(q));
-  const list = pluginItems.filter(match);
+  const list = pluginItems.filter((p) => !p.custom).filter(match);
   const cnt = $("#plugin-count");
-  if (cnt) cnt.textContent = String(pluginItems.length);
+  if (cnt) cnt.textContent = String(pluginItems.filter((p) => !p.custom).length);
   if (!list.length) {
     box.innerHTML = `<div class="side-empty">${pluginItems.length ? "没有匹配的插件" : "没找到官方插件"}</div>`;
     return;
@@ -654,6 +654,11 @@ function bindIconDrag(container) {
       let key = 0;
       if (dragging) {
         const t = dropTargetAt(ev.clientX, ev.clientY);
+        if (t?.classList.contains("cp-icon")) {
+          setCpIcon(img.dataset.name, img.src);
+          toast("已设为自制插件的图标（保存后生效）", 1400);
+          return;
+        }
         if (t?.dataset?.key) key = Number(t.dataset.key);
         else if (t?.classList.contains("thumb")) key = selectedKey;
       } else {
@@ -685,6 +690,268 @@ function bindIconDrag(container) {
   });
 }
 
+
+/* ------------------------------------------------------------------ 自制插件 */
+const CP_TEMPLATES = {
+  counter: { name: "计数器", code: `// 计数器：每按一次 +1，数字显示在按键上；长按 1 秒清零。重启后也记得。
+M18.on("willAppear", (key) => key.setTitle(key.settings.count || 0));
+
+M18.on("keyDown", (key) => {
+  key.downAt = Date.now();
+});
+
+M18.on("keyUp", (key) => {
+  const n = Date.now() - key.downAt > 1000 ? 0 : (key.settings.count || 0) + 1;
+  key.save({ count: n });
+  key.setTitle(n);
+  if (n === 0) key.showOk();
+});
+` },
+  clock: { name: "数字时钟", code: `// 数字时钟：每秒在按键上画一次时间和日期
+function paint(key) {
+  key.draw((g, s) => {
+    const d = new Date();
+    g.fillStyle = "#0f1722";
+    g.fillRect(0, 0, s, s);
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillStyle = "#7fd4ff";
+    g.font = "bold 46px Segoe UI";
+    g.fillText(d.toTimeString().slice(0, 5), s / 2, s / 2 - 12);
+    g.fillStyle = "#c8d6e5";
+    g.font = "22px Microsoft YaHei";
+    g.fillText(\`\${d.getMonth() + 1}月\${d.getDate()}日 周\${"日一二三四五六"[d.getDay()]}\`, s / 2, s / 2 + 34);
+  });
+}
+
+M18.on("willAppear", (key) => {
+  paint(key);
+  key.every(1000, paint);
+});
+` },
+  web: { name: "网络数据", code: `// 定时请求一个网络接口，把结果显示在按键上；按一下立即刷新。
+// 这里用 wttr.in 查天气，换成你自己的地址和解析方式即可。
+const CITY = "Shanghai";
+
+async function refresh(key) {
+  try {
+    const text = await (await fetch(\`https://wttr.in/\${CITY}?format=%c%t\`)).text();
+    key.setTitle(text.trim());
+  } catch (e) {
+    key.setTitle("请求失败");
+    M18.log("请求失败：", e);
+  }
+}
+
+M18.on("willAppear", (key) => {
+  refresh(key);
+  key.every(10 * 60 * 1000, refresh);   // 10 分钟刷新一次
+});
+M18.on("keyDown", refresh);
+` },
+  toggle: { name: "开关", code: `// 开关：按一下在「开 / 关」之间切换，按键颜色跟着变，并发送对应的热键。
+const ON_KEYS = "ctrl+alt+1";
+const OFF_KEYS = "ctrl+alt+2";
+
+function paint(key) {
+  const on = !!key.settings.on;
+  key.draw((g, s) => {
+    g.fillStyle = on ? "#1f9d55" : "#3a3f4b";
+    g.fillRect(0, 0, s, s);
+    g.fillStyle = "#fff";
+    g.font = "bold 52px Microsoft YaHei";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(on ? "开" : "关", s / 2, s / 2);
+  });
+}
+
+M18.on("willAppear", paint);
+M18.on("keyDown", (key) => {
+  const on = !key.settings.on;
+  key.save({ on });
+  M18.hotkey(on ? ON_KEYS : OFF_KEYS);
+  paint(key);
+});
+` },
+  blank: { name: "空白", code: `// 在这里写你的插件。左下角「API 速查」里有可用的函数。
+M18.on("willAppear", (key) => {
+  key.setTitle("Hello");
+});
+
+M18.on("keyDown", (key) => {
+  M18.log("按下了", key.coordinates);
+  key.showOk();
+});
+` },
+};
+
+let cpItems = [];
+let cpCurrent = { id: null, icon: "", template: "counter", dirty: false };
+
+function cpLog(message, cls = "") {
+  const box = $("#cp-console");
+  if (!box) return;
+  const line = document.createElement("div");
+  line.className = `cp-line ${cls}`;
+  line.textContent = `[${new Date().toTimeString().slice(0, 8)}] ${message}`;
+  box.appendChild(line);
+  while (box.childElementCount > 200) box.firstElementChild.remove();
+  box.scrollTop = box.scrollHeight;
+}
+
+function setCpIcon(name, src) {
+  cpCurrent.icon = name;
+  const img = $("#cp-icon img");
+  img.src = src;
+  img.hidden = !src;
+  $("#cp-icon span").hidden = !!src;
+}
+
+function openCustom(item) {
+  if (item) {
+    cpCurrent = { id: item.id, icon: "", template: item.template || "", dirty: false };
+    $("#cp-name").value = item.name || "";
+    $("#cp-action").value = item.actionName && item.actionName !== item.name ? item.actionName : "";
+    $("#cp-desc").value = item.description || "";
+    $("#cp-template").value = item.template || "blank";
+    $("#cp-code").value = item.code || "";
+    const src = item.hasIcon ? `${pluginIconUrl(item.id, -1)}?v=${item.mtime}` : "";
+    setCpIcon("", src);
+  } else {
+    cpCurrent = { id: null, icon: "", template: "counter", dirty: false };
+    $("#cp-name").value = "";
+    $("#cp-action").value = "";
+    $("#cp-desc").value = "";
+    $("#cp-template").value = "counter";
+    $("#cp-code").value = CP_TEMPLATES.counter.code;
+    setCpIcon("", "");
+  }
+  $("#cp-delete").disabled = !cpCurrent.id;
+  $("#cp-reveal").disabled = !cpCurrent.id;
+  $("#cp-status").textContent = cpCurrent.id ? "" : "新插件（未保存）";
+  $("#cp-console").innerHTML = "";
+  cpLog(cpCurrent.id ? `正在编辑「${item.name}」` : "新建插件：改好名称和代码后点「保存并运行」", "muted");
+  renderCustomList();
+}
+
+function renderCustomList() {
+  const list = $("#cp-list");
+  if (list) {
+    list.innerHTML = cpItems.map((it) => `<button class="cp-item${it.id === cpCurrent.id ? " on" : ""}" data-id="${escHtml(it.id)}">`
+      + (it.hasIcon ? `<img src="${pluginIconUrl(it.id, -1)}?v=${it.mtime}" alt="" />` : "<i></i>")
+      + `<span>${escHtml(it.name)}</span></button>`).join("")
+      || `<div class="side-empty">还没有自制插件，点「新建」开始。</div>`;
+    list.querySelectorAll(".cp-item").forEach((b) => b.addEventListener("click", () => {
+      const it = cpItems.find((x) => x.id === b.dataset.id);
+      if (it) openCustom(it);
+    }));
+  }
+  const side = $("#custom-plugin-list");
+  if (side) {
+    side.innerHTML = cpItems.map((it) => `<div class="pl-act" title="${escHtml(it.description || it.name)}">`
+      + `<img loading="lazy" draggable="false" data-name="plugin:${escHtml(it.id)}/0" src="${pluginIconUrl(it.id, 0)}?v=${it.mtime}" alt="" />`
+      + `<span>${escHtml(it.actionName || it.name)}</span></div>`).join("")
+      || `<span class="side-empty">还没有</span>`;
+  }
+  const cnt = $("#custom-count");
+  if (cnt) cnt.textContent = String(cpItems.length);
+}
+
+async function loadCustomPlugins() {
+  try {
+    cpItems = (await post("/api/custom-plugins", {})).items || [];
+  } catch (_) {
+    cpItems = [];
+  }
+  renderCustomList();
+}
+
+function bindCustomLab() {
+  const tpl = $("#cp-template");
+  tpl.innerHTML = Object.entries(CP_TEMPLATES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join("");
+  tpl.addEventListener("change", async () => {
+    const t = CP_TEMPLATES[tpl.value];
+    if (!t) return;
+    if (cpCurrent.dirty && !(await confirmDialog(`用「${t.name}」模板替换当前代码？`))) {
+      tpl.value = cpCurrent.template || "blank";
+      return;
+    }
+    $("#cp-code").value = t.code;
+    cpCurrent.template = tpl.value;
+    cpCurrent.dirty = false;
+    if (!$("#cp-name").value.trim()) $("#cp-name").value = t.name;
+  });
+  const code = $("#cp-code");
+  code.addEventListener("input", () => { cpCurrent.dirty = true; });
+  code.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {                       // Tab 插两个空格，而不是跳出输入框
+      e.preventDefault();
+      const { selectionStart: a, selectionEnd: b, value } = code;
+      code.value = `${value.slice(0, a)}  ${value.slice(b)}`;
+      code.selectionStart = code.selectionEnd = a + 2;
+      cpCurrent.dirty = true;
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      $("#cp-save").click();
+    }
+  });
+  $("#cp-icon").addEventListener("click", () => $("#cp-icon-file").click());
+  $("#cp-icon-file").addEventListener("change", async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    const url = await readAsDataURL(f);
+    setCpIcon(url, url);
+  });
+  $("#cp-new").addEventListener("click", () => openCustom(null));
+  $("#custom-new-side").addEventListener("click", () => {
+    openCustom(null);
+    $("#custom-lab").scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => $("#cp-name").focus(), 400);
+  });
+  $("#cp-save").addEventListener("click", async () => {
+    const name = $("#cp-name").value.trim();
+    if (!name) {
+      toast("先给插件起个名字", 1500);
+      $("#cp-name").focus();
+      return;
+    }
+    $("#cp-status").textContent = "保存中…";
+    const r = await post("/api/custom-plugins/save", {
+      id: cpCurrent.id, name, actionName: $("#cp-action").value.trim(), description: $("#cp-desc").value.trim(),
+      template: $("#cp-template").value, code: $("#cp-code").value, icon: cpCurrent.icon,
+    });
+    if (!r.ok) {
+      $("#cp-status").textContent = r.error || "保存失败";
+      toast(r.error || "保存失败", 1800);
+      return;
+    }
+    const isNew = !cpCurrent.id;
+    cpCurrent.id = r.id;
+    cpCurrent.icon = "";
+    cpCurrent.dirty = false;
+    $("#cp-status").textContent = `已保存 ${new Date().toTimeString().slice(0, 8)}`;
+    cpLog(isNew ? "已创建并启动；从左侧「自制插件」把它拖到按键上试试" : "已保存，正在运行的实例已热重载", "ok");
+    await loadCustomPlugins();
+    await loadPlugins(true);
+    await refreshState();
+    $("#cp-delete").disabled = false;
+    $("#cp-reveal").disabled = false;
+  });
+  $("#cp-delete").addEventListener("click", async () => {
+    if (!cpCurrent.id) return;
+    const it = cpItems.find((x) => x.id === cpCurrent.id);
+    if (!(await confirmDialog(`删除自制插件「${escHtml(it?.name || "")}」？绑定了它的按键会失效。`))) return;
+    await post("/api/custom-plugins/delete", { id: cpCurrent.id });
+    await loadCustomPlugins();
+    await loadPlugins(true);
+    openCustom(null);
+  });
+  $("#cp-reveal").addEventListener("click", () => cpCurrent.id && post("/api/custom-plugins/reveal", { id: cpCurrent.id }));
+  loadCustomPlugins().then(() => openCustom(cpItems[0] || null));
+}
+
 /* 侧栏分区折叠（记住状态） */
 function bindSidebar() {
   document.querySelectorAll(".side-sec[data-sec]").forEach((sec) => {
@@ -704,6 +971,7 @@ function bindSidebar() {
   });
   bindIconDrag($("#icon-groups"));
   bindIconDrag($("#plugin-list"));
+  bindIconDrag($("#custom-plugin-list"));
 }
 
 /* ------------------------------------------------------- 拖拽幽灵（通用） */
@@ -729,7 +997,7 @@ function endGhost() {
 }
 function dropTargetAt(x, y) {
   const el = document.elementFromPoint(x, y);
-  return el ? el.closest(".cell, .ring-btn, .thumb, .icon-group img") : null;
+  return el ? el.closest(".cell, .ring-btn, .thumb, .icon-group img, .cp-icon") : null;
 }
 function clearDropHover() {
   document.querySelectorAll(".drop-hover").forEach((n) => n.classList.remove("drop-hover"));
@@ -980,13 +1248,144 @@ function confirmDialog(message) {
   });
 }
 
+function choiceDialog(message, choices) {
+  return new Promise((resolve) => {
+    const box = document.createElement("div");
+    box.className = "modal confirm-modal";
+    box.innerHTML = `<div class="modal-card confirm-card">
+      <div class="confirm-body">${message}</div>
+      <div class="confirm-actions choice-actions">
+        ${choices.map((c) => `<button class="seg${c.primary ? " on" : ""}" data-v="${c.value}">${c.label}</button>`).join("")}
+        <button class="seg" data-v="">取消</button>
+      </div>
+    </div>`;
+    document.body.appendChild(box);
+    const done = (v) => { box.remove(); resolve(v || null); };
+    box.addEventListener("pointerdown", (e) => { if (e.target === box) done(null); });
+    box.querySelectorAll("[data-v]").forEach((b) => b.addEventListener("click", () => done(b.dataset.v)));
+  });
+}
+
+/* 场景关联程序：前台切到这些程序时自动切到该场景 */
+async function appsDialog(name, current) {
+  const recent = ((await post("/api/apps/recent", {})).items || []).filter((a) => !/msedge|explorer|python/.test(a));
+  return new Promise((resolve) => {
+    const box = document.createElement("div");
+    box.className = "modal confirm-modal";
+    box.innerHTML = `<div class="modal-card confirm-card apps-card">
+      <div class="confirm-body"><b>场景「${escHtml(name)}」关联程序</b><br>
+        <span class="muted">前台切到这些程序时自动切到该场景，离开后切回原来的场景。多个用逗号隔开，留空取消关联。</span>
+        <input class="sel-input apps-input" value="${escHtml((current || []).join(", "))}" placeholder="例如 Photoshop.exe, Adobe Premiere Pro.exe" />
+        ${recent.length ? `<div class="apps-recent"><span class="muted">最近用过：</span>${recent.map((a) => `<button class="seg tiny" data-app="${escHtml(a)}">${escHtml(a)}</button>`).join("")}</div>` : ""}
+      </div>
+      <div class="confirm-actions">
+        <button class="seg" data-v="cancel">取消</button>
+        <button class="seg on" data-v="ok">保存</button>
+      </div>
+    </div>`;
+    document.body.appendChild(box);
+    const input = box.querySelector(".apps-input");
+    box.querySelectorAll("[data-app]").forEach((b) => b.addEventListener("click", () => {
+      const list = input.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+      if (!list.includes(b.dataset.app)) list.push(b.dataset.app);
+      input.value = list.join(", ");
+    }));
+    const done = (v) => { box.remove(); resolve(v); };
+    box.querySelector('[data-v="ok"]').addEventListener("click", () => done(input.value));
+    box.querySelector('[data-v="cancel"]').addEventListener("click", () => done(null));
+    box.addEventListener("pointerdown", (e) => { if (e.target === box) done(null); });
+    input.focus();
+  });
+}
+
 function selectKey(n) {
+  if (n !== selectedKey) editGesture = "press";     // 换键时回到「短按」
   selectedKey = n;
   refreshCells();
   renderEditor();
   // 设备上对应按键亮起内边缘；同时在控制台里操作也算"活跃"
   post("/api/key/select", { key: n || 0 }).catch(() => {});
   post("/api/activity", { wake: true }).catch(() => {});
+}
+
+let editGesture = "press";
+let sceneNames = [];
+const VALUE_TYPES = {
+  launch: "程序 / 文件 / 文件夹路径（可点「选择文件…」）",
+  url: "网址，如 https://example.com",
+  hotkey: "组合键，如 ctrl+shift+s（可点「录制热键」）",
+  toggle: "两个组合键用 | 隔开，如 ctrl+m | ctrl+shift+m（录制两次）",
+  text: "要输入的文字，\\n 表示换行",
+  mouse: "坐标 x,y（可空：在当前鼠标位置操作）",
+  close: "进程名，如 notepad.exe；留空 = 关闭当前前台窗口",
+  sound: "音频文件路径（wav / mp3）；留空 = 停止所有音效",
+};
+
+function gestureView(n, g) {
+  if (g === "press") {
+    const act = state?.keyActions?.[n];
+    if (!act) return null;
+    return {
+      type: state.keyActionTypes?.[n] || "launch", label: act,
+      value: state.keyActionValues?.[n] || "", spec: state.keyActionSpecs?.[n] || {},
+    };
+  }
+  return state?.keyGestures?.[n]?.[g] || null;
+}
+
+function applyTypeVisibility(t) {
+  const show = (sel, on) => { const el = $(sel); if (el) el.hidden = !on; };
+  show("#row-value", t in VALUE_TYPES);
+  const v = $("#sel-value");
+  if (v) {
+    v.placeholder = VALUE_TYPES[t] || "";
+    v.disabled = !(t in VALUE_TYPES);
+    v.type = t === "text" && $("#sel-secret")?.checked ? "password" : "text";
+  }
+  show("#sel-nav", t === "nav");
+  show("#sel-media", t === "media");
+  show("#sel-mouse", t === "mouse");
+  show("#sel-scene", t === "scene");
+  show("#sel-record", t === "hotkey" || t === "toggle");
+  show("#sel-pick", t === "launch" || t === "sound");
+  show("#row-macro", t === "macro");
+  show("#row-text-opts", t === "text");
+  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "launch", "sound"].includes(t));
+  if (t !== "hotkey" && t !== "toggle") $("#sel-record")?.classList.remove("on");
+}
+
+function fillSceneSelect(selected) {
+  const sel = $("#sel-scene");
+  if (!sel) return;
+  sel.innerHTML = sceneNames.map((n) => `<option value="${escHtml(n)}"${n === selected ? " selected" : ""}>${escHtml(n)}</option>`).join("");
+}
+
+function fillActionForm(n) {
+  const view = gestureView(n, editGesture);
+  let t = view ? view.type : "none";
+  if (t === "plugin" && editGesture !== "press") t = "none";
+  const val = view?.value || "";
+  const spec = view?.spec || {};
+  $("#sel-type").value = t;
+  $("#sel-value").value = ["nav", "media", "macro", "scene", "plugin"].includes(t) ? "" : val;
+  $("#sel-macro").value = t === "macro" ? val : "";
+  if (t === "media" && (spec.action || val)) $("#sel-media").value = spec.action || val;
+  if (t === "mouse") $("#sel-mouse").value = spec.button || "click";
+  $("#sel-enter").checked = !!spec.enter;
+  $("#sel-secret").checked = !!spec.secret;
+  const nav = $("#sel-nav");
+  const jumps = Array.from({ length: state?.pageCount || 1 }, (_, i) => `跳到第 ${i + 1} 页`);
+  const opts = [...NAV_PRESETS.slice(0, 4), "返回上一场景", ...jumps, ...NAV_PRESETS.slice(4)];
+  nav.innerHTML = opts.map((p) => `<option value="${p}"${val === p ? " selected" : ""}>${p}</option>`).join("");
+  fillSceneSelect(t === "scene" ? val : "");
+  // 触发方式标签：当前 / 已设置
+  document.querySelectorAll("#sel-gesture button").forEach((b) => {
+    const g = b.dataset.g;
+    b.classList.toggle("on", g === editGesture);
+    b.classList.toggle("has", !!gestureView(n, g) && g !== "press");
+  });
+  applyTypeVisibility(t);
+  return t;
 }
 
 function renderEditor() {
@@ -1009,6 +1408,7 @@ function renderEditor() {
     if (row0) row0.hidden = true;
     const vrow0 = $("#row-value");
     if (vrow0) vrow0.hidden = true;
+    applyTypeVisibility("none");
     return;
   }
 
@@ -1067,52 +1467,16 @@ function renderEditor() {
   }
   $("#sel-image").textContent = isNav ? "导航键无屏幕" : (img ? "单独图片 / 动图" : "无（标题 / 编号）");
 
-  const nav = $("#sel-nav");
-  const typeSel = $("#sel-type");
-  const valueInput = $("#sel-value");
-  const mediaSel = $("#sel-media");
-  const actType = act ? (state?.keyActionTypes?.[n] || "launch") : "none";
-  const actVal = state?.keyActionValues?.[n] || "";
-
-  typeSel.value = actType;
-  valueInput.value = actType === "nav" || actType === "media" ? "" : actVal;
-  valueInput.disabled = actType === "nav" || actType === "none" || actType === "media"
-    || actType === "macro";
-  nav.hidden = actType !== "nav";
-  if (mediaSel) {
-    mediaSel.hidden = actType !== "media";
-    if (actType === "media" && actVal) mediaSel.value = actVal;
-  }
-  const macroRow = $("#row-macro");
-  if (macroRow) {
-    macroRow.hidden = actType !== "macro";
-    if (actType === "macro") $("#sel-macro").value = actVal;
-  }
-  const recBtn = $("#sel-record");
-  if (recBtn) {
-    recBtn.hidden = actType !== "hotkey";
-    if (recBtn.hidden) {
-      recBtn.classList.remove("on");
-    }
-  }
-  const actionsRow = $("#editor-actions-row");
-  if (actionsRow) {
-    actionsRow.hidden = !["hotkey", "media", "nav"].includes(actType);
-  }
-  const valueRow = $("#row-value");
-  if (valueRow) {
-    valueRow.hidden = !["launch", "url", "hotkey"].includes(actType);
+  const actType = fillActionForm(n);
+  if (editGesture !== "press") {
+    $("#sel-action").textContent = `${editGesture === "long" ? "长按" : "双击"}：${gestureView(n, editGesture)?.label || "未设置"}`;
   }
 
-  if (actType === "nav") {
-    const jumps = Array.from({ length: state?.pageCount || 1 }, (_, i) => `跳到第 ${i + 1} 页`);
-    const opts = [...NAV_PRESETS.slice(0, 4), ...jumps, ...NAV_PRESETS.slice(4)];
-    nav.innerHTML = opts
-      .map((p) => `<option value="${p}"${act === p ? " selected" : ""}>${p}</option>`)
-      .join("");
-  }
-
-  $("#sel-hint").textContent = actType === "plugin"
+  $("#sel-hint").textContent = editGesture !== "press"
+    ? (state?.keyActionTypes?.[n] === "plugin"
+      ? "这个键绑定的是插件动作，长按 / 双击由插件自己处理，这里的设置不生效。"
+      : `${editGesture === "long" ? "长按（按住 0.5 秒）" : "双击（0.3 秒内按两下）"}时执行。设置后，短按会在松开${editGesture === "double" ? "约 0.3 秒" : ""}后才触发。`)
+    : actType === "plugin"
     ? "插件动作：按下由插件处理，画面也由插件更新；点「插件设置」配置。改成别的类型即解除绑定。"
     : isNav
       ? "导航键默认：左=上一页，中=主页，右=下一页；也可以改成打开程序、网页或热键。"
@@ -1782,43 +2146,57 @@ function bindUI() {
     await refreshState();
   });
 
-  $("#sel-type").addEventListener("change", () => {
-    const t = $("#sel-type").value;
-    $("#sel-value").disabled = t === "nav" || t === "none" || t === "media" || t === "macro";
-    $("#sel-nav").hidden = t !== "nav";
-    const media = $("#sel-media");
-    if (media) media.hidden = t !== "media";
-    const macroRow = $("#row-macro");
-    if (macroRow) macroRow.hidden = t !== "macro";
-    const rec = $("#sel-record");
-    if (rec) {
-      rec.hidden = t !== "hotkey";
-      if (rec.hidden) rec.classList.remove("on");
-    }
-    const row = $("#editor-actions-row");
-    if (row) row.hidden = !["hotkey", "media", "nav"].includes(t);
-    const vrow = $("#row-value");
-    if (vrow) vrow.hidden = !["launch", "url", "hotkey"].includes(t);
+  $("#sel-type").addEventListener("change", () => applyTypeVisibility($("#sel-type").value));
+  $("#sel-secret").addEventListener("change", () => applyTypeVisibility($("#sel-type").value));
+  document.querySelectorAll("#sel-gesture button").forEach((b) => {
+    b.addEventListener("click", () => {
+      editGesture = b.dataset.g;
+      renderEditor();
+    });
+  });
+  $("#sel-pick").addEventListener("click", async () => {
+    const r = await post("/api/dialog/pick", { mode: "file" });
+    if (r.ok && r.path) $("#sel-value").value = r.path;
   });
 
   $("#sel-save-top").addEventListener("click", async () => {
     if (!selectedKey) return;
     const type = $("#sel-type").value;
+    const value = $("#sel-value").value;
     if (type === "none") {
-      await post("/api/key/action/clear", { key: selectedKey });
+      await post("/api/key/action/clear", { key: selectedKey, gesture: editGesture });
       await refreshState();
       return;
     }
-    const spec = { key: selectedKey, type };
+    if (type === "plugin") return;
+    const spec = { key: selectedKey, type, gesture: editGesture };
     if (type === "nav") spec.name = $("#sel-nav").value;
-    else if (type === "hotkey") spec.keys = $("#sel-value").value.trim();
+    else if (type === "hotkey" || type === "toggle") spec.keys = value.trim();
     else if (type === "media") spec.action = $("#sel-media").value;
     else if (type === "macro") spec.macro = $("#sel-macro").value;
-    else if (type === "url") spec.url = $("#sel-value").value.trim();
-    else spec.path = $("#sel-value").value.trim();
+    else if (type === "url") spec.url = value.trim();
+    else if (type === "text") {
+      spec.text = value.replace(/\\n/g, "\n");
+      spec.enter = $("#sel-enter").checked;
+      spec.secret = $("#sel-secret").checked;
+    } else if (type === "mouse") {
+      spec.button = $("#sel-mouse").value;
+      spec.pos = value.trim();
+    } else if (type === "close") spec.target = value.trim();
+    else if (type === "scene") spec.scene = $("#sel-scene").value;
+    else if (type === "sound") spec.path = value.trim();
+    else spec.path = value.trim();
 
     const r = await post("/api/key/action", spec);
-    if (!r.ok) toast("保存失败：路径不存在或内容为空", 1800);
+    if (!r.ok) {
+      toast({
+        toggle: "双状态热键要填两个组合键，用 | 隔开",
+        sound: "找不到这个音频文件",
+        text: "要输入的文字不能为空",
+      }[type] || "保存失败：路径不存在或内容为空", 2200);
+    } else {
+      toast(editGesture === "press" ? "已保存" : `已保存${editGesture === "long" ? "长按" : "双击"}动作`, 1000);
+    }
     await refreshState();
   });
 
@@ -1879,10 +2257,16 @@ function bindUI() {
       toast(k ? "至少要包含一个修饰键（Ctrl/Alt/Shift/Win），F 键除外" : "这个键暂不支持", 1600);
       return;
     }
-    $("#sel-value").value = parts.join("+");
-    $("#sel-type").value = "hotkey";
-    $("#sel-value").disabled = false;
-    $("#sel-nav").hidden = true;
+    const combo = parts.join("+");
+    if ($("#sel-type").value === "toggle") {
+      const cur = $("#sel-value").value.split("|").map((x) => x.trim()).filter(Boolean);
+      $("#sel-value").value = (cur.length === 1 ? [cur[0], combo] : [combo]).join(" | ");
+      if (cur.length !== 1) toast("已录第 1 个，再点「录制热键」录第 2 个", 1800);
+    } else {
+      $("#sel-value").value = combo;
+      $("#sel-type").value = "hotkey";
+    }
+    applyTypeVisibility($("#sel-type").value);
     recording = false;
     $("#sel-record").classList.remove("on");
   }, true);
@@ -1976,14 +2360,23 @@ function bindUI() {
     hideKeyMenu();
     showThumbMenu(e.clientX, e.clientY);
   });
-  $("#catalog-refresh").addEventListener("click", async () => {
-    toast("正在读取官方图标包和插件…", 1200);
-    const r = await post("/api/catalog/refresh", {});
-    iconPacks = r.packs || [];
-    pluginItems = r.plugins || [];
-    await loadIcons();
-    await loadPlugins();
-    toast(`图标包 ${iconPacks.length} 个，插件 ${pluginItems.length} 个`, 1800);
+  $("#official-sync").addEventListener("click", async () => {
+    const mode = await choiceDialog(
+      "从官方 Stream Dock 驱动重新抓取：<br>· 图标包、插件：总是重新读取<br>· 场景：选择处理方式",
+      [{ value: "new", label: "只添加新场景（保留已改动）", primary: true },
+       { value: "all", label: "全部重新导入（覆盖已导入的官方场景）" }]);
+    if (!mode) return;
+    if (mode === "all" && !(await confirmDialog("已导入的官方场景里你改过的按键会被覆盖，继续？"))) return;
+    toast("正在同步官方资源…", 1500);
+    const r = await post("/api/official/sync", { mode });
+    iconPacks = null;
+    pluginItems = null;
+    await loadIcons(true);
+    await loadPlugins(true);
+    await window.m18ReloadScenes?.();
+    await refreshState();
+    const n = (r.scenes || []).length;
+    toast(`同步完成：${mode === "all" ? "重导" : "新增"}场景 ${n} 个 · 图标包 ${r.packs ?? "-"} 个（${r.icons ?? "-"} 个图标）· 插件 ${r.plugins ?? "-"} 个`, 3600);
   });
   let searchTimer = null;
   $("#icon-search").addEventListener("input", () => {
@@ -1991,6 +2384,7 @@ function bindUI() {
     searchTimer = setTimeout(() => { loadIcons(); loadPlugins(); }, 160);
   });
   bindSidebar();
+  bindCustomLab();
   loadIcons();
   loadPlugins();
 
@@ -2015,6 +2409,14 @@ function bindUI() {
         const r = await post("/api/scenes", { duplicate: name });
         toast(r.ok ? "已复制场景" : "复制失败", 1500);
         renderScenes(r.items || []);
+      } else if (act === "apps") {
+        const items = (await post("/api/scenes", {})).items || [];
+        const cur = items.find((i) => i.name === name)?.apps || [];
+        const v = await appsDialog(name, cur);
+        if (v === null) return;
+        const r = await post("/api/scenes", { link: name, apps: v });
+        toast(r.ok ? (v.trim() ? `已关联：${v}` : "已取消关联") : "保存失败", 1800);
+        renderScenes(r.items || []);
       } else if (act === "del") {
         if (!(await confirmDialog(`删除场景「${name}」？`))) return;
         const r = await post("/api/scenes", { delete: name });
@@ -2029,6 +2431,7 @@ function bindUI() {
     menu.dataset.custom = custom ? "1" : "0";
     menu.innerHTML = `<button data-act="rename">重命名</button>`
       + `<button data-act="dup">复制场景</button>`
+      + (custom ? "" : `<button data-act="apps">关联程序…</button>`)
       + (custom ? "" : `<button data-act="del">删除</button>`);
     menu.hidden = false;
     menu.style.left = `${Math.min(x, window.innerWidth - 120)}px`;
@@ -2090,6 +2493,7 @@ function bindUI() {
         return `<div class="row scene-row${active ? " active" : ""}${custom ? " custom" : ""}${isOfficial ? " official" : ""}${picked ? " picked" : ""}"`
           + ` data-name="${name}" data-custom="${custom ? 1 : 0}">`
           + `<b title="${isOfficial ? "来自官方驱动的场景" : ""}">${name}</b>`
+          + ((it.apps || []).length ? `<small class="scene-apps" title="前台切到这些程序时自动切换">⇢ ${escHtml(it.apps.join(", "))}</small>` : "")
           + `<span class="scene-ops">${active ? "使用中" : ""}</span>`
           + "</div>";
       }).join("")
@@ -2122,6 +2526,7 @@ function bindUI() {
   const reloadScenes = async () => {
     const r = await post("/api/scenes", {});
     renderScenes(r.items || []);
+    sceneNames = (r.items || []).map((i) => i.name);
     const c = $("#scene-count");
     if (c) c.textContent = String((r.items || []).length);
   };
@@ -2181,6 +2586,8 @@ function bindUI() {
     if (!(await confirmDialog(`清除按键 ${selectedKey} 的图片、动作和样式？`))) return;
     await post("/api/key/clear", { key: selectedKey });
     await post("/api/key/action/clear", { key: selectedKey });
+    await post("/api/key/action/clear", { key: selectedKey, gesture: "long" });
+    await post("/api/key/action/clear", { key: selectedKey, gesture: "double" });
     await post("/api/key/style", { key: selectedKey, text: "",
       color: "#e8eefc", bg: "#000000", opacity: 100, size: 20, pos: "center" });
     await refreshState();
@@ -2220,6 +2627,8 @@ function connectEvents() {
       toast(`导航：${msg.name}`, 1200);
     } else if (msg.type === "page") {
       refreshState();
+    } else if (msg.type === "pluginlog") {
+      if (msg.plugin === cpCurrent.id) cpLog(msg.message, /错误|出错|失败/.test(msg.message) ? "err" : "");
     } else if (msg.type === "keyvisual") {
       const p = state?.keyPlugin?.[msg.key];
       if (p) {

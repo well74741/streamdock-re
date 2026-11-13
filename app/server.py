@@ -94,6 +94,9 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 UPLOAD_DIR = os.path.join(HERE, "assets", "uploads")
 GIF_CACHE = os.path.join(HERE, "assets", "gifcache")   # 交给 SDK 原生播放的 64×64 动图
 PLUGIN_DATA = os.path.join(HERE, "plugin-data")          # 插件全局设置、进程日志
+CUSTOM_PLUGIN_DIR = os.path.join(HERE, "custom-plugins")  # 自制插件（标准 .sdPlugin 目录）
+CUSTOM_PREFIX = "com.m18.custom."
+official.EXTRA_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
@@ -220,6 +223,178 @@ def send_hotkey(combo: str) -> bool:
         return False
 
 
+# -- SendInput：输入任意文字（含中文）、鼠标 ---------------------------------- #
+_ULONG_PTR = ctypes.c_size_t
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", ctypes.c_ushort), ("wScan", ctypes.c_ushort), ("dwFlags", ctypes.c_ulong),
+                ("time", ctypes.c_ulong), ("dwExtraInfo", _ULONG_PTR)]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", ctypes.c_ulong),
+                ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong), ("dwExtraInfo", _ULONG_PTR)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUTUNION)]
+
+
+def _send_inputs(items) -> bool:
+    arr = (_INPUT * len(items))(*items)
+    try:
+        return ctypes.windll.user32.SendInput(len(items), arr, ctypes.sizeof(_INPUT)) == len(items)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def type_text(text: str, enter: bool = False) -> bool:
+    """逐字符发 Unicode 键盘事件：中文、符号都能输入，不受输入法影响。"""
+    items = []
+    for ch in text.replace("\r\n", "\n"):
+        if ch == "\n":
+            for up in (0, 2):
+                items.append(_INPUT(type=1, u=_INPUTUNION(ki=_KEYBDINPUT(wVk=0x0D, dwFlags=up))))
+            continue
+        units = ch.encode("utf-16-le")
+        for i in range(0, len(units), 2):
+            code = int.from_bytes(units[i:i + 2], "little")
+            for flags in (0x4, 0x4 | 0x2):           # KEYEVENTF_UNICODE (+ KEYUP)
+                items.append(_INPUT(type=1, u=_INPUTUNION(ki=_KEYBDINPUT(wScan=code, dwFlags=flags))))
+    if enter:
+        for up in (0, 2):
+            items.append(_INPUT(type=1, u=_INPUTUNION(ki=_KEYBDINPUT(wVk=0x0D, dwFlags=up))))
+    ok = True
+    for i in range(0, len(items), 64):              # 分批发，长文本也不丢字
+        ok = _send_inputs(items[i:i + 64]) and ok
+        time.sleep(0.005)
+    return ok
+
+
+MOUSE_LABELS = {
+    "click": "左键单击", "double": "左键双击", "right": "右键单击", "middle": "中键单击",
+    "scrollup": "滚轮向上", "scrolldown": "滚轮向下",
+}
+
+
+def mouse_action(button: str, pos: str = "") -> bool:
+    try:
+        if pos:
+            x, y = (int(v.strip()) for v in pos.replace("，", ",").split(",")[:2])
+            ctypes.windll.user32.SetCursorPos(x, y)
+    except (ValueError, OSError):
+        pass
+    m = lambda flags, data=0: _INPUT(type=0, u=_INPUTUNION(mi=_MOUSEINPUT(dwFlags=flags, mouseData=data)))  # noqa: E731
+    seq = {
+        "click": [m(0x2), m(0x4)],
+        "double": [m(0x2), m(0x4), m(0x2), m(0x4)],
+        "right": [m(0x8), m(0x10)],
+        "middle": [m(0x20), m(0x40)],
+        "scrollup": [m(0x800, 120)],
+        "scrolldown": [m(0x800, ctypes.c_ulong(-120).value)],
+    }.get(button)
+    return bool(seq) and _send_inputs(seq)
+
+
+def foreground_app() -> tuple[str, str]:
+    """前台窗口所属程序的 exe 名（小写）和窗口标题。"""
+    try:
+        user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return "", ""
+        title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title, 256)
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h = kernel32.OpenProcess(0x1000, False, pid.value)
+        if not h:
+            return "", title.value
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = ctypes.c_ulong(1024)
+            if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                return os.path.basename(buf.value).lower(), title.value
+        finally:
+            kernel32.CloseHandle(h)
+    except Exception:  # noqa: BLE001
+        pass
+    return "", ""
+
+
+def close_target(target: str) -> bool:
+    """关闭前台窗口（相当于点 ×），或按进程名温和关闭。"""
+    target = (target or "").strip()
+    if not target:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        return bool(hwnd) and bool(ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0))   # WM_CLOSE
+    name = target if target.lower().endswith(".exe") else target + ".exe"
+    try:
+        subprocess.run(["taskkill", "/IM", name], capture_output=True, timeout=10,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class SoundPlayer:
+    """播放音效（wav / mp3 / wma…），走 Windows MCI，独立线程排队执行。"""
+
+    def __init__(self):
+        self.q: queue.Queue = queue.Queue()
+        self.n = 0
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _mci(self, cmd: str) -> int:
+        try:
+            return ctypes.windll.winmm.mciSendStringW(cmd, None, 0, None)
+        except Exception:  # noqa: BLE001
+            return -1
+
+    def _loop(self) -> None:
+        while True:
+            op, path = self.q.get()
+            if op == "stop":
+                self._mci("close all")
+                continue
+            self.n += 1
+            alias = f"m18snd{self.n}"
+            if self._mci(f'open "{path}" type mpegvideo alias {alias}') == 0:
+                self._mci(f"play {alias} from 0")
+            if self.n % 32 == 0:
+                pass  # MCI 设备播完不会自动释放；「停止音效」会统一关闭
+
+    def play(self, path: str) -> None:
+        self.q.put(("play", path))
+
+    def stop(self) -> None:
+        self.q.put(("stop", ""))
+
+
+def action_value(spec: dict) -> str:
+    """动作在编辑区「值」里显示 / 编辑的内容。"""
+    kind = spec.get("type")
+    if kind == "toggle":
+        return " | ".join(spec.get("keys") or [])
+    if kind == "text":
+        return spec.get("text", "")
+    if kind == "mouse":
+        return spec.get("pos", "")
+    if kind == "close":
+        return spec.get("target", "")
+    if kind == "scene":
+        return spec.get("scene", "")
+    if kind == "sound":
+        return spec.get("path", "")
+    return str(spec.get("name") or spec.get("keys") or spec.get("url") or spec.get("path")
+               or spec.get("action") or spec.get("macro") or "")
+
+
 def action_label(spec: dict) -> str:
     kind = spec.get("type")
     if kind == "nav":
@@ -232,6 +407,18 @@ def action_label(spec: dict) -> str:
         return f"宏 · {len(spec.get('steps') or [])} 步"
     if kind == "plugin":
         return f"插件 · {spec.get('name') or spec.get('action', '').rsplit('.', 1)[-1]}"
+    if kind == "text":
+        return "输入密码" if spec.get("secret") else f"输入：{spec.get('text', '')[:16]}"
+    if kind == "toggle":
+        return "双状态：" + " ⇄ ".join(spec.get("keys") or [])
+    if kind == "mouse":
+        return MOUSE_LABELS.get(spec.get("button", ""), "鼠标")
+    if kind == "close":
+        return f"关闭：{spec.get('target') or '当前窗口'}"
+    if kind == "scene":
+        return f"场景：{spec.get('scene', '')}"
+    if kind == "sound":
+        return f"音效：{os.path.basename(spec.get('path', ''))}" if spec.get("path") else "停止音效"
     if kind == "url":
         return spec.get("url", "")
     path = spec.get("path", "")
@@ -536,6 +723,14 @@ class App:
         self._plugin_visible: dict[str, tuple] = {}   # context -> (键号, 动作)
         self._plugin_dirty: dict[int, float] = {}
         self._raster_pending: dict[str, str] = {}     # SVG 光栅化请求 id -> context
+        self.key_gestures: dict = {}                  # 当前页：键号 -> {"long": 动作, "double": 动作}
+        self._press: dict[int, dict] = {}             # 长按 / 双击判定
+        self.sound = SoundPlayer()
+        self._scene_history: list[str] = []           # 「返回上一场景」
+        self._auto_scene = None                       # 因为前台程序自动切过去的场景
+        self._auto_return = None
+        self._auto_applying = False
+        self.recent_apps = deque(maxlen=12)
         self._gif_active: dict[int, str] = {}   # 正在由 SDK 原生播放的键 → GIF 文件
         self._gif_session = -1
         self.official_root_cfg = ""      # config.json 里手动指定的官方软件目录
@@ -630,6 +825,7 @@ class App:
         threading.Thread(target=self._auto_sync_official, daemon=True).start()
         threading.Thread(target=self._warm_gif_cache, daemon=True).start()
         threading.Thread(target=self.index_official_sources, daemon=True).start()
+        threading.Thread(target=self._app_watch_loop, daemon=True).start()
 
     # -- 热插拔 ------------------------------------------------------------ #
     def _watch_loop(self) -> None:
@@ -656,6 +852,16 @@ class App:
                 log(f"热插拔监测异常：{exc}")
 
     def _restore_all(self) -> None:
+        # 热插拔线程和「官方驱动退出」线程可能同时发现设备回来：只接管一次
+        lock = self.__dict__.setdefault("_restore_lock", threading.Lock())
+        if not lock.acquire(blocking=False):
+            return
+        try:
+            self._restore_all_locked()
+        finally:
+            lock.release()
+
+    def _restore_all_locked(self) -> None:
         log("设备已接入，重新接管…")
         try:
             if self.quiet or self.lighting_only:
@@ -777,6 +983,10 @@ class App:
         opacity = max(0, min(100, int(style.get("opacity", 100))))
         size = max(8, min(40, int(style.get("size", 20))))
         pos = style.get("pos") or "center"
+        act0 = self.key_actions.get(key)
+        if isinstance(act0, dict) and act0.get("type") == "toggle" and "|" in text:
+            parts = text.split("|")
+            text = parts[int(act0.get("state") or 0) % len(parts)].strip()
         base = self._key_jpeg(key)
         vis = self._plugin_vis(key)
         flash = ""
@@ -1255,6 +1465,7 @@ class App:
         self.key_overrides = page["images"]
         self.key_actions = page["actions"]
         self.key_styles = page.setdefault("styles", {})
+        self.key_gestures = page.setdefault("gestures", {})
         self._plugin_sync()
 
     def goto_page(self, index: int) -> bool:
@@ -1387,6 +1598,8 @@ class App:
                         "actions": {},
                         "styles": {int(k): v for k, v in (p.get("styles") or {}).items()
                                    if str(k).isdigit()},
+                        "gestures": {int(k): v for k, v in (p.get("gestures") or {}).items()
+                                     if str(k).isdigit() and isinstance(v, dict) and v},
                     })
                 for idx, p in enumerate(pages):
                     for key, name in (p.get("images") or {}).items():
@@ -1512,6 +1725,7 @@ class App:
                                for k, v in p["images"].items() if v.get("file")},
                     "actions": {str(k): v for k, v in p["actions"].items()},
                     "styles": {str(k): v for k, v in (p.get("styles") or {}).items()},
+                    "gestures": {str(k): v for k, v in (p.get("gestures") or {}).items() if v},
                 }
                 for p in self.pages
             ],
@@ -1905,9 +2119,12 @@ class App:
     def _on_input(self, key: int, state: int) -> None:
         if self.input_muted:
             return
+        idle = time.time() - self._last_activity
         self._last_activity = time.time()
-        # 设备可能自己睡过去了（显示开机图），任何按键都补画一次，保证画面回来
-        if self.in_standby or time.time() - self._last_paint > 1.0:
+        # 只有真的在待机、或很久没操作（设备可能自己睡过去显示开机图）才整屏补画。
+        # 以前是「距上次整屏绘制 > 1 秒」就补画，几乎每次按键都会先重写 15 个键、停启动图，
+        # 这一大批数据堵在 SDK 队列前面，按键动作和插件画面就跟着延迟。
+        if self.in_standby or idle > 600:
             threading.Thread(target=self._wake_from_standby, daemon=True).start()
         item = {"type": "input", "key": key, "state": state, "t": time.time()}
         self.events.appendleft(item)
@@ -1917,10 +2134,15 @@ class App:
         if isinstance(act, dict) and act.get("type") == "plugin":
             self._plugin_key(key, act, state)
             return
-        if state == 1:
-            if self.repaint_on_press:
-                self._maybe_repaint()
-            threading.Thread(target=self._run_action, args=(key,), daemon=True).start()
+        g = self.key_gestures.get(key) or {}
+        if not (g.get("long") or g.get("double")):
+            # 只有短按：按下立即执行，零延迟
+            if state == 1:
+                if self.repaint_on_press:
+                    self._maybe_repaint()
+                threading.Thread(target=self._run_action, args=(key,), daemon=True).start()
+            return
+        self._gesture(key, state, g)
 
     def _maybe_repaint(self) -> None:
         """设备空闲会自己息屏，醒过来只显示开机图；按键时补一次画面。"""
@@ -1946,6 +2168,8 @@ class App:
                     time.sleep(max(0.0, min(60.0, float(step.get("sec", 0)))))
                 elif op == "hotkey":
                     send_hotkey(step.get("keys", ""))
+                elif op == "text":
+                    type_text(step.get("text", ""))
                 elif op == "url":
                     if step.get("url"):
                         os.startfile(step["url"])
@@ -2033,8 +2257,15 @@ class App:
             if not f.lower().endswith(".json") or f.startswith(("__", ".")):
                 continue
             name = os.path.splitext(f)[0]
+            apps = []
+            try:
+                with open(os.path.join(SCENE_DIR, f), encoding="utf-8-sig") as fh:
+                    apps = json.load(fh).get("apps") or []
+            except (OSError, ValueError, AttributeError):
+                pass
             items.append({"name": name, "custom": False,
                           "official": name in official_names,
+                          "apps": apps,
                           "active": name == self.active_scene})
         return items
 
@@ -2128,7 +2359,16 @@ class App:
                 merged[k] = data[k]
         return self.import_config(merged)
 
+    def _canonical_scene(self, name: str) -> str:
+        """场景名统一成文件名对应的写法（全角括号等会被换成 _），避免同一场景两种名字。"""
+        if not name or name == self.custom_scene_name:
+            return name
+        return os.path.splitext(os.path.basename(self._scene_path(name)))[0]
+
     def apply_scene(self, name: str) -> bool:
+        name = self._canonical_scene(name)
+        if not self._auto_applying:
+            self._auto_scene = None
         self._applying_scene = True
         try:
             if name == self.custom_scene_name:
@@ -2339,14 +2579,37 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"补记图标来源失败：{exc}")
 
-    def sync_official_scenes(self) -> dict:
+    def sync_official(self, mode: str = "new") -> dict:
+        """「同步官方」按钮：重新读取图标包 / 插件；场景按 mode 只加新的（new）或全部覆盖重导（all）。"""
+        self._catalog(refresh=True)
+        if self.plugin_host:
+            plugins = {}
+            for uid, p in self._catalog()["plugins"].items():
+                man = official._plugin_manifest(p["folder"])
+                if man:
+                    plugins[uid] = {"folder": p["folder"], "manifest": man}
+            self.plugin_host.register_plugins(plugins)
+        result = self.sync_official_scenes(only_new=(mode != "all"))
+        active = self.active_scene
+        if mode == "all" and active and active in [r["name"] for r in result["scenes"]]:
+            self.apply_scene(active)          # 当前场景被重导了，重新载入
+        cat = self._catalog()
+        result.update({"packs": len(cat["packs"]), "icons": sum(len(p["files"]) for p in cat["packs"].values()),
+                       "plugins": len(cat["plugins"])})
+        return result
+
+    def sync_official_scenes(self, only_new: bool = False) -> dict:
         """把官方驱动里 M18 的全部场景（含预设）转换后写进场景列表。不会切换当前场景。"""
         plugins = official.PluginIndex(SD_ROOT)
         rev = self._vk_reverse()
         base = self.export_config()
         report, names = [], []
         os.makedirs(SCENE_DIR, exist_ok=True)
+        existing = self.official_scene_names()
         for item in official.list_scene_sources():
+            if only_new and os.path.isfile(self._scene_path(item["name"].strip()[:40])):
+                names.append(item["name"].strip()[:40])
+                continue
             try:
                 sc = official.convert_scene(item, plugins, SD_ROOT, rev)
             except Exception as exc:  # noqa: BLE001
@@ -2374,6 +2637,9 @@ class App:
             cfg = dict(base)
             cfg.update({"pages": pages, "page": 0, "officialSource": item["id"],
                         "activeScene": name})
+            app_id = str(item["manifest"].get("AppIdentifier") or "").strip()
+            if app_id and app_id != "*":
+                cfg["apps"] = [os.path.basename(app_id).lower()]
             try:
                 with open(self._scene_path(name), "w", encoding="utf-8") as fh:
                     json.dump(cfg, fh, ensure_ascii=False, indent=2)
@@ -2382,9 +2648,11 @@ class App:
                 continue
             names.append(name)
             report.append({"name": name, "kind": item["kind"], **sc["stats"]})
+        names = sorted(set(names) | (existing if only_new else set()))
         try:
             with open(self._official_mark_path(), "w", encoding="utf-8") as fh:
-                json.dump({"names": names, "time": int(time.time())}, fh, ensure_ascii=False)
+                json.dump({"names": names, "time": int(time.time()), "pluginsMigrated": True},
+                          fh, ensure_ascii=False)
         except OSError:
             pass
         log("官方场景同步完成：" + "，".join(
@@ -2475,7 +2743,7 @@ class App:
     def swap_keys(self, a: int, b: int) -> bool:
         if a == b or not (1 <= a <= KEY_COUNT) or not (1 <= b <= KEY_COUNT):
             return False
-        for store in (self.key_overrides, self.key_actions, self.key_styles):
+        for store in (self.key_overrides, self.key_actions, self.key_styles, self.key_gestures):
             va, vb = store.get(a), store.get(b)
             if vb is None:
                 store.pop(a, None)
@@ -2498,6 +2766,7 @@ class App:
             "image": copy.deepcopy(self.key_overrides.get(key)),
             "action": copy.deepcopy(self.key_actions.get(key)),
             "style": copy.deepcopy(self.key_styles.get(key)),
+            "gestures": copy.deepcopy(self.key_gestures.get(key)),
         }
         return any(self.clipboard.values())
 
@@ -2506,7 +2775,8 @@ class App:
             return False
         for name, store in (("image", self.key_overrides),
                             ("action", self.key_actions),
-                            ("style", self.key_styles)):
+                            ("style", self.key_styles),
+                            ("gestures", self.key_gestures)):
             val = self.clipboard.get(name)
             if val:
                 store[key] = copy.deepcopy(val)
@@ -2526,14 +2796,55 @@ class App:
         self.key_overrides.pop(key, None)
         self.key_actions.pop(key, None)
         self.key_styles.pop(key, None)
+        self.key_gestures.pop(key, None)
         self._save_config()
         self._dirty = True
         if self.device.connected:
             self.apply_keys()
         return True
 
-    def _run_action(self, key: int) -> None:
-        act = self.key_actions.get(key)
+    LONG_PRESS_SEC = 0.5
+    DOUBLE_GAP_SEC = 0.3
+
+    def _gesture(self, key: int, state: int, g: dict) -> None:
+        """设了长按 / 双击的键：长按 ≥0.5 秒触发长按；两次点击间隔 <0.3 秒触发双击；否则是短按。"""
+        st = self._press.setdefault(key, {})
+        run = lambda act: threading.Thread(target=self._run_action, args=(key, act), daemon=True).start()  # noqa: E731
+        if state == 1:
+            st["down"] = time.time()
+            st["long_fired"] = False
+            if g.get("long"):
+                down = st["down"]
+
+                def fire_long():
+                    if st.get("down") == down and not st.get("released"):
+                        st["long_fired"] = True
+                        log(f"按键 {key} → 长按")
+                        run(g["long"])
+                st["released"] = False
+                st["long_timer"] = threading.Timer(self.LONG_PRESS_SEC, fire_long)
+                st["long_timer"].start()
+            return
+        st["released"] = True
+        if st.get("long_timer"):
+            st["long_timer"].cancel()
+        if st.get("long_fired"):
+            return
+        if g.get("double"):
+            pending = st.get("single_timer")
+            if pending and pending.is_alive():
+                pending.cancel()
+                st["single_timer"] = None
+                log(f"按键 {key} → 双击")
+                run(g["double"])
+                return
+            st["single_timer"] = threading.Timer(self.DOUBLE_GAP_SEC, lambda: run(None))
+            st["single_timer"].start()
+        else:
+            run(None)
+
+    def _run_action(self, key: int, act: dict | None = None) -> None:
+        act = act if act is not None else self.key_actions.get(key)
         if not act:
             return
         kind = act.get("type") or "launch"
@@ -2544,6 +2855,8 @@ class App:
                 self.add_nav_pages(name)
             elif name == "下一场景":
                 self.next_scene()
+            elif name == "返回上一场景":
+                self.back_scene()
             elif name.startswith("跳到第"):
                 digits = "".join(ch for ch in name if ch.isdigit())
                 if digits:
@@ -2579,6 +2892,55 @@ class App:
             log(f"按键 {key} → 热键 {combo} {'✓' if ok else '✗ 组合键无法识别'}")
             return
 
+        if kind == "toggle":
+            keys = act.get("keys") or []
+            if not keys:
+                return
+            st = int(act.get("state") or 0) % len(keys)
+            ok = send_hotkey(keys[st])
+            act["state"] = (st + 1) % len(keys)
+            log(f"按键 {key} → 双状态热键 {keys[st]}（切到状态 {act['state'] + 1}）{'✓' if ok else '✗'}")
+            self._save_config()
+            if self.device.connected and 1 <= key <= KEY_COUNT and not self.in_standby:
+                self.device.send_image(key, self._render_key(key))
+                self.device.refresh()
+            self.broadcast({"type": "page", "page": self.page, "pageCount": len(self.pages)})
+            return
+
+        if kind == "text":
+            ok = type_text(act.get("text", ""), bool(act.get("enter")))
+            log(f"按键 {key} → 输入{'密码' if act.get('secret') else '文本'} {'✓' if ok else '✗'}")
+            return
+
+        if kind == "mouse":
+            ok = mouse_action(act.get("button", "click"), act.get("pos", ""))
+            log(f"按键 {key} → {MOUSE_LABELS.get(act.get('button', ''), '鼠标')} {'✓' if ok else '✗'}")
+            return
+
+        if kind == "close":
+            ok = close_target(act.get("target", ""))
+            log(f"按键 {key} → 关闭 {act.get('target') or '前台窗口'} {'✓' if ok else '✗'}")
+            return
+
+        if kind == "scene":
+            name = act.get("scene", "")
+            self._scene_history.append(self.active_scene or self.custom_scene_name)
+            del self._scene_history[:-20]
+            ok = self.apply_scene(name)
+            self.broadcast({"type": "scene", "name": name, "ok": ok})
+            log(f"按键 {key} → 切换场景 {name} {'✓' if ok else '✗'}")
+            return
+
+        if kind == "sound":
+            path = act.get("path", "")
+            if path and os.path.isfile(path):
+                self.sound.play(path)
+                log(f"按键 {key} → 播放音效 {os.path.basename(path)}")
+            else:
+                self.sound.stop()
+                log(f"按键 {key} → 停止音效")
+            return
+
         if kind == "url":
             url = act.get("url", "")
             if not url:
@@ -2600,68 +2962,196 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"执行失败 {path}: {exc}")
 
-    def set_key_action(self, key: int, spec: dict) -> bool:
-        if not (1 <= key <= KEY_COUNT + 3):
-            return False
+    @staticmethod
+    def _parse_macro(raw: str) -> list:
+        steps = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            op = parts[0].lower()
+            val = parts[1].strip() if len(parts) > 1 else ""
+            if op in ("delay", "wait"):
+                try:
+                    steps.append({"op": "delay", "sec": float(val)})
+                except ValueError:
+                    pass
+            elif op in ("hotkey", "key"):
+                if val:
+                    steps.append({"op": "hotkey", "keys": val})
+            elif op == "url":
+                if val:
+                    steps.append({"op": "url", "url": val})
+            elif op in ("text", "type"):
+                if val:
+                    steps.append({"op": "text", "text": val})
+            elif op in ("launch", "open", "run"):
+                path = val if os.path.isabs(val) else os.path.join(HERE, val)
+                if val and os.path.exists(path):
+                    steps.append({"op": "launch", "path": path})
+        return steps
+
+    def _build_action(self, spec: dict) -> dict | None:
+        """界面提交的动作 → 存储格式；内容不合法返回 None。"""
         kind = spec.get("type") or "launch"
         if kind == "nav":
             name = str(spec.get("name") or "")
-            if not name:
-                return False
-            self.key_actions[key] = {"type": "nav", "name": name}
-        elif kind == "hotkey":
+            return {"type": "nav", "name": name} if name else None
+        if kind == "hotkey":
             keys = str(spec.get("keys") or "").strip()
-            if not keys:
-                return False
-            self.key_actions[key] = {"type": "hotkey", "keys": keys}
-        elif kind == "media":
+            return {"type": "hotkey", "keys": keys} if keys else None
+        if kind == "toggle":
+            keys = [k.strip() for k in str(spec.get("keys") or "").split("|") if k.strip()]
+            return {"type": "toggle", "keys": keys[:2], "state": 0} if len(keys) >= 2 else None
+        if kind == "media":
             action = str(spec.get("action") or "")
-            if action not in MEDIA_LABELS:
-                return False
-            self.key_actions[key] = {"type": "media", "action": action}
-        elif kind == "macro":
+            return {"type": "media", "action": action} if action in MEDIA_LABELS else None
+        if kind == "macro":
             raw = str(spec.get("macro") or "")
-            steps = []
-            for line in raw.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split(None, 1)
-                op = parts[0].lower()
-                val = parts[1].strip() if len(parts) > 1 else ""
-                if op in ("delay", "wait"):
-                    try:
-                        steps.append({"op": "delay", "sec": float(val)})
-                    except ValueError:
-                        pass
-                elif op in ("hotkey", "key"):
-                    if val:
-                        steps.append({"op": "hotkey", "keys": val})
-                elif op == "url":
-                    if val:
-                        steps.append({"op": "url", "url": val})
-                elif op in ("launch", "open", "run"):
-                    path = val if os.path.isabs(val) else os.path.join(HERE, val)
-                    if val and os.path.exists(path):
-                        steps.append({"op": "launch", "path": path})
-            if not steps:
-                return False
-            self.key_actions[key] = {"type": "macro", "steps": steps, "macro": raw}
-        elif kind == "url":
+            steps = self._parse_macro(raw)
+            return {"type": "macro", "steps": steps, "macro": raw} if steps else None
+        if kind == "url":
             url = str(spec.get("url") or "").strip()
-            if not url:
-                return False
-            self.key_actions[key] = {"type": "url", "url": url}
+            return {"type": "url", "url": url} if url else None
+        if kind == "text":
+            text = str(spec.get("text") or "")
+            return {"type": "text", "text": text, "enter": bool(spec.get("enter")),
+                    "secret": bool(spec.get("secret"))} if text else None
+        if kind == "mouse":
+            button = str(spec.get("button") or "click")
+            return {"type": "mouse", "button": button, "pos": str(spec.get("pos") or "").strip()} \
+                if button in MOUSE_LABELS else None
+        if kind == "close":
+            return {"type": "close", "target": str(spec.get("target") or "").strip()}
+        if kind == "scene":
+            name = str(spec.get("scene") or "").strip()
+            return {"type": "scene", "scene": name} if name else None
+        if kind == "sound":
+            path = str(spec.get("path") or "").strip()
+            if path and not os.path.isfile(path):
+                return None
+            return {"type": "sound", "path": path}
+        raw = str(spec.get("path") or "")
+        path = raw if os.path.isabs(raw) else os.path.join(HERE, raw)
+        if not raw or not os.path.exists(path):
+            return None
+        return {"type": "launch", "path": path}
+
+    def set_key_action(self, key: int, spec: dict) -> bool:
+        if not (1 <= key <= KEY_COUNT + 3):
+            return False
+        action = self._build_action(spec)
+        if action is None:
+            return False
+        gesture = spec.get("gesture")
+        if gesture in ("long", "double"):
+            self.key_gestures.setdefault(key, {})[gesture] = action
         else:
-            raw = str(spec.get("path") or "")
-            path = raw if os.path.isabs(raw) else os.path.join(HERE, raw)
-            if not raw or not os.path.exists(path):
-                return False
-            self.key_actions[key] = {"type": "launch", "path": path}
+            self.key_actions[key] = action
+        self._save_config()
+        if self.device.connected and 1 <= key <= KEY_COUNT and not self.in_standby:
+            self.device.send_image(key, self._render_key(key))
+            self.device.refresh()
+        return True
+
+    def clear_key_gesture(self, key: int, gesture: str) -> bool:
+        g = self.key_gestures.get(key) or {}
+        if gesture not in g:
+            return False
+        g.pop(gesture, None)
+        if not g:
+            self.key_gestures.pop(key, None)
         self._save_config()
         return True
 
-    def clear_key_action(self, key: int) -> bool:
+    def back_scene(self) -> bool:
+        while self._scene_history:
+            name = self._scene_history.pop()
+            if name != self.active_scene:
+                ok = self.apply_scene(name)
+                self.broadcast({"type": "scene", "name": name, "ok": ok})
+                return ok
+        return False
+
+    # -- 前台程序自动切换场景 ---------------------------------------------- #
+    def _scene_links(self) -> dict:
+        """exe 名（小写）→ 场景名。5 秒缓存。"""
+        cache = getattr(self, "_links_cache", None)
+        if cache and time.time() - cache[0] < 5:
+            return cache[1]
+        links = {}
+        for item in self.list_scenes():
+            for app in item.get("apps") or []:
+                links.setdefault(app.lower(), item["name"])
+        self._links_cache = (time.time(), links)
+        return links
+
+    def set_scene_apps(self, name: str, apps) -> bool:
+        if name == self.custom_scene_name:
+            return False
+        path = self._scene_path(name)
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return False
+        cleaned = []
+        for a in apps or []:
+            a = os.path.basename(str(a).strip().strip('"')).lower()
+            if a and not a.endswith(".exe"):
+                a += ".exe"
+            if a and a not in cleaned:
+                cleaned.append(a)
+        data["apps"] = cleaned
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+        self._links_cache = None
+        log(f"场景「{name}」关联程序：{', '.join(cleaned) or '（无）'}")
+        return True
+
+    def _app_watch_loop(self) -> None:
+        """前台切到关联了场景的程序 → 自动切过去；离开 → 切回原来的场景。"""
+        while True:
+            time.sleep(0.8)
+            try:
+                self._app_watch_tick(*foreground_app())
+            except Exception as exc:  # noqa: BLE001
+                log(f"前台程序监测异常：{exc}")
+                time.sleep(5)
+
+    def _app_watch_tick(self, exe: str, title: str) -> None:
+        if not exe or "M18 控制台" in title:
+            return            # 正在用控制台窗口本身，不来回切
+        if exe in self.recent_apps:
+            self.recent_apps.remove(exe)
+        self.recent_apps.appendleft(exe)
+        links = self._scene_links()
+        target = links.get(exe)
+        active = self._canonical_scene(self.active_scene or self.custom_scene_name)
+        if target:
+            if active != target:
+                if not self._auto_scene:
+                    self._auto_return = active
+                self._auto_scene = target
+                self._auto_apply(target, f"前台程序 {exe}")
+        elif self._auto_scene and active == self._auto_scene:
+            back = self._auto_return or self.custom_scene_name
+            self._auto_scene = None
+            self._auto_apply(back, "离开关联程序")
+
+    def _auto_apply(self, name: str, why: str) -> None:
+        self._auto_applying = True
+        try:
+            ok = self.apply_scene(name)
+        finally:
+            self._auto_applying = False
+        log(f"自动切换场景 → {name}（{why}）{'✓' if ok else '✗'}")
+        self.broadcast({"type": "scene", "name": name, "ok": ok})
+
+    def clear_key_action(self, key: int, gesture: str = "") -> bool:
+        if gesture in ("long", "double"):
+            return self.clear_key_gesture(key, gesture)
         if key not in self.key_actions:
             return False
         self.key_actions.pop(key, None)
@@ -2753,7 +3243,7 @@ class App:
             out.append({
                 "id": p["id"], "name": p["name"], "author": p["author"],
                 "version": p["version"], "description": p["description"],
-                "downloaded": p["downloaded"], "hasIcon": bool(p["icon"]),
+                "downloaded": p["downloaded"], "hasIcon": bool(p["icon"]), "custom": p.get("custom", False),
                 "actions": [{"name": a["name"], "tooltip": a["tooltip"], "hasIcon": bool(a["icon"])}
                             for a in p["actions"]],
             })
@@ -2921,6 +3411,9 @@ class App:
         with self._plugin_lock:
             for ctx, (key, spec) in self._plugin_visible.items():
                 if spec.get("plugin") == uid:
+                    # 插件（重新）连上：清掉旧实例留下的画面 / 标题，免得热重载后残留
+                    if self.plugin_visual.pop(ctx, None) is not None:
+                        self._plugin_dirty[key] = time.time()
                     self._plugin_appear(key, spec)
 
     def _plugin_key(self, key: int, spec: dict, state: int) -> None:
@@ -3104,6 +3597,13 @@ class App:
         ctx = msg.get("context") or ""
         payload = msg.get("payload") or {}
         host = self.plugin_host
+        if uid.startswith(CUSTOM_PREFIX):
+            if ev == "logMessage":
+                self.broadcast({"type": "pluginlog", "plugin": uid,
+                                "message": str(payload.get("message"))[:2000], "t": time.time()})
+            elif ev and ev.startswith("m18."):
+                self._custom_call(uid, ev, payload)
+                return
         if self._common_plugin_msg(uid, ev, msg, lambda m: host.send(uid, m)):
             if ev == "setGlobalSettings":
                 # 设置页可能开着：同步给它
@@ -3202,6 +3702,271 @@ class App:
             if pushed:
                 self.device.refresh()
 
+    # -- 自制插件 ---------------------------------------------------------- #
+    def _custom_call(self, uid: str, ev: str, payload: dict) -> None:
+        """自制插件专属：发热键 / 打开程序 / 输入文字（第三方插件没有这些权限）。"""
+        try:
+            if ev == "m18.hotkey":
+                ok = send_hotkey(str(payload.get("keys") or ""))
+            elif ev == "m18.launch":
+                path = str(payload.get("path") or "")
+                ok = bool(path) and (os.path.exists(path) or path.lower().startswith(("http://", "https://")))
+                if ok:
+                    os.startfile(path)
+            elif ev == "m18.text":
+                ok = type_text(str(payload.get("text") or ""), bool(payload.get("enter")))
+            elif ev == "m18.media":
+                vk = MEDIA_LABELS.get(str(payload.get("action") or ""), ("", ""))[0]
+                ok = bool(vk) and send_hotkey(vk)
+            else:
+                ok = False
+            log(f"[自制插件 {uid[len(CUSTOM_PREFIX):]}] {ev} {'✓' if ok else '✗'}")
+        except Exception as exc:  # noqa: BLE001
+            log(f"[自制插件 {uid}] {ev} 失败：{exc}")
+
+    CUSTOM_RUNTIME = r"""<!doctype html>
+<html><head><meta charset="utf-8"><title>__TITLE__</title></head><body>
+<script>
+/* M18 自制插件运行时：把官方插件协议包装成几个简单的函数（由控制台生成，请在控制台里编辑） */
+(() => {
+  const OFFSET = __OFFSET__;
+  // 错误信息里的行号换算成「你写的代码」的行号
+  const fmt = (e) => String((e && e.stack) || e).split("\n").slice(0, 3).join("\n")
+    .replace(/https?:\/\/[^\s)]*index\.html:(\d+):(\d+)/g, (m, l) => (l > OFFSET ? `代码第 ${l - OFFSET} 行` : "运行时"));
+  let ws = null;
+  const keys = new Map(), handlers = {}, timers = new Map();
+  const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+  const M18 = {
+    on(ev, fn) { handlers[ev] = fn; },
+    log(...a) { send({ event: "logMessage", payload: { message: a.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join(" ") } }); },
+    openUrl(url) { send({ event: "openUrl", payload: { url } }); },
+    hotkey(keysText) { send({ event: "m18.hotkey", payload: { keys: keysText } }); },
+    launch(path) { send({ event: "m18.launch", payload: { path } }); },
+    type(text, enter = false) { send({ event: "m18.text", payload: { text, enter } }); },
+    media(action) { send({ event: "m18.media", payload: { action } }); },
+    sleep(ms) { return new Promise((r) => setTimeout(r, ms)); },
+    keys() { return [...keys.values()]; },
+  };
+  const call = (ev, k, extra) => {
+    const fn = handlers[ev];
+    if (!fn) return;
+    try {
+      const r = fn(k, extra);
+      if (r && r.catch) r.catch((e) => M18.log(`${ev} 出错：${fmt(e)}`));
+    } catch (e) { M18.log(`${ev} 出错：${fmt(e)}`); }
+  };
+  const keyOf = (msg) => {
+    const ctx = msg.context;
+    let k = keys.get(ctx);
+    if (!k) {
+      k = {
+        context: ctx, settings: {}, state: 0, coordinates: {},
+        setTitle: (t) => send({ event: "setTitle", context: ctx, payload: { title: t == null ? "" : String(t), target: 0 } }),
+        setImage: (img) => send({ event: "setImage", context: ctx, payload: { image: img || "", target: 0 } }),
+        setState: (s) => send({ event: "setState", context: ctx, payload: { state: s } }),
+        showOk: () => send({ event: "showOk", context: ctx }),
+        showAlert: () => send({ event: "showAlert", context: ctx }),
+        save: (obj) => { Object.assign(k.settings, obj || {}); send({ event: "setSettings", context: ctx, payload: k.settings }); },
+        draw: (fn, size = 144) => {
+          const c = document.createElement("canvas");
+          c.width = c.height = size;
+          const g = c.getContext("2d");
+          try { fn(g, size); } catch (e) { M18.log(`draw 出错：${fmt(e)}`); return; }
+          k.setImage(c.toDataURL("image/png"));
+        },
+        every: (ms, fn) => {
+          const id = setInterval(() => { try { fn(k); } catch (e) { M18.log(`every 出错：${fmt(e)}`); } }, Math.max(100, ms));
+          if (!timers.has(ctx)) timers.set(ctx, []);
+          timers.get(ctx).push(id);
+          return id;
+        },
+      };
+      keys.set(ctx, k);
+    }
+    const p = msg.payload || {};
+    if (p.settings) k.settings = p.settings;
+    if (p.coordinates) k.coordinates = p.coordinates;
+    if (typeof p.state === "number") k.state = p.state;
+    return k;
+  };
+  window.M18 = M18;
+  window.connectElgatoStreamDeckSocket = (port, uuid, registerEvent) => {
+    ws = new WebSocket("ws://127.0.0.1:" + port);
+    ws.onopen = () => { send({ event: registerEvent, uuid }); call("ready"); };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (!msg.context) { if (msg.event === "didReceiveGlobalSettings") call(msg.event, null, msg.payload); return; }
+      const k = keyOf(msg);
+      if (msg.event === "willDisappear") {
+        (timers.get(msg.context) || []).forEach(clearInterval);
+        timers.delete(msg.context);
+        call("willDisappear", k);
+        keys.delete(msg.context);
+        return;
+      }
+      call(msg.event, k, msg.payload);
+    };
+  };
+  window.addEventListener("error", (e) => {
+    const line = e.lineno > OFFSET ? `（代码第 ${e.lineno - OFFSET} 行）` : "";
+    M18.log(`脚本错误：${e.message}${line}`);
+  });
+  window.addEventListener("unhandledrejection", (e) => M18.log(`未处理的异步错误：${e.reason}`));
+})();
+</script>
+<script>
+__CODE__
+</script>
+</body></html>
+"""
+
+    def _custom_folder(self, pid: str) -> str:
+        return os.path.join(CUSTOM_PLUGIN_DIR, f"{pid}.sdPlugin")
+
+    def list_custom_plugins(self) -> list:
+        out = []
+        for folder in sorted(glob.glob(os.path.join(CUSTOM_PLUGIN_DIR, "*.sdPlugin"))):
+            try:
+                with open(os.path.join(folder, "m18.json"), encoding="utf-8") as fh:
+                    meta = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            meta["id"] = os.path.basename(folder)[:-len(".sdPlugin")]
+            meta["hasIcon"] = os.path.isfile(os.path.join(folder, "icon.png"))
+            meta["mtime"] = os.path.getmtime(os.path.join(folder, "m18.json"))
+            out.append(meta)
+        out.sort(key=lambda m: m.get("name", "").lower())
+        return out
+
+    @staticmethod
+    def _default_icon(name: str) -> bytes:
+        """没选图标时生成一个：彩色圆角方块 + 名称首字。"""
+        hue = (int(hashlib.md5(name.encode("utf-8")).hexdigest()[:4], 16) % 360) / 360.0
+        r, g, b = (int(c * 255) for c in colorsys.hsv_to_rgb(hue, 0.55, 0.78))
+        img = Image.new("RGBA", (144, 144), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([4, 4, 139, 139], radius=28, fill=(r, g, b, 255))
+        ch = (name.strip() or "?")[0]
+        font = None
+        for path in (r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\segoeuib.ttf"):
+            try:
+                font = ImageFont.truetype(path, 76)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        font = font or ImageFont.load_default()
+        w = d.textlength(ch, font=font)
+        d.text(((144 - w) / 2, 22), ch, font=font, fill=(255, 255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return buf.getvalue()
+
+    def _custom_icon_bytes(self, icon: str, name: str) -> bytes | None:
+        """icon：pack:… / plugin:… / data:image/…；返回 144×144 PNG。"""
+        raw = None
+        if icon.startswith("pack:"):
+            pack_id, _, fname = icon[5:].partition("/")
+            path = self.icon_pack_file(pack_id, fname)
+            img = official.read_image(path) if path else None
+            raw = img[1] if img else None
+        elif icon.startswith("plugin:"):
+            plugin_id, _, idx = icon[7:].rpartition("/")
+            try:
+                path = self.plugin_icon_path(plugin_id, int(idx))
+            except ValueError:
+                path = None
+            img = official.read_image(path) if path else None
+            raw = img[1] if img else None
+        elif icon.startswith("data:image/") and "," in icon:
+            try:
+                raw = base64.b64decode(icon.split(",", 1)[1])
+            except Exception:  # noqa: BLE001
+                raw = None
+        if not raw:
+            return None
+        try:
+            im = Image.open(io.BytesIO(raw)).convert("RGBA")
+            im = ImageOps.fit(im, (144, 144), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, "PNG")
+            return buf.getvalue()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def save_custom_plugin(self, data: dict) -> dict:
+        name = str(data.get("name") or "").strip()[:30]
+        action_name = str(data.get("actionName") or name).strip()[:30] or name
+        code = str(data.get("code") or "")
+        if not name:
+            return {"ok": False, "error": "插件名称不能为空"}
+        pid = str(data.get("id") or "").strip()
+        if not pid.startswith(CUSTOM_PREFIX) or not os.path.isdir(self._custom_folder(pid)):
+            slug = "".join(ch for ch in hashlib.sha1(f"{name}{time.time()}".encode()).hexdigest()[:10])
+            pid = f"{CUSTOM_PREFIX}{slug}"
+        folder = self._custom_folder(pid)
+        os.makedirs(folder, exist_ok=True)
+        icon = str(data.get("icon") or "")
+        icon_png = self._custom_icon_bytes(icon, name) if icon else None
+        icon_path = os.path.join(folder, "icon.png")
+        if icon_png or not os.path.isfile(icon_path):
+            with open(icon_path, "wb") as fh:
+                fh.write(icon_png or self._default_icon(name))
+        manifest = {
+            "Name": name, "UUID": pid, "Version": "1.0", "Author": "M18 控制台（自制）",
+            "Description": str(data.get("description") or "")[:200],
+            "CodePath": "index.html", "Icon": "icon", "Category": "自制插件", "CategoryIcon": "icon",
+            "SDKVersion": 2, "OS": [{"Platform": "windows", "MinimumVersion": "10"}],
+            "Software": {"MinimumVersion": "2.9"},
+            "Actions": [{"UUID": f"{pid}.action", "Name": action_name, "Icon": "icon",
+                         "States": [{"Image": "icon", "TitleAlignment": "middle"}],
+                         "Tooltip": str(data.get("description") or name)[:100]}],
+        }
+        head = self.CUSTOM_RUNTIME.split("__CODE__")[0]
+        offset = head.count("\n")
+        html = (self.CUSTOM_RUNTIME.replace("__TITLE__", name.replace("<", ""))
+                .replace("__OFFSET__", str(offset))
+                .replace("__CODE__", code.replace("</script", "<\\/script")))
+        meta = {"name": name, "actionName": action_name, "description": manifest["Description"],
+                "template": str(data.get("template") or ""), "code": code}
+        for fname, content in (("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2)),
+                               ("index.html", html),
+                               ("m18.json", json.dumps(meta, ensure_ascii=False, indent=2))):
+            with open(os.path.join(folder, fname), "w", encoding="utf-8") as fh:
+                fh.write(content)
+        self._refresh_plugins()
+        if self.plugin_host:
+            self.plugin_host.reload(pid)
+        # 已经绑在按键上的：按键名字跟着改
+        for page in self.pages:
+            for spec in (page.get("actions") or {}).values():
+                if isinstance(spec, dict) and spec.get("plugin") == pid:
+                    spec["name"] = action_name
+        log(f"自制插件已保存：{name}（{pid}）")
+        return {"ok": True, "id": pid}
+
+    def delete_custom_plugin(self, pid: str) -> bool:
+        if not pid.startswith(CUSTOM_PREFIX):
+            return False
+        folder = self._custom_folder(pid)
+        if not os.path.isdir(folder):
+            return False
+        if self.plugin_host:
+            self.plugin_host.forget(pid)
+        shutil.rmtree(folder, ignore_errors=True)
+        self._refresh_plugins()
+        log(f"自制插件已删除：{pid}")
+        return True
+
+    def _refresh_plugins(self) -> None:
+        self._catalog(refresh=True)
+        if self.plugin_host:
+            plugins = {}
+            for uid, p in self._catalog()["plugins"].items():
+                man = official._plugin_manifest(p["folder"])
+                if man:
+                    plugins[uid] = {"folder": p["folder"], "manifest": man}
+            self.plugin_host.register_plugins(plugins)
+
     def bind_plugin_action(self, key: int, plugin_id: str, idx: int) -> bool:
         if not (1 <= key <= KEY_COUNT + 3):
             return False
@@ -3213,6 +3978,10 @@ class App:
             "type": "plugin", "plugin": plugin_id, "action": act["uuid"], "name": act["name"],
             "settings": {}, "context": os.urandom(16).hex(), "state": 0,
         }
+        # 换成插件动作：原来的标题文字不再适用（插件自己画 / 设标题），保留配色
+        style = self.key_styles.get(key)
+        if style and style.pop("text", None) is not None and not any(style.values()):
+            self.key_styles.pop(key, None)
         if act.get("icon") and key <= KEY_COUNT:
             img = official.read_image(act["icon"])
             if img:
@@ -3459,11 +4228,17 @@ class App:
                 "keyActionTypes": {str(k): v.get("type", "launch")
                                    for k, v in self.key_actions.items()},
                 "keyStyles": {str(k): v for k, v in self.key_styles.items()},
-                "keyActionValues": {
-                    str(k): (v.get("name") or v.get("keys") or v.get("url")
-                             or v.get("path") or v.get("action") or v.get("macro") or "")
-                    for k, v in self.key_actions.items()
-                },
+                "keyActionValues": {str(k): action_value(v) for k, v in self.key_actions.items()},
+                "keyActionSpecs": {str(k): {f: v.get(f) for f in ("enter", "secret", "button", "pos",
+                                                                  "action", "state")}
+                                   for k, v in self.key_actions.items() if isinstance(v, dict)},
+                "keyGestures": {
+                    str(k): {gname: {"type": gv.get("type"), "label": action_label(gv),
+                                     "value": action_value(gv),
+                                     "spec": {f: gv.get(f) for f in ("enter", "secret", "button", "pos",
+                                                                     "action", "name", "macro")}}
+                             for gname, gv in g.items() if isinstance(gv, dict)}
+                    for k, g in self.key_gestures.items() if g},
                 "keyImages": {str(k): v.get("type") for k, v in self.key_overrides.items()},
                 "keyPlugin": {
                     str(k): {"plugin": v.get("plugin"), "name": v.get("name"),
@@ -3835,6 +4610,12 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("syncOfficial"):
                 result = APP.sync_official_scenes()
                 self._json({"ok": True, **result, "items": APP.list_scenes()})
+            elif "apps" in body and body.get("link"):
+                apps = body.get("apps")
+                if isinstance(apps, str):
+                    apps = [a for a in apps.replace("，", ",").split(",")]
+                self._json({"ok": APP.set_scene_apps(str(body["link"]), apps or []),
+                            "items": APP.list_scenes()})
             elif body.get("rename_custom"):
                 self._json({"ok": APP.rename_custom_scene(str(body["rename_custom"])),
                             "items": APP.list_scenes()})
@@ -3866,6 +4647,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": APP.clear_key_all(int(body.get("key", 0)))})
         elif path == "/api/icons":
             self._json({"ok": True, "items": APP.list_icons()})
+        elif path == "/api/official/sync":
+            self._json({"ok": True, **APP.sync_official(str(body.get("mode") or "new")),
+                        "items": APP.list_scenes()})
+        elif path == "/api/apps/recent":
+            self._json({"ok": True, "items": list(APP.recent_apps)})
+        elif path == "/api/custom-plugins":
+            self._json({"ok": True, "items": APP.list_custom_plugins()})
+        elif path == "/api/custom-plugins/save":
+            self._json(APP.save_custom_plugin(body))
+        elif path == "/api/custom-plugins/delete":
+            self._json({"ok": APP.delete_custom_plugin(str(body.get("id") or ""))})
+        elif path == "/api/custom-plugins/reveal":
+            pid = str(body.get("id") or "")
+            folder = APP._custom_folder(pid) if pid.startswith(CUSTOM_PREFIX) else ""
+            self._json({"ok": bool(folder) and APP.reveal_in_explorer(os.path.join(folder, "manifest.json"))})
         elif path == "/api/key/plugin":
             self._json({"ok": APP.bind_plugin_action(int(body.get("key", 0)), str(body.get("plugin") or ""),
                                                      int(body.get("index", -1)))})
@@ -4012,7 +4808,7 @@ class Handler(BaseHTTPRequestHandler):
             ok = APP.set_key_action(int(body.get("key", 0)), body)
             self._json({"ok": ok})
         elif path == "/api/key/action/clear":
-            self._json({"ok": APP.clear_key_action(int(body.get("key", 0)))})
+            self._json({"ok": APP.clear_key_action(int(body.get("key", 0)), str(body.get("gesture") or ""))})
         elif path == "/api/device/wake":
             APP.screen_off = False
             APP._anim_pause_until = time.time() + 1.0

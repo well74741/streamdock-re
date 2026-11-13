@@ -8,6 +8,7 @@ app/scenes/
 app/assets/uploads/
 app/assets/gifcache/
 app/plugin-data/
+app/custom-plugins/
 app/assets/icons/
 
 # ---- 第三方/体积较大的本地依赖 ----
