@@ -41,15 +41,22 @@ import official
 from pluginhost import PluginHost
 from wssdk import DeviceWS
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))     # 程序自带资源（界面、默认壁纸、图标）
 ROOT = os.path.dirname(HERE)
 UI_DIR = os.path.join(HERE, "ui")
+FROZEN = bool(getattr(sys, "frozen", False))          # 安装版（PyInstaller 打包）
+APP_DIR = os.path.dirname(sys.executable) if FROZEN else ROOT
+# 用户数据（配置、场景、上传的图标、插件数据）：安装版放 %APPDATA%\M18Console，
+# 源码运行时仍放在 app 目录里（和以前一样）；也可以用环境变量 M18_DATA_DIR 指定
+DATA_DIR = os.environ.get("M18_DATA_DIR") or (
+    os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "M18Console") if FROZEN else HERE)
+os.makedirs(DATA_DIR, exist_ok=True)
 SDK_SRC = os.path.join(ROOT, "refs", "devicesdk", "Python-SDK", "src")
 sys.path.insert(0, SDK_SRC)
 
 # 用 pythonw 启动时没有控制台，把输出重定向到日志，避免 print 崩溃
 if sys.stdout is None or sys.stderr is None:
-    _log_path = os.path.join(HERE, "server.log")
+    _log_path = os.path.join(DATA_DIR, "server.log")
     try:
         if os.path.getsize(_log_path) > 1_000_000:
             os.replace(_log_path, _log_path + ".1")
@@ -62,9 +69,9 @@ if sys.stdout is None or sys.stderr is None:
 LED_COUNT = 24
 KEY_COUNT = 15
 CANDIDATES = [(0x6603, 0x1012), (0x6603, 0x1009), (0x5548, 0x1000)]
-CONFIG_BAK_DIR = os.path.join(HERE, "config-backups")
-ICON_DIR = os.path.join(HERE, "assets", "icons")
-SCENE_DIR = os.path.join(HERE, "scenes")
+CONFIG_BAK_DIR = os.path.join(DATA_DIR, "config-backups")
+ICON_DIR = os.path.join(DATA_DIR, "assets", "icons")
+SCENE_DIR = os.path.join(DATA_DIR, "scenes")
 def _find_sd_root() -> str:
     """定位官方 Stream Dock 安装目录（图标库 / 插件索引用）。
 
@@ -89,12 +96,12 @@ def _find_sd_root() -> str:
 SD_ROOT = _find_sd_root()
 WALLPAPER = os.path.join(HERE, "assets", "wallpaper.jpg")
 WS_SDK_EXE = os.environ.get("M18_WS_SDK") or os.path.normpath(
-    os.path.join(HERE, "..", "ws-sdk", "StreamDockWebsocketSDK.exe"))
-CONFIG_PATH = os.path.join(HERE, "config.json")
-UPLOAD_DIR = os.path.join(HERE, "assets", "uploads")
-GIF_CACHE = os.path.join(HERE, "assets", "gifcache")   # 交给 SDK 原生播放的 64×64 动图
-PLUGIN_DATA = os.path.join(HERE, "plugin-data")          # 插件全局设置、进程日志
-CUSTOM_PLUGIN_DIR = os.path.join(HERE, "custom-plugins")  # 自制插件（标准 .sdPlugin 目录）
+    os.path.join(APP_DIR, "ws-sdk", "StreamDockWebsocketSDK.exe"))
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+UPLOAD_DIR = os.path.join(DATA_DIR, "assets", "uploads")
+GIF_CACHE = os.path.join(DATA_DIR, "assets", "gifcache")   # 交给 SDK 原生播放的 64×64 动图
+PLUGIN_DATA = os.path.join(DATA_DIR, "plugin-data")          # 插件全局设置、进程日志
+CUSTOM_PLUGIN_DIR = os.path.join(DATA_DIR, "custom-plugins")  # 自制插件（标准 .sdPlugin 目录）
 CUSTOM_PREFIX = "com.m18.custom."
 official.EXTRA_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -499,15 +506,45 @@ def resolve_lnk(path: str) -> str:
         return ""
 
 
+def _inside(path: str, root: str) -> bool:
+    path, root = os.path.normcase(os.path.normpath(path)), os.path.normcase(os.path.normpath(root))
+    return path == root or path.startswith(root + os.sep)
+
+
+def data_path(name: str) -> str:
+    """相对路径按数据目录解析（上传的文件都在那里）；绝对路径原样返回。"""
+    return name if os.path.isabs(name) else os.path.normpath(os.path.join(DATA_DIR, name))
+
+
 def asset_path(name: str) -> str | None:
-    """把配置里的相对路径解析成绝对路径，并限制在项目目录内。"""
+    """把界面传来的相对路径解析成绝对路径，只允许数据目录或程序目录里的文件。"""
     if not name:
         return None
-    path = name if os.path.isabs(name) else os.path.join(HERE, name)
-    path = os.path.normpath(path)
-    if not path.startswith(HERE) or not os.path.isfile(path):
-        return None
+    for root in (DATA_DIR, HERE):
+        path = os.path.normpath(name if os.path.isabs(name) else os.path.join(root, name))
+        if _inside(path, root) and os.path.isfile(path):
+            return path
+    return None
+
+
+def store_path(path: str) -> str:
+    """写进配置的路径：数据目录里的存相对路径，程序自带的用 app: 前缀，其他存绝对路径。"""
+    if not path:
+        return ""
+    if _inside(path, DATA_DIR):
+        return os.path.relpath(path, DATA_DIR)
+    if _inside(path, HERE):
+        return "app:" + os.path.relpath(path, HERE)
     return path
+
+
+def load_path(value: str) -> str:
+    if value.startswith("app:"):
+        return os.path.join(HERE, value[4:])
+    if os.path.isabs(value):
+        return value
+    cand = os.path.join(DATA_DIR, value)
+    return cand if os.path.exists(cand) else os.path.join(HERE, value)
 
 
 # --------------------------------------------------------------------------- #
@@ -1663,7 +1700,7 @@ class App:
                 self.official_root_cfg = root
             wp = cfg.get("wallpaper")
             if wp:
-                path = wp if os.path.isabs(wp) else os.path.join(HERE, wp)
+                path = load_path(wp)
                 if os.path.isfile(path):
                     self.wallpaper_file = path
         except (OSError, ValueError, TypeError):
@@ -1752,7 +1789,7 @@ class App:
                 }
                 for p in self.pages
             ],
-            "wallpaper": os.path.relpath(self.wallpaper_file, HERE) if self.wallpaper_file else "",
+            "wallpaper": store_path(self.wallpaper_file) if self.wallpaper_file else "",
         }
         if self.official_root_cfg:
             cfg["officialRoot"] = self.official_root_cfg
@@ -2218,7 +2255,7 @@ class App:
             r"Microsoft\Windows\Start Menu\Programs\Startup",
         )
         lnk = os.path.join(startup, "Stream Dock M18 控制台.lnk")
-        bat = os.path.abspath(os.path.join(HERE, "..", "启动 M18 控制台.bat"))
+        bat = sys.executable if FROZEN else os.path.abspath(os.path.join(HERE, "..", "启动 M18 控制台.bat"))
         if enabled:
             ps = (
                 f'$s=(New-Object -ComObject WScript.Shell).CreateShortcut("{lnk}");'
@@ -3024,7 +3061,7 @@ class App:
                 if val:
                     steps.append({"op": "text", "text": val})
             elif op in ("launch", "open", "run"):
-                path = val if os.path.isabs(val) else os.path.join(HERE, val)
+                path = data_path(val)
                 if val and os.path.exists(path):
                     steps.append({"op": "launch", "path": path})
         return steps
@@ -3073,7 +3110,7 @@ class App:
                 return None
             return {"type": "sound", "path": path}
         raw = str(spec.get("path") or "")
-        path = raw if os.path.isabs(raw) else os.path.join(HERE, raw)
+        path = data_path(raw)
         if not raw or not os.path.exists(path):
             return None
         return {"type": "launch", "path": path}
@@ -4794,7 +4831,7 @@ class Handler(BaseHTTPRequestHandler):
                 with open(dest, "wb") as fh:
                     fh.write(raw)
                 target = resolve_lnk(dest) if dest.lower().endswith(".lnk") else ""
-                self._json({"ok": True, "file": os.path.relpath(dest, HERE), "target": target})
+                self._json({"ok": True, "file": os.path.relpath(dest, DATA_DIR), "target": target})
                 return
 
             os.makedirs(UPLOAD_DIR, exist_ok=True)

@@ -6,9 +6,30 @@
 
 ## 打开方式
 
-**双击桌面上的「Stream Dock M18 控制台」**，或双击 `启动 M18 控制台.bat`。
+**装好的版本**：双击安装包 `M18Console-Setup-<版本>.exe`，装完开始菜单和桌面上都有「Stream Dock M18 控制台」。
+
+**从源码运行**：双击 `启动 M18 控制台.bat`。
 
 会启动本地服务（`127.0.0.1:8642`）和一个 Edge 应用窗口（无地址栏）。重复启动只会复用已有实例，并替换掉旧窗口。
+
+## 安装包
+
+```bash
+python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且 ws-sdk/ 已就位
+```
+
+产物：`dist/release/M18Console-Setup-<版本>.exe`（单文件，约 44 MB，版本号在 `app/version.py`）。
+
+- 自带 Python 运行时和官方 WebSocket SDK，对方电脑**不需要装 Python**
+- 装到当前用户目录（`%LOCALAPPDATA%\Programs\M18 Console`），**不需要管理员权限**
+- 开始菜单 / 桌面快捷方式，「设置 → 应用」里可卸载；卸载时可选是否保留用户数据
+- 用户数据（配置、场景、上传的图标、自制插件）在 `%APPDATA%\M18Console`，升级重装不丢
+- 静默安装：`Setup.exe --silent [--dir 目录] [--no-shortcut] [--no-launch]`
+
+对方电脑的要求：Windows 10/11 64 位、Microsoft Edge（系统自带）、M18 设备。
+装了官方 Stream Dock 软件时还能导入官方场景 / 图标包 / 插件（Node.js 插件用的是官方自带的 Node）；
+没装也能正常用按键、灯光、壁纸和自制插件。安装包没有数字签名，首次运行 Windows 可能提示「已保护你的电脑」，
+点「更多信息 → 仍要运行」即可。
 
 ## 架构（重要）
 

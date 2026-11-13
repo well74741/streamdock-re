@@ -28,3 +28,7 @@ __pycache__/
 
 # 壁纸原图（保留 app/assets/wallpaper.jpg 即可）
 原神.jpg
+
+# ---- 打包产物 ----
+build/
+dist/
