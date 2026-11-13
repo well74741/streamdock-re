@@ -9,7 +9,7 @@
 
 | 运行方式 | command | args |
 |---|---|---|
-| 安装版 | `%LOCALAPPDATA%\Programs\M18 Console\m18-mcp.exe` | 无 |
+| 安装版 | `%LOCALAPPDATA%\Programs\M18 Console\mcp\m18-mcp.exe` | 无 |
 | 源码 | `python`（带控制台的 python.exe） | `app/mcp_server.py` |
 
 控制台没开时 MCP 会在后台自动拉起。工具一览：

@@ -5148,7 +5148,7 @@ __CODE__
     def agent_config(self) -> dict:
         """接入 AI 智能体（Codex / DeepSeek Harness / Claude / Cursor…）的 MCP 配置。"""
         if FROZEN:
-            cmd, args = os.path.join(APP_DIR, "m18-mcp.exe"), []
+            cmd, args = os.path.join(APP_DIR, "mcp", "m18-mcp.exe"), []
         else:
             py = sys.executable
             if py.lower().endswith("pythonw.exe") and os.path.isfile(py[:-5] + ".exe"):

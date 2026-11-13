@@ -123,7 +123,7 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 |---|---|
 | `app/server.py` | 本地服务、渲染、灯光引擎、动作执行 |
 | `app/wssdk.py` | 极简 WebSocket 客户端 + 官方 SDK 设备封装 |
-| `app/mcp_server.py` | MCP 服务（给 AI 智能体用，安装版是 `m18-mcp.exe`） |
+| `app/mcp_server.py` | MCP 服务（给 AI 智能体用，安装版是 `mcp\m18-mcp.exe`） |
 | `app/ui/` | 界面（HTML/CSS/JS） |
 | `app/config.json` | 配置（页面、按键、灯光、待机等） |
 | `ws-sdk/` | 官方 WebSocket SDK（Windows） |

@@ -4,13 +4,16 @@
     python packaging/build.py --yes      # 缺的依赖不问，直接装
     python packaging/build.py --check    # 只检查环境，不打包
 
-产物：dist/release/M18Console-Setup-<版本>.exe
+产物：dist/release/M18Console-Setup-<版本>.exe、M18Console-Portable-<版本>.zip
 
 步骤：
 1. PyInstaller 把 app/server.py 打成文件夹版程序（dist/M18Console/，含 Python 运行时、界面、默认壁纸）
-2. 把官方 WebSocket SDK（ws-sdk/）放到程序旁边
+2. 把官方 WebSocket SDK（ws-sdk/）放到程序旁边；AI 接口 m18-mcp 也打成文件夹版放进 mcp/
 3. 整个程序文件夹压成 payload.zip
-4. PyInstaller 把 packaging/installer.py + payload.zip 打成单个 Setup.exe
+4. 用 Windows 自带的 csc.exe 编译 packaging/Setup.cs（原生安装 / 卸载程序），把 payload.zip 附加在 exe 末尾
+
+全程不用「单文件 exe」：单文件 exe 启动时要先解压到临时目录，部分电脑的安全软件会拦截
+（报 Could not create temporary directory / failed to create runtime-tmpdir）。
 """
 from __future__ import annotations
 
@@ -39,11 +42,42 @@ PIP_PACKAGES = {"PIL": "pillow", "PyInstaller": "pyinstaller"}     # 模块名 �
 PIP_MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"            # 官方源下载失败时换国内镜像
 SDK_EXE = os.path.join(ROOT, "ws-sdk", "StreamDockWebsocketSDK.exe")
 SDK_PAGE = "https://sdk.key123.vip/"
-# 单文件 exe 启动时要先解压到一个临时目录。默认用系统 %TEMP%，但有的电脑 %TEMP% 不可写
-# （权限坏了，或安全软件禁止往 Temp 里写程序）会弹「Could not create temporary directory!」。
-# 改成解压到用户自己的 LocalAppData 下（启动时自动创建），避开系统 Temp。
-RUNTIME_TMPDIR = r"%LOCALAPPDATA%\M18Console\runtime"
-ONEFILE = ["--onefile", "--runtime-tmpdir", RUNTIME_TMPDIR]
+PAYLOAD_MAGIC = b"M18PAYLD"        # 和 Setup.cs 里一致：[exe][payload.zip][8 字节长度][标记]
+
+
+def find_csc() -> str | None:
+    """.NET Framework 4.x 的 C# 编译器，Windows 10/11 自带。"""
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    for fw in ("Framework64", "Framework"):
+        path = os.path.join(windir, "Microsoft.NET", fw, "v4.0.30319", "csc.exe")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def build_setup(payload: str, out: str) -> None:
+    """编译原生安装程序并把 payload.zip 附加在末尾。"""
+    src = os.path.join(HERE, "Setup.cs")
+    work = os.path.join(BUILD, "setup")
+    os.makedirs(work, exist_ok=True)
+    cs = os.path.join(work, "Setup.cs")
+    with open(src, encoding="utf-8") as fh:
+        code = fh.read().replace("__VERSION__", VERSION)
+    with open(cs, "w", encoding="utf-8-sig") as fh:
+        fh.write(code)
+    exe = os.path.join(work, "Setup.exe")
+    run([find_csc(), "-nologo", "-target:winexe", "-codepage:65001", "-optimize+", f"-out:{exe}",
+         f"-win32icon:{os.path.join(APP, 'icon.ico')}",
+         "-r:System.IO.Compression.dll", "-r:System.IO.Compression.FileSystem.dll",
+         "-r:System.Windows.Forms.dll", "-r:System.Drawing.dll", cs])
+    size = os.path.getsize(payload)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "wb") as dst:
+        with open(exe, "rb") as fh:
+            shutil.copyfileobj(fh, dst)
+        with open(payload, "rb") as fh:
+            shutil.copyfileobj(fh, dst)
+        dst.write(size.to_bytes(8, "little") + PAYLOAD_MAGIC)
 
 
 # --------------------------------------------------------------------------- #
@@ -117,12 +151,13 @@ def preflight(auto_yes: bool) -> bool:
         return False
     print(f"✓ Python {sys.version.split()[0]}（{sys.executable}）")
 
-    # 2) tkinter：安装程序的界面要用，pip 装不了，只能重装 Python 时勾选
-    try:
-        import tkinter  # noqa: F401
-        print("✓ tkinter")
-    except Exception:  # noqa: BLE001
-        print("✗ 缺少 tkinter（安装程序界面要用）。重新运行 Python 安装程序 → Modify，勾选「tcl/tk and IDLE」")
+    # 2) C# 编译器：安装程序用它编译，Windows 10/11 自带 .NET Framework 4.8 里就有
+    csc = find_csc()
+    if csc:
+        print(f"✓ C# 编译器（{csc}）")
+    else:
+        print("✗ 找不到 .NET Framework 4 的 csc.exe（编译安装程序要用）")
+        print("  在「控制面板 → 程序 → 启用或关闭 Windows 功能」里勾选 .NET Framework 4.8，或安装 .NET Framework 4.8")
         ok = False
 
     # 3) Pillow / PyInstaller：可以自动装
@@ -241,20 +276,10 @@ def main() -> int:
     # 2) 官方 WebSocket SDK 放在 exe 旁边（server.py 里 APP_DIR/ws-sdk）
     shutil.copytree(os.path.join(ROOT, "ws-sdk"), os.path.join(app_dir, "ws-sdk"))
 
-    # 2b) 卸载程序：同一个 installer.py，但不带安装内容，单独打一个小 exe 放进程序目录
+    # 2b) MCP 服务：给 Codex / DeepSeek Harness / Claude 等 AI 智能体用（带控制台、走标准输入输出）。
+    #     文件夹版放在 mcp/ 子目录（不用单文件版：单文件启动要解压到临时目录，会被安全软件拦）
     pyinstaller(
-        "--name", "uninstall", "--windowed", *ONEFILE,
-        "--icon", os.path.join(APP, "icon.ico"),
-        "--distpath", os.path.join(BUILD, "uninstaller"),
-        "--paths", APP, "--hidden-import", "version", "--exclude-module", "numpy",
-        "--add-data", f"{os.path.join(APP, 'icon.ico')}{SEP}.",
-        os.path.join(HERE, "installer.py"),
-    )
-    shutil.copyfile(os.path.join(BUILD, "uninstaller", "uninstall.exe"), os.path.join(app_dir, "uninstall.exe"))
-
-    # 2c) MCP 服务：给 Codex / DeepSeek Harness / Claude 等 AI 智能体用（带控制台的单文件 exe，走标准输入输出）
-    pyinstaller(
-        "--name", "m18-mcp", "--console", *ONEFILE,
+        "--name", "m18-mcp", "--console", "--onedir",
         "--icon", os.path.join(APP, "icon.ico"),
         "--distpath", os.path.join(BUILD, "mcp"),
         "--paths", APP, "--hidden-import", "version",
@@ -262,7 +287,7 @@ def main() -> int:
         "--add-data", f"{os.path.join(APP, 'plugin_guide.md')}{SEP}.",
         os.path.join(APP, "mcp_server.py"),
     )
-    shutil.copyfile(os.path.join(BUILD, "mcp", "m18-mcp.exe"), os.path.join(app_dir, "m18-mcp.exe"))
+    shutil.copytree(os.path.join(BUILD, "mcp", "m18-mcp"), os.path.join(app_dir, "mcp"))
     for doc in (os.path.join(ROOT, "AGENTS.md"), os.path.join(APP, "plugin_guide.md")):
         shutil.copyfile(doc, os.path.join(app_dir, os.path.basename(doc)))
 
@@ -275,21 +300,12 @@ def main() -> int:
                 zf.write(full, os.path.relpath(full, app_dir))
     print(f"payload.zip：{os.path.getsize(payload) / 1048576:.1f} MB")
 
-    # 4) 安装程序（单文件）
+    # 4) 安装程序：原生 C#，载荷附加在末尾（安装时直接解压到安装目录；卸载程序由它装好后写入）
     release = os.path.join(DIST, "release")
-    pyinstaller(
-        "--name", f"M18Console-Setup-{VERSION}", "--windowed", *ONEFILE,
-        "--icon", os.path.join(APP, "icon.ico"),
-        "--distpath", release,
-        "--paths", APP,
-        "--hidden-import", "version", "--exclude-module", "numpy",
-        "--add-data", f"{payload}{SEP}.",
-        "--add-data", f"{os.path.join(APP, 'icon.ico')}{SEP}.",
-        os.path.join(HERE, "installer.py"),
-    )
     setup = os.path.join(release, f"M18Console-Setup-{VERSION}.exe")
+    build_setup(payload, setup)
     print(f"\n✓ 安装包：{setup}（{os.path.getsize(setup) / 1048576:.1f} MB，用时 {time.time() - t0:.0f} 秒）")
-    # 5) 免安装版：程序文件夹直接压成 zip，解压即用（不经过单文件解压，安装包在某些电脑上打不开时用它）
+    # 5) 免安装版：程序文件夹直接压成 zip，解压即用
     portable = os.path.join(release, f"M18Console-Portable-{VERSION}.zip")
     shutil.copyfile(payload, portable)
     print(f"✓ 免安装版：{portable}（{os.path.getsize(portable) / 1048576:.1f} MB，解压后运行 M18Console.exe）")

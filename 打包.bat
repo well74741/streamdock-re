@@ -72,7 +72,7 @@ exit /b 0
 
 :manual
 echo 请手动安装：https://www.python.org/downloads/
-echo 安装时勾选「Add python.exe to PATH」和「tcl/tk and IDLE」，装好后重新双击「打包.bat」。
+echo 安装时勾选「Add python.exe to PATH」，装好后重新双击「打包.bat」。
 start "" https://www.python.org/downloads/
 pause
 exit /b 1
