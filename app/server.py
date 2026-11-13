@@ -529,7 +529,6 @@ class App:
         threading.Thread(target=self._standby_loop, daemon=True).start()
         threading.Thread(target=self._diag_loop, daemon=True).start()
         threading.Thread(target=self._official_loop, daemon=True).start()
-        threading.Thread(target=self._panel_device, daemon=True).start()  # 预开开关屏句柄
 
     # -- 热插拔 ------------------------------------------------------------ #
     def _watch_loop(self) -> None:
@@ -572,6 +571,7 @@ class App:
             time.sleep(0.5)
             self.apply_keys()
             self.broadcast({"type": "status", "connected": True})
+            threading.Thread(target=self._panel_device, daemon=True).start()
         except Exception as exc:  # noqa: BLE001
             log(f"重新接管失败：{exc}")
 

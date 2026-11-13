@@ -191,6 +191,7 @@ class DeviceWS:
                 threading.Thread(target=ws.recv_loop, daemon=True).start()
                 if not self._dev_ready.wait(8):
                     self.error = "SDK 已连上，但没收到设备就绪事件"
+                    self.disconnect()      # 清理掉，下次重试用全新的 SDK 进程
                     return False
                 # 开始监听按键
                 self._send("read", {})
