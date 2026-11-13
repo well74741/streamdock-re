@@ -1,0 +1,27 @@
+# ---- 运行时产物（本地数据，不进仓库）----
+app/server.log
+app/server.log.*
+app/config.json
+app/config.json.tmp
+app/config-backups/
+app/scenes/
+app/assets/uploads/
+app/assets/icons/
+
+# ---- 第三方/体积较大的本地依赖 ----
+ws-sdk/
+refs/
+backups/
+
+# ---- 系统与编辑器 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.pyc
+__pycache__/
+*.swp
+
+# 壁纸原图（保留 app/assets/wallpaper.jpg 即可）
+原神.jpg

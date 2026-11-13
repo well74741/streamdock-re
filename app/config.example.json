@@ -1,0 +1,32 @@
+{
+  "gap": 27,
+  "flip": false,
+  "ledOffset": 20,
+  "ledReverse": false,
+  "rotation": 0,
+  "effectReverse": false,
+  "fit": "cover",
+  "zoom": 1.0,
+  "ox": 0,
+  "oy": 0,
+  "page": 0,
+  "standby": 40,
+  "standbyBrightness": 60,
+  "lightingOnly": false,
+  "wallpaperEnabled": true,
+  "customScene": "自定义",
+  "activeScene": "",
+  "pages": [
+    {
+      "name": "第 1 页",
+      "images": {},
+      "actions": {
+        "16": {"type": "nav", "name": "上一页"},
+        "17": {"type": "nav", "name": "主页"},
+        "18": {"type": "nav", "name": "下一页"}
+      },
+      "styles": {}
+    }
+  ],
+  "wallpaper": "assets/wallpaper.jpg"
+}

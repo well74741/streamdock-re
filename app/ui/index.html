@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stream Dock M18 控制台</title>
+  <link rel="icon" href="icon.ico" />
+  <link rel="stylesheet" href="style.css?v=20261112b" />
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <div class="brand-name">Stream Dock</div>
+        <div class="brand-sub">M18 控制台</div>
+      </div>
+    </div>
+
+    <div class="side-search">
+      <input id="icon-search" class="sel-input" placeholder="搜索图标 / 分类" />
+      <button class="seg small" id="icon-sync" title="从官方驱动同步图标">同步</button>
+    </div>
+
+    <div class="side-scroll">
+      <div class="side-sec">
+        <div class="side-sec-head">
+          <span>场景</span>
+          <span class="side-sec-actions">
+            <button class="seg tiny" id="scene-official">官方</button>
+            <button class="seg tiny icon-btn" id="scene-add" title="新建场景">＋</button>
+            <button class="seg tiny icon-btn" id="scene-del-btn" title="删除选中场景">－</button>
+          </span>
+        </div>
+        <div class="lib-list" id="scene-list"></div>
+      </div>
+
+      <div class="side-sec">
+        <div class="side-sec-head"><span>图标库</span><b id="icon-count">0</b></div>
+        <div class="icon-groups" id="icon-groups"></div>
+      </div>
+
+      <div class="side-sec">
+        <div class="side-sec-head">
+          <span>资源库</span>
+          <button class="seg tiny" id="library-btn">扫描</button>
+        </div>
+        <div class="lib-list" id="lib-list"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="version">v0.5 · 本地控制台</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="page-title">自定义控制台</h1>
+      <button class="seg small" id="device-btn">设备设置</button>
+      <div class="spacer"></div>
+      <span class="switch-row" title="屏幕开关"><span class="switch on" id="sleep-btn"><span></span></span><b class="switch-label" id="screen-label">亮</b></span>      <button class="seg" id="mute-btn">屏蔽按钮</button>
+      <label class="inline-slider" title="按键屏幕亮度">
+        <span>屏幕亮度</span>
+        <input id="screen-brightness" type="range" min="0" max="100" value="100" />
+        <b id="screen-brightness-val">100</b>
+      </label>
+      <div class="status" id="status">
+        <span class="dot"></span>
+        <span id="status-text">连接中…</span>
+      </div>
+    </header>
+
+    <div class="banner hidden" id="banner"></div>
+
+    <!-- ======================= 自定义控制台 ======================= -->
+    <section class="page active" id="tab-console">
+      <div class="console-layout">
+        <div class="stack">
+          <div class="card ring-card">
+            <div class="card-head">
+              <h2>控制台</h2>
+              <span class="muted">点选按键 → 在下方编辑 · 拖动上色 · 拖入文件绑定</span>
+            </div>
+            <div class="ring-stage" id="ring-stage">
+              <div class="ring-wrap" id="ring-wrap">
+                <div class="ring-board"></div>
+                <div class="ring" id="ring"></div>
+              </div>
+            </div>
+            <div class="strip-meta">
+              <span id="mode-label">彩虹</span>
+              <span class="muted" id="rot-label">正向</span>
+            </div>
+            <div class="page-row">
+              <button class="seg small" id="page-prev">◀</button>
+              <span class="page-label" id="page-label">第 1 / 1 页</span>
+              <button class="seg small" id="page-next">▶</button>
+              <button class="seg small" id="page-add">+ 新页</button>
+              <button class="seg small" id="page-rename">改名</button>
+              <button class="seg small" id="page-del">删除</button>
+            </div>
+          </div>
+
+          <div class="card editor" id="key-editor">
+            <div class="card-head">
+              <h2>按键编辑</h2>
+              <span class="muted" id="sel-label">未选中按键</span>
+              <span class="spacer"></span>
+              <span class="editor-actions">
+                <button class="seg small" id="sel-save-top">保存</button>
+                <button class="seg small" id="sel-clear-top">清除</button>
+              </span>
+            </div>
+            <div class="editor-body">
+              <div class="thumb-col">
+                <div class="thumb" id="sel-thumb"><span>拖入图片 / 程序 / 文件夹</span></div>
+                <div class="thumb-actions">
+                  <button class="seg small" id="thumb-add">添加图片</button>
+                  <button class="seg small" id="thumb-clear">清除图片</button>
+                </div>
+              </div>
+              <div class="editor-info">
+                <div class="kv-line"><span>功能</span><b id="sel-action">未绑定</b></div>
+                <div class="kv-line"><span>画面</span><b id="sel-image">跟随壁纸</b></div>
+                <div class="kv-line">
+                  <span>类型</span>
+                  <select id="sel-type" class="sel-input">
+                    <option value="none">未绑定</option>
+                    <option value="launch">打开路径</option>
+                    <option value="url">打开网页</option>
+                    <option value="hotkey">热键</option>
+                    <option value="media">媒体键</option>
+                    <option value="macro">宏（多步）</option>
+                    <option value="nav">导航</option>
+                  </select>
+                </div>
+                <div class="kv-line" id="row-value">
+                  <span>值</span>
+                  <input id="sel-value" class="sel-input" placeholder="路径 / 网址 / ctrl+shift+s" />
+                </div>
+                <div class="kv-line">
+                  <span>标题</span>
+                  <input id="sel-text" class="sel-input" maxlength="12" placeholder="按键上显示的文字" />
+                </div>
+                <div class="kv-line" id="row-macro" hidden>
+                  <span>宏</span>
+                  <textarea id="sel-macro" class="sel-input" rows="4"
+                    placeholder="每行一步：&#10;launch C:\Windows\notepad.exe&#10;delay 1.5&#10;hotkey ctrl+s&#10;url https://example.com"></textarea>
+                </div>
+                <div class="kv-line">
+                  <span>配色</span>
+                  <span class="color-pair">
+                    <input id="sel-fg" type="color" value="#e8eefc" title="文字颜色" />
+                    <input id="sel-bg" type="color" value="#12161f" title="按键底色" />
+                  </span>
+                </div>
+                <div class="kv-line">
+                  <span>文字</span>
+                  <span class="style-row">
+                    <input id="sel-opacity" type="range" min="0" max="100" step="5" value="100" title="透明度" />
+                    <b id="sel-opacity-val">100%</b>
+                    <input id="sel-size" type="range" min="8" max="40" step="1" value="20" title="字号" />
+                    <b id="sel-size-val">20</b>
+                    <select id="sel-pos" class="sel-input" title="文字位置">
+                      <option value="top">上</option>
+                      <option value="center">中</option>
+                      <option value="bottom">下</option>
+                    </select>
+                  </span>
+                </div>
+                <div class="actions" id="editor-actions-row">
+                  <button class="seg small" id="sel-record">录制热键</button>
+                  <select id="sel-media" class="sel-input" hidden>
+                    <option value="playpause">播放 / 暂停</option>
+                    <option value="next">下一首</option>
+                    <option value="prev">上一首</option>
+                    <option value="stop">停止</option>
+                    <option value="mute">静音</option>
+                    <option value="volup">音量 +</option>
+                    <option value="voldown">音量 −</option>
+                  </select>
+                  <select id="sel-nav" class="sel-input" hidden></select>
+                </div>
+                <p class="hint-line" id="sel-hint">先点一下上面的按键。</p>
+              </div>
+            </div>
+            <input type="file" id="key-file" accept="image/*,.gif" hidden />
+            <input type="file" id="wallpaper-file" accept="image/*" hidden />
+          </div>
+        </div>
+
+        <div class="side">
+          <div class="card compact">
+            <div class="card-head"><h2>灯光</h2></div>
+            <div class="chips small" id="modes">
+              <button class="chip" data-mode="solid">常亮</button>
+              <button class="chip active" data-mode="rainbow">彩虹</button>
+              <button class="chip" data-mode="breathe">呼吸</button>
+              <button class="chip" data-mode="chase">流光</button>
+              <button class="chip" data-mode="gradient">渐变</button>
+              <button class="chip" data-mode="custom">自定义</button>
+              <button class="chip" data-mode="off">关闭</button>
+            </div>
+            <p class="mode-desc" id="mode-desc">色相沿灯圈循环流动。</p>
+            <div class="divider"></div>
+            <div class="swatches small" id="swatches"></div>
+            <label class="color-row">
+              <input type="color" id="color" value="#00aaff" />
+              <span id="color-hex">#00AAFF</span>
+              <button class="btn ghost small" id="reset-led" style="margin-left:auto">复位</button>
+            </label>
+            <div class="divider"></div>
+            <div class="slider-row tight">
+              <span>亮度</span>
+              <input id="led-brightness" type="range" min="0" max="100" value="100" />
+              <b id="led-brightness-val">100</b>
+            </div>
+            <div class="slider-row tight">
+              <span>速度</span>
+              <input id="speed" type="range" min="0.2" max="10" step="0.1" value="1" />
+              <b id="speed-val">1.0×</b>
+            </div>
+            <div class="actions tight">
+              <button class="seg" id="clear-led">全部熄灭</button>
+              <button class="seg" id="reverse-led">反向</button>
+            </div>
+          </div>
+
+          <div class="card compact">
+            <div class="card-head">
+              <h2>待机壁纸</h2>
+              <span class="spacer"></span>
+              <button class="switch on" id="wallpaper-toggle" role="switch" aria-checked="true"><span></span></button>
+            </div>
+            <div class="wp-thumb" id="wp-thumb">
+            <img id="wp-preview" alt="壁纸预览" />
+            <div class="wp-grid" id="wp-grid"></div>
+          </div>
+            <div class="actions tight">
+              <button class="btn small" id="choose-wallpaper">选择壁纸…</button>
+              <button class="seg" id="default-wallpaper">默认壁纸</button>
+              <button class="seg" id="calibrate">校准图</button>
+            </div>
+            <div class="slider-row tight">
+              <span>间隙</span>
+              <input id="wallpaper-gap" type="range" min="0" max="64" step="1" value="27" />
+              <b id="wallpaper-gap-val">27</b>
+            </div>
+            <div class="slider-row tight">
+              <span>待机</span>
+              <input id="standby-sec" type="range" min="3" max="300" step="1" value="60" />
+              <b id="standby-sec-val">60s</b>
+            </div>
+            <div class="slider-row tight">
+              <span>亮度</span>
+              <input id="standby-brightness" type="range" min="0" max="100" step="1" value="60" />
+              <b id="standby-brightness-val">60</b>
+            </div>
+            <div class="slider-row tight">
+              <span>缩放</span>
+              <input id="wp-zoom" type="range" min="0.5" max="3" step="0.05" value="1" />
+              <b id="wp-zoom-val">100%</b>
+            </div>
+            <div class="actions tight">
+              <button class="seg fit-btn" data-fit="cover">填充</button>
+              <button class="seg fit-btn" data-fit="contain">完整</button>
+              <button class="seg fit-btn" data-fit="fill">拉伸</button>
+              <button class="seg" id="wake-btn">唤醒</button>
+              <button class="seg" id="wp-reset">重置</button>
+            </div>
+          </div>
+
+          <div class="card compact">
+            <div class="card-head"><h2>更多设置</h2></div>
+            <div class="actions tight">
+              <button class="seg" id="rotate-btn">旋转 90°</button>
+              <button class="seg" id="repaint-btn">按键重绘</button>
+              <button class="seg" id="awake-btn">保持唤醒</button>
+              <button class="seg" id="reset-device">强制复位</button>
+              <button class="seg" id="mode-btn">切换输入模式</button>
+              <button class="seg" id="probe-btn">输入探测</button>
+              <button class="seg" id="pause-btn">暂停写入</button>
+              <button class="seg" id="lightonly-btn">仅灯光模式</button>
+              <button class="seg" id="autostart-btn">开机自启</button>
+              <button class="seg" id="export-btn">导出配置</button>
+              <button class="seg" id="import-btn">导入配置</button>
+              <button class="seg" id="restore-btn">恢复备份</button>
+              <input id="import-file" type="file" accept=".json,application/json" hidden />
+            </div>
+            <p class="hint-line">
+              设备息屏后按键会显示开机图。打开「按键重绘」会在按键时补画一次画面（可能造成闪一下），
+              关掉则只在手动「唤醒」时重画。
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ 设备（弹窗） ============================ -->
+    <div class="modal hidden" id="device-modal">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>设备设置</h2>
+          <button class="seg small" id="device-close">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="card">
+            <div class="card-head"><h2>设备信息</h2></div>
+            <dl class="kv" id="device-info"></dl>
+            <div class="actions">
+              <button class="btn ghost" id="reconnect">重新连接并接管</button>
+              <button class="btn ghost" id="quit">退出控制台</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h2>输入事件</h2>
+              <span class="muted">最近 12 条</span>
+            </div>
+            <div class="log" id="log">
+              <div class="log-empty">还没有按键事件，按下 M18 上的任意键试试。</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>说明</h2></div>
+            <ul class="notes">
+              <li>通过 Mirabox 官方 SDK 直接控制硬件，<b>不经过官方 Stream Dock 软件</b>。</li>
+              <li>官方驱动运行时本控制台会自动退让，退出后自动接管。</li>
+              <li>拖入图片 = 换该键画面；拖入程序 / 快捷方式 / 脚本 / 文件夹 = 绑定动作。</li>
+              <li>左侧图标库可直接拖到按键上；三个导航键默认 上/主/下页。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="app.js?v=20261112b"></script>
+</body>
+</html>
