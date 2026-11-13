@@ -14,6 +14,8 @@
 
 ## 安装包
 
+完整的打包与安装步骤见 [docs/打包与安装指南.md](docs/打包与安装指南.md)。
+
 ```bash
 python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且 ws-sdk/ 已就位
 ```
