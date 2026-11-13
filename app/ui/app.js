@@ -2,7 +2,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 
 const MODE_NAMES = {
   solid: "常亮", rainbow: "彩虹", breathe: "呼吸",
-  chase: "流光", gradient: "渐变", custom: "自定义", off: "关闭",
+  chase: "流光", gradient: "渐变", ripple: "涟漪", custom: "自定义", off: "关闭",
 };
 
 const MODE_DESC = {
@@ -11,6 +11,7 @@ const MODE_DESC = {
   breathe: "当前颜色整体明暗呼吸。",
   chase: "单点亮光沿灯圈追逐移动。",
   gradient: "从当前颜色过渡到它的补色。",
+  ripple: "按下按键时，从按键位置向四周扩散一圈涟漪光。",
   custom: "在灯圈上按住拖动逐颗上色，再涂一次覆盖。",
   off: "关闭灯带。",
 };
@@ -237,11 +238,13 @@ function renderWpGrid() {
   const grid = $("#wp-grid");
   if (!grid) return;
   const gap = Number($("#wallpaper-gap")?.value || 0);
-  const W = 5 * 64 + 4 * gap;
-  const H = 3 * 64 + 2 * gap;
+  const side = (state?.rotation ?? 0) % 180 !== 0;     // 竖放：画布是 3 列 × 5 行
+  const cols = side ? 3 : 5, rows = side ? 5 : 3;
+  const W = cols * 64 + (cols - 1) * gap;
+  const H = rows * 64 + (rows - 1) * gap;
   let html = "";
-  for (let r = 0; r < 3; r += 1) {
-    for (let c = 0; c < 5; c += 1) {
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
       const left = ((c * (64 + gap)) / W) * 100;
       const top = ((r * (64 + gap)) / H) * 100;
       html += `<div class="g" style="left:${left}%;top:${top}%;width:${(64 / W) * 100}%;height:${(64 / H) * 100}%"></div>`;
@@ -340,7 +343,8 @@ function refreshCells() {
     if (badge) badge.hidden = !hasImg;
     const actEl = $(".cell-act", cell);
     if (actEl) {
-      actEl.hidden = !act;
+      // 标题已经在底部时不再叠一行动作名（文件夹 / 返回键就是这样）
+      actEl.hidden = !act || (!!st.text && st.pos === "bottom" && hasImg);
       actEl.textContent = act || "";
     }
     cell.classList.toggle("has-action", !!act);
@@ -1392,6 +1396,7 @@ const VALUE_TYPES = {
   mouse: "坐标 x,y（可空：在当前鼠标位置操作）",
   close: "进程名，如 notepad.exe；留空 = 关闭当前前台窗口",
   sound: "音频文件路径（wav / mp3）；留空 = 停止所有音效",
+  folder: "文件夹名称，如：常用工具（按下进入子页，子页左上角是返回键）",
 };
 
 function gestureView(n, g) {
@@ -1422,9 +1427,11 @@ function applyTypeVisibility(t) {
   show("#sel-window", t === "window");
   show("#sel-record", t === "hotkey" || t === "toggle");
   show("#sel-pick", t === "launch" || t === "sound");
+  const fv = selectedKey ? gestureView(selectedKey, editGesture) : null;
+  show("#sel-open-folder", t === "folder" && fv?.type === "folder");
   show("#row-macro", t === "macro");
   show("#row-text-opts", t === "text");
-  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "launch", "sound", "window"].includes(t));
+  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "launch", "sound", "window", "folder"].includes(t));
   if (t !== "hotkey" && t !== "toggle") $("#sel-record")?.classList.remove("on");
 }
 
@@ -1449,8 +1456,8 @@ function fillActionForm(n) {
   $("#sel-enter").checked = !!spec.enter;
   $("#sel-secret").checked = !!spec.secret;
   const nav = $("#sel-nav");
-  const jumps = Array.from({ length: state?.pageCount || 1 }, (_, i) => `跳到第 ${i + 1} 页`);
-  const opts = [...NAV_PRESETS.slice(0, 4), "返回上一场景", ...jumps, ...NAV_PRESETS.slice(4)];
+  const jumps = Array.from({ length: (state?.mainPages || [0]).length }, (_, i) => `跳到第 ${i + 1} 页`);
+  const opts = [...NAV_PRESETS.slice(0, 4), "返回上级", "返回上一场景", ...jumps, ...NAV_PRESETS.slice(4)];
   nav.innerHTML = opts.map((p) => `<option value="${p}"${val === p ? " selected" : ""}>${p}</option>`).join("");
   fillSceneSelect(t === "scene" ? val : "");
   // 触发方式标签：当前 / 已设置
@@ -1673,6 +1680,14 @@ function applyMode(mode) {
   });
   $("#mode-label").textContent = MODE_NAMES[mode] || mode;
   $("#mode-desc").textContent = MODE_DESC[mode] || "";
+  const clr = $("#clear-led");
+  if (clr) clr.hidden = mode !== "custom";
+}
+
+function setSwitch(el, on) {
+  if (!el) return;
+  el.classList.toggle("on", !!on);
+  el.setAttribute("aria-checked", on ? "true" : "false");
 }
 
 function applyRotation() {
@@ -1680,18 +1695,20 @@ function applyRotation() {
   const wrap = $("#ring-wrap");
   if (!stage || !wrap) return;
   const rot = (state?.rotation ?? 0) % 360;
-  stage.style.aspectRatio = "1.35";          // 尺寸固定，不随旋转变化
-  wrap.style.width = "100%";
-  const stageW = stage.clientWidth, stageH = stage.clientHeight;
-  const wrapW = wrap.offsetWidth, wrapH = wrap.offsetHeight;
-  if (!stageW || !stageH || !wrapW || !wrapH) return;
-  const rad = (rot * Math.PI) / 180;
-  const bboxW = Math.abs(wrapW * Math.cos(rad)) + Math.abs(wrapH * Math.sin(rad));
-  const bboxH = Math.abs(wrapW * Math.sin(rad)) + Math.abs(wrapH * Math.cos(rad));
-  const scale = Math.min(stageW / bboxW, stageH / bboxH, 1);
-  wrap.style.transform = `translate(-50%, -50%) rotate(${rot}deg) scale(${scale})`;
+  const side = rot % 180 !== 0;
+  // 竖放时舞台变高、键盘尺寸和比例保持不变（不缩小），只转方向
+  stage.style.aspectRatio = side ? "1" : "1.35";
+  stage.style.maxHeight = "none";
+  const w = stage.clientWidth;
+  if (!w) return;
+  wrap.style.width = `${w}px`;
+  wrap.style.aspectRatio = "1.35";
+  if (side && stage.clientHeight < w) stage.style.height = `${w}px`;
+  else stage.style.height = "";
+  wrap.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
+  document.querySelectorAll("#rotate-group [data-rot]").forEach((b) => b.classList.toggle("on", Number(b.dataset.rot) === rot));
   document.documentElement.style.setProperty("--rot", `${rot}deg`);
-  const names = { 0: "正向", 90: "顺时针 90°", 180: "倒置 180°", 270: "逆时针 90°" };
+  const names = { 0: "正向摆放", 90: "顺时针竖放", 180: "倒置", 270: "逆时针竖放" };
   $("#rot-label").textContent = names[rot] || `${rot}°`;
   layoutBoard();
 }
@@ -1751,24 +1768,18 @@ function applyState(s) {
   updateGapLabel(gap);
   const standby = s.standby ?? 300;
   $("#standby-sec").value = standby;
-  $("#standby-sec-val").textContent = fmtSec(standby);
-  $("#reverse-led").classList.toggle("on", !!s.effectReverse);
-  $("#mute-btn").classList.toggle("on", !!s.inputMuted);
-  $("#repaint-btn").classList.toggle("on", !!s.repaintOnPress);
-  $("#awake-btn").classList.toggle("on", !!s.keepAwake);
-  $("#autostart-btn").classList.toggle("on", !!s.autostart);
+  $("#standby-sec-val").textContent = `${standby} 秒`;
+  setSwitch($("#reverse-led"), s.effectReverse);
+  setSwitch($("#mute-btn"), s.inputMuted);
+  setSwitch($("#autostart-btn"), s.autostart);
+  if (s.album) renderAlbum(s.album);
   const wpBtn = $("#wallpaper-toggle");
   if (wpBtn) {
     const on = s.wallpaper?.enabled !== false;
     wpBtn.classList.toggle("on", on);
     wpBtn.setAttribute("aria-checked", on ? "true" : "false");
   }
-  const sleepBtn = $("#sleep-btn");
-  if (sleepBtn) {
-    sleepBtn.classList.toggle("on", !s.screenOff);
-    const lab = $("#screen-label");
-    if (lab) lab.textContent = s.screenOff ? "灭" : "亮";
-  }
+  setSwitch($("#sleep-btn"), !s.screenOff);
 
   const view = s.view || { fit: "cover", zoom: 1, ox: 0, oy: 0 };
   const zoomEl = $("#wp-zoom");
@@ -1808,11 +1819,20 @@ function applyState(s) {
       toast(`渲染错误：${err && err.message ? err.message : err}`, 8000);
     } catch (_) { /* ignore */ }
   }
-  const page = (s.page ?? 0) + 1;
-  const total = s.pageCount ?? 1;
+  const mains = s.mainPages || [s.page ?? 0];
+  const path = s.folderPath || [];
+  const inFolder = !!(s.pageFolder || [])[s.page ?? 0];
+  const root = path.length ? path[0].index : (s.page ?? 0);
+  const pos = Math.max(0, mains.indexOf(root)) + 1;
   const names = s.pageNames || [];
-  const nm = names[(s.page ?? 0)] || `第 ${page} 页`;
-  $("#page-label").textContent = `${nm}（${page}/${total}）`;
+  const rootName = names[root] || `第 ${pos} 页`;
+  $("#page-label").textContent = inFolder
+    ? `${rootName} › ${path.slice(1).map((p) => p.name).join(" › ")}`
+    : `${rootName}（${pos}/${mains.length}）`;
+  $("#page-label").classList.toggle("in-folder", inFolder);
+  $("#page-back").hidden = !inFolder;
+  $("#page-add").hidden = inFolder;
+  $("#page-del").textContent = inFolder ? "删除文件夹" : "删除";
   renderLog(s.events || []);
 }
 
@@ -1934,17 +1954,21 @@ function bindUI() {
     throttle((v) => post("/api/screen-brightness", { value: v }), 120)(Number(e.target.value));
   });
 
-  $("#reset-led").addEventListener("click", () => post("/api/lighting/reset"));
+  $("#reset-led").addEventListener("click", async () => {
+    applyState(await post("/api/lighting/reset"));
+    toast("灯光已恢复默认（流光）", 1400);
+  });
   $("#clear-led").addEventListener("click", () => fillAll([0, 0, 0]));
   $("#wake-btn").addEventListener("click", () => post("/api/device/wake"));
 
-  $("#rotate-btn").addEventListener("click", async () => {
-    const next = ((state?.rotation ?? 0) + 90) % 360;
-    const r = await post("/api/rotation", { value: next });
+  document.querySelectorAll("#rotate-group [data-rot]").forEach((btn) => btn.addEventListener("click", async () => {
+    const r = await post("/api/rotation", { value: Number(btn.dataset.rot) });
     if (state) state.rotation = r.rotation;
     applyRotation();
     refreshBoard();
-  });
+    toast({ 0: "正向摆放", 90: "顺时针竖放", 180: "倒置", 270: "逆时针竖放" }[r.rotation] + "：图标已自动转正", 1600);
+  }));
+  window.addEventListener("resize", () => applyRotation());
 
   /* 壁纸 */
   const applyGap = throttle(async (value) => {
@@ -1962,6 +1986,7 @@ function bindUI() {
     await post("/api/wallpaper/view", patch);
     if (state) state.view = { ...(state.view || {}), ...patch };
     refreshBoard();
+    if (albumState) renderAlbum(albumState);
   }, 220);
   const bindView = (sel, key, fmt) => {
     const el = $(sel);
@@ -2068,32 +2093,19 @@ function bindUI() {
     const v = !(state?.effectReverse);
     const r = await post("/api/lighting/reverse", { value: v });
     if (state) state.effectReverse = r.value;
-    $("#reverse-led").classList.toggle("on", !!r.value);
+    setSwitch($("#reverse-led"), r.value);
     toast(r.value ? "灯效方向：反向" : "灯效方向：正向", 1200);
   });
 
   $("#sleep-btn").addEventListener("click", async () => {
     const off = !(state?.screenOff);
     if (state) state.screenOff = off;
-    const btn = $("#sleep-btn");
-    btn.classList.toggle("on", !off);
-    const lab = $("#screen-label");
-    if (lab) lab.textContent = off ? "灭" : "亮";
+    setSwitch($("#sleep-btn"), !off);
     const r = await post(off ? "/api/device/sleep" : "/api/device/wake");
     if (state) state.screenOff = r.screenOff ?? off;
-    btn.classList.toggle("on", !(state?.screenOff));
-    if (lab) lab.textContent = state?.screenOff ? "灭" : "亮";
+    setSwitch($("#sleep-btn"), !(state?.screenOff));
     toast(off ? "已息屏" : "已亮屏", 1200);
   });
-
-  const updateScreenButton = () => {
-    const off = !!state?.screenOff;
-    const btn = $("#sleep-btn");
-    if (btn) {
-      btn.textContent = off ? "亮屏" : "息屏";
-      btn.classList.toggle("on", off);
-    }
-  };
 
   $("#wallpaper-toggle").addEventListener("click", async () => {
     const v = !(state?.wallpaper?.enabled ?? true);
@@ -2124,12 +2136,25 @@ function bindUI() {
     await refreshState();
   });
 
+  $("#page-back").addEventListener("click", async () => {
+    applyState(await post("/api/folder/back", {}));
+  });
+  $("#sel-open-folder").addEventListener("click", async () => {
+    const pid = gestureView(selectedKey, editGesture)?.spec?.page;
+    if (!pid) return;
+    selectKey(null);
+    applyState(await post("/api/folder/open", { page: pid }));
+    toast("已进入文件夹：左上角 11 号键是返回键", 2000);
+  });
   $("#page-del").addEventListener("click", async () => {
-    if ((state?.pageCount ?? 1) <= 1) {
+    const inFolder = !!(state?.pageFolder || [])[state?.page ?? 0];
+    if (!inFolder && (state?.mainPages || [0]).length <= 1) {
       toast("至少保留一页", 1400);
       return;
     }
-    if (!(await confirmDialog("删除当前页？页面上的按键图片和动作会一起删除。"))) return;
+    if (!(await confirmDialog(inFolder
+      ? "删除这个文件夹？里面的按键（和子文件夹）会一起删除，放文件夹的那个键也会清空动作。"
+      : "删除当前页？页面上的按键图片和动作（含里面的文件夹）会一起删除。"))) return;
     await post("/api/page/delete", { index: state?.page ?? 0 });
     await refreshState();
   });
@@ -2161,17 +2186,10 @@ function bindUI() {
     const v = !(state?.inputMuted);
     const r = await post("/api/device/mute", { value: v });
     if (state) state.inputMuted = r.value;
-    $("#mute-btn").classList.toggle("on", !!r.value);
+    setSwitch($("#mute-btn"), r.value);
     toast(r.value ? "已屏蔽按键" : "按键已恢复", 1400);
   });
 
-  $("#repaint-btn").addEventListener("click", async () => {
-    const v = !(state?.repaintOnPress);
-    const r = await post("/api/device/repaint-on-press", { value: v });
-    if (state) state.repaintOnPress = r.value;
-    $("#repaint-btn").classList.toggle("on", !!r.value);
-    toast(r.value ? "按键时会补画画面" : "按键时不再重绘", 1400);
-  });
 
   $("#default-wallpaper").addEventListener("click", async () => {
     await post("/api/wallpaper/default");
@@ -2238,6 +2256,9 @@ function bindUI() {
     if (!selectedKey) return;
     const type = $("#sel-type").value;
     const value = $("#sel-value").value;
+    const before = gestureView(selectedKey, editGesture);
+    if (before?.type === "folder" && type !== "folder"
+      && !(await confirmDialog(`这个键原来是文件夹「${before.value}」，替换后文件夹和里面的按键会一起删除。继续？`))) return;
     if (type === "none") {
       await post("/api/key/action/clear", { key: selectedKey, gesture: editGesture });
       await refreshState();
@@ -2245,6 +2266,14 @@ function bindUI() {
     }
     if (type === "plugin") return;
     const spec = { key: selectedKey, type, gesture: editGesture };
+    if (type === "folder") {
+      if (selectedKey > 15) return toast("导航键没有屏幕，不能做文件夹", 1800);
+      spec.name = value.trim() || "文件夹";
+      const r = await post("/api/key/action", spec);
+      toast(r.ok ? (before?.type === "folder" ? "文件夹已改名" : `已创建文件夹「${spec.name}」，点「打开文件夹编辑」往里放按键`) : "创建失败", 2400);
+      await refreshState();
+      return;
+    }
     if (type === "nav") spec.name = $("#sel-nav").value;
     else if (type === "hotkey" || type === "toggle") spec.keys = value.trim();
     else if (type === "media") spec.action = $("#sel-media").value;
@@ -2347,42 +2376,12 @@ function bindUI() {
     $("#sel-record").classList.remove("on");
   }, true);
 
-  $("#awake-btn").addEventListener("click", async () => {
-    const v = !(state?.keepAwake);
-    const r = await post("/api/device/keep-awake", { value: v });
-    if (state) state.keepAwake = r.value;
-    $("#awake-btn").classList.toggle("on", !!r.value);
-    toast(r.value ? "保持唤醒：开" : "保持唤醒：关", 1200);
-  });
-
-  $("#reset-device").addEventListener("click", async () => {
-    toast("正在复位设备…", 2000);
-    applyState(await post("/api/device/reset"));
-  });
-
-  $("#mode-btn").addEventListener("click", async () => {
-    await post("/api/device/mode", { mode: 0 });
-    toast("已发送模式切换命令，按一下设备按键试试", 2200);
-  });
-
-  $("#probe-btn").addEventListener("click", async () => {
-    await post("/api/device/probe");
-    toast("探测开始：现在连按几次设备按键（约 10 秒）", 8000);
-  });
-
-  $("#pause-btn").addEventListener("click", async () => {
-    const v = !(state?.writesPaused);
-    const r = await post("/api/device/pause-writes", { value: v });
-    if (state) state.writesPaused = r.value;
-    $("#pause-btn").classList.toggle("on", !!r.value);
-    toast(r.value ? "已暂停所有写入，按几下设备键试试" : "写入已恢复", 2500);
-  });
 
   $("#autostart-btn").addEventListener("click", async () => {
     const v = !(state?.autostart);
     const r = await post("/api/autostart", { value: v });
     if (state) state.autostart = r.value;
-    $("#autostart-btn").classList.toggle("on", !!r.value);
+    setSwitch($("#autostart-btn"), r.value);
     toast(r.value ? "已设置开机自启" : "已关闭开机自启", 1600);
   });
 
@@ -2483,8 +2482,28 @@ function bindUI() {
       const custom = sceneMenuEl.dataset.custom === "1";
       if (!act || !name) return;
       sceneMenuEl.hidden = true;
+      if (act === "mute") {
+        const r = await post("/api/scenes", { name, mute: sceneMenuEl.dataset.muted !== "1" });
+        renderScenes(r.items || []);
+        return;
+      }
+      if (act === "album-edit") {
+        window.m18ShowStandbyTab?.("album");
+        document.querySelector("#standby-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
       if (act === "rename") {
         startInlineRename(name, custom);
+      } else if (act === "export") {
+        const r = await post("/api/scenes/export", { name });
+        if (!r.ok) return toast(r.error || "导出失败", 2000);
+        const bin = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([bin], { type: "application/zip" }));
+        a.download = r.filename;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+        toast(`已导出「${name}」（${r.images} 张图片${r.plugins ? `、${r.plugins} 个自制插件` : ""}）`, 2600);
       } else if (act === "dup") {
         const r = await post("/api/scenes", { duplicate: name });
         toast(r.ok ? "已复制场景" : "复制失败", 1500);
@@ -2505,14 +2524,17 @@ function bindUI() {
     });
     return sceneMenuEl;
   };
-  const showSceneMenu = (x, y, name, custom) => {
+  const showSceneMenu = (x, y, name, custom, album, muted) => {
     const menu = ensureSceneMenu();
     menu.dataset.name = name;
     menu.dataset.custom = custom ? "1" : "0";
-    menu.innerHTML = `<button data-act="rename">重命名</button>`
+    menu.innerHTML = (album ? `<button data-act="album-edit">编辑相册…</button>` : `<button data-act="rename">重命名</button>`
       + `<button data-act="dup">复制场景</button>`
-      + (custom ? "" : `<button data-act="apps">关联程序…</button>`)
-      + (custom ? "" : `<button data-act="del">删除</button>`);
+      + `<button data-act="export">导出场景…</button>`)
+      + `<button data-act="mute">${muted ? "启用" : "停用（切换时跳过）"}</button>`
+      + (custom || album ? "" : `<button data-act="apps">关联程序…</button>`)
+      + (custom || album ? "" : `<button data-act="del">删除</button>`);
+    menu.dataset.muted = muted ? "1" : "0";
     menu.hidden = false;
     menu.style.left = `${Math.min(x, window.innerWidth - 120)}px`;
     menu.style.top = `${Math.min(y, window.innerHeight - 120)}px`;
@@ -2570,18 +2592,39 @@ function bindUI() {
         const custom = typeof it === "string" ? false : it.custom;
         const isOfficial = typeof it === "string" ? false : it.official;
         const picked = selectedScene === name;
-        return `<div class="row scene-row${active ? " active" : ""}${custom ? " custom" : ""}${isOfficial ? " official" : ""}${picked ? " picked" : ""}"`
-          + ` data-name="${name}" data-custom="${custom ? 1 : 0}">`
-          + `<b title="${isOfficial ? "来自官方驱动的场景" : ""}">${name}</b>`
+        const album = !!it.album;
+        return `<div class="row scene-row${active ? " active" : ""}${custom ? " custom" : ""}${isOfficial ? " official" : ""}`
+          + `${album ? " album" : ""}${it.muted ? " muted" : ""}${picked ? " picked" : ""}"`
+          + ` data-name="${escHtml(name)}" data-custom="${custom ? 1 : 0}" data-album="${album ? 1 : 0}">`
+          + `<b title="${album ? "整屏相册幻灯片（不可删除）" : isOfficial ? "来自官方驱动的场景" : ""}">${escHtml(name)}${album ? `<em>${it.count || 0}</em>` : ""}</b>`
           + ((it.apps || []).length ? `<small class="scene-apps" title="前台切到这些程序时自动切换">⇢ ${escHtml(it.apps.join(", "))}</small>` : "")
-          + `<span class="scene-ops">${active ? "使用中" : ""}</span>`
+          + `<span class="scene-ops">${active ? "使用中" : ""}`
+          + `<button class="scene-mute${it.muted ? "" : " on"}" data-mute="${escHtml(name)}" title="${it.muted ? "已停用：「下一场景」和关联程序都会跳过它（点击启用）" : "启用中（点击停用，切换场景时跳过）"}"><span></span></button></span>`
           + "</div>";
       }).join("")
       : "<div class='row'>还没有场景，点 ＋ 新建</div>";
+    box.querySelectorAll(".scene-mute").forEach((btn) => btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const name = btn.dataset.mute;
+      const r = await post("/api/scenes", { name, mute: btn.classList.contains("on") });
+      renderScenes(r.items || []);
+      toast(btn.classList.contains("on") ? `「${name}」已停用，切换场景时跳过` : `「${name}」已启用`, 1600);
+    }));
     box.querySelectorAll(".scene-row").forEach((row) => {
       const name = row.dataset.name;
       row.addEventListener("click", async () => {
         if (row.querySelector(".scene-rename")) return;      // 正在改名
+        if (row.dataset.album === "1" && !row.classList.contains("active")) {
+          const r = await post("/api/scenes", { apply: name });
+          if (!r.ok) {
+            window.m18ShowStandbyTab?.("album");
+            document.querySelector("#standby-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+            return toast("相册是空的，先在右侧「待机画面 → 相册」里加几张图片", 2400);
+          }
+          renderScenes(r.items || []);
+          toast("相册播放中：◀ ▶ 翻照片，按其他键回到原场景", 2200);
+          return;
+        }
         selectedScene = name;
         if (row.classList.contains("active") || row.classList.contains("switching")) return;
         box.querySelectorAll(".scene-row.switching").forEach((r) => r.classList.remove("switching"));
@@ -2599,7 +2642,8 @@ function bindUI() {
       row.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        showSceneMenu(e.clientX, e.clientY, name, row.dataset.custom === "1");
+        showSceneMenu(e.clientX, e.clientY, name, row.dataset.custom === "1", row.dataset.album === "1",
+          row.classList.contains("muted"));
       });
     });
   };
@@ -2611,6 +2655,35 @@ function bindUI() {
     if (c) c.textContent = String((r.items || []).length);
   };
   window.m18ReloadScenes = reloadScenes;
+  const importScene = async (file) => {
+    if (!file) return;
+    if (!/\.(m18scene|zip)$/i.test(file.name)) return toast("请选择 .m18scene 场景文件", 1800);
+    const data = await readAsDataURL(file);
+    const r = await post("/api/scenes/import", { data, name: file.name.replace(/\.(m18scene|zip)$/i, "") });
+    if (!r.ok) return toast(r.error || "导入失败", 2200);
+    selectedScene = r.name;
+    renderScenes(r.items || []);
+    sceneNames = (r.items || []).map((i) => i.name);
+    toast(`已导入「${r.name}」（${r.images} 张图片${r.plugins ? `、${r.plugins} 个自制插件` : ""}），单击即可切换`, 3000);
+  };
+  $("#scene-import").addEventListener("click", () => $("#scene-import-file").click());
+  $("#scene-import-file").addEventListener("change", (e) => {
+    importScene(e.target.files?.[0]);
+    e.target.value = "";
+  });
+  const sceneBox = $("#scene-list");
+  sceneBox.addEventListener("dragover", (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  sceneBox.addEventListener("drop", (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (!f || !/\.(m18scene|zip)$/i.test(f.name)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    importScene(f);
+  });
   $("#scene-add").addEventListener("click", async () => {
     const name = window.prompt("新场景名称", `场景 ${new Date().toLocaleDateString()}`);
     if (!name) return;
@@ -2627,8 +2700,8 @@ function bindUI() {
     }
     const items = (await post("/api/scenes", {})).items || [];
     const target = items.find((i) => i.name === name);
-    if (target?.custom) {
-      toast("自定义场景不能删除", 1600);
+    if (target?.custom || target?.album) {
+      toast(target.album ? "相册场景不能删除" : "自定义场景不能删除", 1600);
       return;
     }
     if (!(await confirmDialog(`删除场景「${name}」？`))) return;
@@ -2638,13 +2711,6 @@ function bindUI() {
   });
   reloadScenes();
 
-  $("#lightonly-btn").addEventListener("click", async () => {
-    const v = !(state?.lightingOnly);
-    const r = await post("/api/device/lighting-only", { value: v });
-    if (state) state.lightingOnly = r.value;
-    $("#lightonly-btn").classList.toggle("on", !!r.value);
-    toast(r.value ? "仅灯光模式：不再写按键画面" : "已恢复按键画面", 2200);
-  });
 
   const pushStandbyB = throttle((v) => post("/api/standby-brightness", { value: v }), 250);
   $("#standby-brightness").addEventListener("input", (e) => {
@@ -2656,7 +2722,7 @@ function bindUI() {
   const pushStandby = throttle((v) => post("/api/standby", { sec: v }), 300);
   $("#standby-sec").addEventListener("input", (e) => {
     const v = Number(e.target.value);
-    $("#standby-sec-val").textContent = fmtSec(v);
+    $("#standby-sec-val").textContent = `${v} 秒`;
     pushStandby(v);
   });
 
@@ -2682,6 +2748,176 @@ function bindUI() {
     await post("/api/quit");
     document.body.innerHTML =
       '<div style="display:flex;height:100vh;align-items:center;justify-content:center;color:#8b98a9;font-size:14px">控制台已退出，可以关闭此窗口。</div>';
+  });
+}
+
+/* ------------------------------------------------------------------ 相册 */
+let albumState = null;
+let albumSig = "";
+
+function renderAlbum(a) {
+  albumState = a;
+  const items = a.items || [];
+  $("#album-count").textContent = String(items.length);
+  const play = $("#album-play");
+  play.textContent = a.active ? "■ 停止播放" : "▶ 立即播放";
+  play.classList.toggle("on", !!a.active);
+  play.disabled = !items.length;
+  $("#album-live").hidden = !a.active;
+  setSwitch($("#album-slideshow"), a.slideshow);
+  $("#album-interval").value = a.interval;
+  $("#album-interval-val").textContent = `${a.interval} 秒`;
+  document.querySelectorAll("#album-transition [data-tr]").forEach((b) => b.classList.toggle("on", b.dataset.tr === a.transition));
+  document.querySelectorAll("#standby-source [data-src]").forEach((b) => b.classList.toggle("on", b.dataset.src === (a.source || "wallpaper")));
+  const prev = $("#album-preview");
+  const v = state?.view || {};
+  const sig = `${items.join("|")}#${a.index}#${v.fit}#${v.zoom}#${state?.standbyBrightness}#${state?.rotation ?? 0}`;
+  if (sig !== albumSig) {
+    albumSig = sig;
+    if (items.length) {
+      prev.src = `/api/album/preview.jpg?v=${Date.now()}`;
+      prev.hidden = false;
+    } else {
+      prev.hidden = true;
+      prev.removeAttribute("src");
+    }
+    $("#album-empty").hidden = !!items.length;
+    $("#album-strip").innerHTML = items.map((name, i) => `<div class="album-thumb${i === a.index ? " on" : ""}" data-i="${i}" draggable="true" title="单击：显示这张　拖动：调整顺序">
+      <img src="/api/album/thumb/${i}.jpg?n=${encodeURIComponent(name)}" alt="" /><button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
+  } else {
+    document.querySelectorAll("#album-strip .album-thumb").forEach((t) => t.classList.toggle("on", Number(t.dataset.i) === a.index));
+  }
+  // 播放中：控制台键盘上也显示相册画面（和设备一致）
+  const board = document.querySelector(".ring-board");
+  if (board) {
+    board.classList.toggle("album-on", !!a.active);
+    const url = a.active ? `url("/api/album/tiles.png?v=${encodeURIComponent(sig)}")` : "";
+    document.querySelectorAll(".ring-board .cell").forEach((cell) => {
+      const n = Number(cell.dataset.key);
+      const col = (n - 1) % 5, row = 2 - Math.floor((n - 1) / 5);
+      cell.style.setProperty("--album", url || "none");
+      cell.style.setProperty("--album-pos", `${col * 25}% ${row * 50}%`);
+    });
+  }
+}
+
+async function albumAddFiles(files) {
+  const list = [...files].filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name));
+  if (!list.length) return toast("请拖入图片文件", 1600);
+  toast(`正在加入 ${list.length} 张图片…`, 1500);
+  const ups = [];
+  for (const f of list) {
+    try { ups.push((await upload(f)).file); } catch (e) { toast(`${f.name}：${e.message}`, 2000); }
+  }
+  if (!ups.length) return;
+  const r = await post("/api/album/add", { files: ups });
+  renderAlbum(r);
+  toast(r.ok ? `已加入 ${ups.length} 张` : "加入失败", 1400);
+}
+
+function bindAlbum() {
+  const view = $("#album-view");
+  view.addEventListener("click", () => $("#album-file").click());
+  $("#album-add").addEventListener("click", () => $("#album-file").click());
+  const showTab = (tab) => {
+    document.querySelectorAll("#standby-tabs [data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+    document.querySelectorAll("#standby-card .sb-pane").forEach((p) => { p.hidden = p.dataset.pane !== tab; });
+    try { localStorage.setItem("m18.standbyTab", tab); } catch (_) { /* ignore */ }
+  };
+  document.querySelectorAll("#standby-tabs [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  try { showTab(localStorage.getItem("m18.standbyTab") || "wallpaper"); } catch (_) { showTab("wallpaper"); }
+  window.m18ShowStandbyTab = showTab;
+  document.querySelectorAll("#standby-source [data-src]").forEach((b) => b.addEventListener("click", async () => {
+    if (b.dataset.src === "album" && !(albumState?.items || []).length) {
+      showTab("album");
+      return toast("相册还是空的，先添加几张图片", 1800);
+    }
+    renderAlbum(await post("/api/album/settings", { source: b.dataset.src }));
+    toast(b.dataset.src === "album" ? "闲置后播放相册幻灯片" : "闲置后显示壁纸", 1400);
+  }));
+  $("#album-file").addEventListener("change", (e) => {
+    const files = e.target.files;
+    if (files?.length) albumAddFiles(files);
+    e.target.value = "";
+  });
+  const card = $("#album-card");
+  // 拖到「相册」页签上也能直接加图
+  const tabBtn = document.querySelector('#standby-tabs [data-tab="album"]');
+  tabBtn.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); showTab("album"); } });
+  card.addEventListener("dragover", (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    view.classList.add("drop-hot");
+  });
+  card.addEventListener("dragleave", (e) => { if (!card.contains(e.relatedTarget)) view.classList.remove("drop-hot"); });
+  card.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    view.classList.remove("drop-hot");
+    albumAddFiles(e.dataTransfer.files);
+  });
+  $("#album-play").addEventListener("click", async () => {
+    const r = await post(albumState?.active ? "/api/album/stop" : "/api/album/play", {});
+    renderAlbum(r);
+    if (!r.ok && !albumState?.active) toast("先加几张图片", 1400);
+  });
+  const strip = $("#album-strip");
+  strip.addEventListener("click", async (e) => {
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      e.stopPropagation();
+      renderAlbum(await post("/api/album/remove", { index: Number(del.dataset.del) }));
+      return;
+    }
+    const t = e.target.closest(".album-thumb");
+    if (!t) return;
+    const i = Number(t.dataset.i);
+    renderAlbum(await post(albumState?.active ? "/api/album/goto" : "/api/album/play", { index: i }));
+  });
+  let dragFrom = -1;
+  strip.addEventListener("dragstart", (e) => {
+    const t = e.target.closest(".album-thumb");
+    if (!t) return;
+    dragFrom = Number(t.dataset.i);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", "album");
+  });
+  strip.addEventListener("dragover", (e) => { if (dragFrom >= 0) { e.preventDefault(); e.stopPropagation(); } });
+  strip.addEventListener("drop", async (e) => {
+    const t = e.target.closest(".album-thumb");
+    if (dragFrom < 0 || !t) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const to = Number(t.dataset.i);
+    const from = dragFrom;
+    dragFrom = -1;
+    if (from !== to) renderAlbum(await post("/api/album/move", { from, to }));
+  });
+  strip.addEventListener("dragend", () => { dragFrom = -1; });
+  $("#album-slideshow").addEventListener("click", async () => {
+    renderAlbum(await post("/api/album/settings", { slideshow: !albumState?.slideshow }));
+  });
+  const pushInterval = throttle((v) => post("/api/album/settings", { interval: v }), 300);
+  $("#album-interval").addEventListener("input", (e) => {
+    $("#album-interval-val").textContent = `${e.target.value} 秒`;
+    if (albumState) albumState.interval = Number(e.target.value);
+    pushInterval(Number(e.target.value));
+  });
+  document.querySelectorAll("#album-transition [data-tr]").forEach((b) => b.addEventListener("click", async () => {
+    renderAlbum(await post("/api/album/settings", { transition: b.dataset.tr }));
+  }));
+
+}
+
+/* 点空白处取消按键选中（点按钮、输入框、编辑区、侧栏等不算） */
+function bindDeselect() {
+  document.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !selectedKey) return;
+    if (e.target.closest(".cell, .ring-btn, .dot, #key-editor, .sidebar, .modal, .key-menu, .toast, "
+      + "button, input, select, textarea, label, a, [contenteditable], [draggable='true']")) return;
+    selectKey(null);
   });
 }
 
@@ -2723,11 +2959,14 @@ function connectEvents() {
         refreshState();
       }
     } else if (msg.type === "scene") {
-      toast(msg.ok ? `场景：${msg.name}` : "切换场景失败", 1400);
+      if (!msg.quiet) toast(msg.ok ? `场景：${msg.name}` : "切换场景失败", 1400);
       refreshState();
       window.m18ReloadScenes?.();
     } else if (msg.type === "status") {
       refreshState();
+    } else if (msg.type === "album") {
+      renderAlbum(msg);
+      window.m18ReloadScenes?.();
     }
   };
   es.onerror = () => {
@@ -2738,6 +2977,8 @@ function connectEvents() {
 
 /* ------------------------------------------------------------------ 启动 */
 async function boot() {
+  bindAlbum();
+  bindDeselect();
   hardenBrowser();
   buildBoard();
   buildRing();

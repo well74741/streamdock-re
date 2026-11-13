@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import socket
@@ -192,6 +193,8 @@ class DeviceWS:
         self.gif_native = False
         self.gif_running = False
         self.session = 0                 # 每次重新连上 +1，上层据此判断 GIF 状态是否失效
+        # Dock 竖放 / 倒放时，所有键面图（含动图）在这里统一转正：PIL 角度，逆时针
+        self.image_rotation = 0
         self._gif_status = threading.Event()
 
     # -- 进程/连接 ---------------------------------------------------------- #
@@ -363,7 +366,42 @@ class DeviceWS:
             return False
 
     # -- 设备操作（和旧接口同名） -------------------------------------------- #
+    def _rotate_jpeg(self, jpeg: bytes) -> bytes:
+        from PIL import Image
+        im = Image.open(io.BytesIO(jpeg)).convert("RGB").rotate(self.image_rotation, expand=True)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=90, subsampling=0)
+        return buf.getvalue()
+
+    def _rotate_gif(self, path: str) -> str:
+        """动图逐帧转好方向，按「源文件 + 修改时间 + 角度」缓存在源文件旁边。"""
+        from PIL import Image, ImageSequence
+        rot = self.image_rotation % 360
+        stamp = int(os.path.getmtime(path))
+        out = f"{os.path.splitext(path)[0]}.r{rot}_{stamp}.gif"
+        if os.path.isfile(out):
+            return out
+        frames, durations = [], []
+        with Image.open(path) as im:
+            for i, frame in enumerate(ImageSequence.Iterator(im)):
+                if i >= 240:
+                    break
+                frames.append(frame.convert("RGB").rotate(rot, expand=True))
+                durations.append(max(20, int(frame.info.get("duration", 100) or 100)))
+        if not frames:
+            return path
+        tmp = out + ".tmp"
+        frames[0].save(tmp, "GIF", save_all=True, append_images=frames[1:], duration=durations,
+                       loop=0, disposal=1, optimize=False)
+        os.replace(tmp, out)
+        return out
+
     def send_image(self, key: int, jpeg: bytes) -> bool:
+        if self.image_rotation % 360:
+            try:
+                jpeg = self._rotate_jpeg(jpeg)
+            except Exception:  # noqa: BLE001
+                pass
         b64 = base64.b64encode(jpeg).decode()
         return self._send("setKeyImgData", {
             "keyIndex": key,
@@ -375,6 +413,11 @@ class DeviceWS:
 
     # -- 原生 GIF（SDK 内部按帧率循环推送，不占主机带宽） -------------------- #
     def set_key_gif(self, key: int, path: str) -> bool:
+        if self.image_rotation % 360:
+            try:
+                path = self._rotate_gif(path)
+            except Exception:  # noqa: BLE001
+                pass
         return self._send("setKeyGif", {"keyIndex": key, "imagePath": os.path.normpath(path)})
 
     def clear_key_gif(self, key: int) -> bool:

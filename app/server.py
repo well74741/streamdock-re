@@ -21,6 +21,8 @@ import hashlib
 import io
 import json
 import math
+import zipfile
+import random
 import os
 import queue
 import shutil
@@ -126,7 +128,35 @@ CODE_TO_KEY = {
     0x25: 16, 0x30: 17, 0x31: 18,
 }
 
-MODES = ["off", "solid", "rainbow", "breathe", "chase", "gradient", "custom"]
+MODES = ["off", "solid", "rainbow", "breathe", "chase", "gradient", "ripple", "custom"]
+DEFAULT_LIGHTING = {"mode": "chase", "color": "#00aaff", "speed": 1.0, "brightness": 100}
+STANDBY_MIN, STANDBY_MAX = 3, 300          # 待机等待秒数
+ALBUM_TRANSITIONS = ("none", "fade", "slide", "wipe", "mosaic")
+
+
+def _led_geometry():
+    """灯珠和按键在同一坐标系里的位置（和界面上的灯圈一致，1000×740），给涟漪算距离用。"""
+    L, R, T, B = 70, 930, 70, 690
+    pitch_x, span_y = (R - L) / 6, B - T
+    pts = [(L, T + span_y * i / 5) for i in range(6)]
+    pts += [(L + pitch_x * i, B) for i in range(1, 6)]
+    pts += [(R, B - span_y * i / 5) for i in range(6)]
+    pts += [(R - pitch_x * i, T) for i in range(1, 6)]
+    pts += [(213, 566), (787, 566)]                       # 正面两颗
+    g = 0.12
+    cell = min(1000 * 0.74 / (5 + 4 * g), 740 * 0.50 / (3 + 2 * g))
+    pitch = cell * (1 + g)
+    left = 500 - (5 * cell + 4 * cell * g) / 2
+    top = 740 * 0.42 - (3 * cell + 2 * cell * g) / 2
+    keys = {}
+    for k in range(1, 16):
+        col, row_top = (k - 1) % 5, 2 - (k - 1) // 5
+        keys[k] = (left + col * pitch + cell / 2, top + row_top * pitch + cell / 2)
+    keys.update({16: (350, 566), 17: (500, 566), 18: (650, 566)})
+    return pts, keys
+
+
+LED_POINTS, KEY_POINTS = _led_geometry()
 
 
 VK_NAMES = {
@@ -427,6 +457,8 @@ def action_value(spec: dict) -> str:
         return spec.get("scene", "")
     if kind == "sound":
         return spec.get("path", "")
+    if kind == "folder":
+        return spec.get("name", "")
     return str(spec.get("name") or spec.get("keys") or spec.get("url") or spec.get("path")
                or spec.get("action") or spec.get("macro") or "")
 
@@ -455,6 +487,8 @@ def action_label(spec: dict) -> str:
         return WINDOW_LABELS.get(spec.get("op", ""), "窗口操作")
     if kind == "scene":
         return f"场景：{spec.get('scene', '')}"
+    if kind == "folder":
+        return f"📁 {spec.get('name') or '文件夹'}"
     if kind == "sound":
         return f"音效：{os.path.basename(spec.get('path', ''))}" if spec.get("path") else "停止音效"
     if kind == "url":
@@ -810,12 +844,21 @@ class App:
         self.device = DeviceWS(self._on_input, exe=WS_SDK_EXE)
         self.device.quiet = False
         self.lighting = {
-            "mode": "rainbow",
-            "color": "#00aaff",
-            "speed": 1.0,
-            "brightness": 100,
+            **DEFAULT_LIGHTING,
             "custom": [[0, 0, 0] for _ in range(LED_COUNT)],
         }
+        self._ripples: list = []          # 涟漪灯效：[(按键, 开始时间)]
+        self._save_timer = None
+        # 相册：整屏铺图片，可幻灯片播放
+        self.album_items: list[str] = []          # UPLOAD_DIR 里的文件名
+        self.album_index = 0
+        self.album_slideshow = True
+        self.album_interval = 8
+        self.album_transition = "fade"
+        self.album_fit = "cover"
+        self.standby_source = "wallpaper"         # 待机时显示：wallpaper 壁纸 / album 相册幻灯片
+        self._album_last = 0.0
+        self._album_lock = threading.Lock()
         self.screen_brightness = 100
         self.wallpaper_enabled = True
         self.wallpaper_flip = False
@@ -860,8 +903,8 @@ class App:
         self._last_activity = time.time()
         self.clear_before_paint = False
         self.writes_paused = False
-        # 仅灯光模式：不碰按键画面，只驱动灯带（和官方软件共存时用）
-        self.lighting_only = True
+        # 仅灯光模式（旧调试开关，界面已去掉，固定关闭）
+        self.lighting_only = False
         self.quiet = False
         self._num_cache: dict[int, bytes] = {}
         self._calib_until = 0.0
@@ -869,6 +912,7 @@ class App:
         self._pushing = False
         self._migrate_official_plugins()
         self._load_config()
+        self.device.image_rotation = self.rotation
         if self._convert_builtin_plugins():
             self._save_config()
         self._bind_page()
@@ -893,6 +937,7 @@ class App:
         threading.Thread(target=self._watch_loop, daemon=True).start()
         threading.Thread(target=self._keepalive_loop, daemon=True).start()
         threading.Thread(target=self._standby_loop, daemon=True).start()
+        threading.Thread(target=self._album_loop, daemon=True).start()
         threading.Thread(target=self._diag_loop, daemon=True).start()
         threading.Thread(target=self._official_loop, daemon=True).start()
         threading.Thread(target=self._auto_sync_official, daemon=True).start()
@@ -1378,6 +1423,8 @@ class App:
 
     def apply_standby(self) -> bool:
         """待机：整屏铺壁纸（壁纸亮度在渲染层调暗，屏幕亮度保持正常）。"""
+        if self.preview_mode == "album":
+            self.preview_mode = "wallpaper"
         self.in_standby = True
         return self._push_canvas("待机图")
 
@@ -1461,13 +1508,20 @@ class App:
 
     def _standby_loop(self) -> None:
         while True:
-            time.sleep(2)
+            time.sleep(1)
             try:
-                if (self.wallpaper_enabled and self.standby_sec > 0
+                if self.album_active():
+                    if self.device.connected and time.time() - self._last_paint > 25:
+                        self._push_album()       # 定期补一帧，避免设备自己睡过去
+                elif (self.wallpaper_enabled and self.standby_sec > 0
                         and not self.in_standby and not self.screen_off
                         and self.device.connected and not self.quiet
                         and time.time() - self._last_activity > self.standby_sec):
-                    self.apply_standby()
+                    if self.standby_source == "album" and self.album_items:
+                        self._album_return = None          # 待机进的相册，按键回到原来的按键画面
+                        self.album_play()
+                    else:
+                        self.apply_standby()
                 elif (self.in_standby and self.device.connected
                       and time.time() - self._last_paint > 25):
                     # 长时间待机时定期补一帧，避免设备自己睡过去显示开机图
@@ -1530,11 +1584,153 @@ class App:
 
     def mark_activity(self) -> None:
         self._last_activity = time.time()
-        if self.in_standby:
+        if self.in_standby and not self.album_active():
             threading.Thread(target=self.apply_keys, daemon=True).start()
 
     # -- 页面 -------------------------------------------------------------- #
+    # -- 文件夹 ------------------------------------------------------------ #
+    # 文件夹 = 一个不参与翻页的子页面（page["folder"] = True），按键动作 {"type":"folder","page":子页 id}。
+    # 子页 11 号键（左上角）默认是「返回上级」；页面用稳定 id 关联，增删 / 调整页面不会串。
+    FOLDER_BACK_KEY = 11
+
+    @staticmethod
+    def _new_page_id() -> str:
+        return os.urandom(5).hex()
+
+    def _ensure_page_ids(self) -> None:
+        seen = set()
+        for p in self.pages:
+            if not p.get("id") or p["id"] in seen:
+                p["id"] = self._new_page_id()
+            seen.add(p["id"])
+
+    def _page_index(self, pid: str) -> int:
+        for i, p in enumerate(self.pages):
+            if p.get("id") == pid:
+                return i
+        return -1
+
+    def _main_pages(self) -> list[int]:
+        """参与翻页的页面（不含文件夹子页）。"""
+        return [i for i, p in enumerate(self.pages) if not p.get("folder")]
+
+    def _folder_owner(self, pid: str):
+        """文件夹子页 → (所在页序号, 按键)。"""
+        for i, p in enumerate(self.pages):
+            for k, spec in (p.get("actions") or {}).items():
+                if isinstance(spec, dict) and spec.get("type") == "folder" and spec.get("page") == pid:
+                    return i, k
+        return None
+
+    def _folder_path(self, index: int | None = None) -> list[dict]:
+        """当前页的层级路径（面包屑）：[{name, index}, …]，最后一个是当前页。"""
+        index = self.page if index is None else index
+        chain, guard = [], 0
+        while 0 <= index < len(self.pages) and guard < 20:
+            p = self.pages[index]
+            chain.append({"name": p.get("name", ""), "index": index, "folder": bool(p.get("folder"))})
+            if not p.get("folder"):
+                break
+            owner = self._folder_owner(p.get("id"))
+            if not owner:
+                break
+            index = owner[0]
+            guard += 1
+        return chain[::-1]
+
+    def create_folder(self, key: int, name: str = "", gesture: str = "") -> dict:
+        """把当前页的某个键设成文件夹：新建子页（11 号键 = 返回），按键标题默认是文件夹名。"""
+        if not (1 <= key <= KEY_COUNT):
+            return {"ok": False, "error": "只有屏幕键可以做文件夹"}
+        name = (name or "").strip()[:20] or "文件夹"
+        self._ensure_page_ids()
+        parent = self.pages[self.page]
+        sub = {"id": self._new_page_id(), "name": name, "folder": True, "images": {}, "styles": {},
+               "gestures": {},
+               "actions": {self.FOLDER_BACK_KEY: {"type": "nav", "name": "返回上级"},
+                           16: {"type": "nav", "name": "返回上级"},
+                           17: {"type": "nav", "name": "主页"},
+                           18: {"type": "nav", "name": "返回上级"}}}
+        back = self._load_image_source(self._glyph_icon("back"))
+        if back:
+            sub["images"][self.FOLDER_BACK_KEY] = back
+        sub["styles"][self.FOLDER_BACK_KEY] = {"text": "返回", "size": 14, "pos": "bottom"}
+        self.pages.append(sub)
+        spec = {"type": "folder", "page": sub["id"], "name": name}
+        if gesture in ("long", "double"):
+            parent.setdefault("gestures", {}).setdefault(key, {})[gesture] = spec
+        else:
+            parent["actions"][key] = spec
+            if key not in parent["images"]:            # 没有自己的图标：用文件夹图标 + 名字
+                icon = self._load_image_source(self._glyph_icon("folder"))
+                if icon:
+                    parent["images"][key] = icon
+                st = parent.setdefault("styles", {}).setdefault(key, {})
+                if not (st.get("text") or "").strip():
+                    st.update({"text": name[:12], "size": 14, "pos": "bottom"})
+        self._save_config()
+        if self.device.connected and not self.in_standby:
+            self.device.send_image(key, self._render_key(key))
+            self.device.refresh()
+        log(f"按键 {key} 已设为文件夹「{name}」")
+        return {"ok": True, "page": sub["id"]}
+
+    @staticmethod
+    def _glyph_icon(kind: str) -> str:
+        """文件夹 / 返回 图标（设备字体画不了 emoji，直接画成图片），生成一次放在上传目录。"""
+        path = os.path.join(UPLOAD_DIR, f"m18_{kind}.png")
+        if os.path.isfile(path):
+            return path
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        im = Image.new("RGB", (144, 144), (22, 30, 44))
+        d = ImageDraw.Draw(im)
+        if kind == "folder":
+            d.rounded_rectangle([26, 30, 72, 52], radius=7, fill=(214, 150, 40))
+            d.rounded_rectangle([22, 42, 122, 102], radius=10, fill=(242, 184, 75))
+            d.rounded_rectangle([22, 54, 122, 102], radius=10, fill=(250, 200, 95))
+        else:
+            d.line([(44, 66), (104, 66)], fill=(150, 200, 255), width=14)
+            d.polygon([(26, 66), (60, 38), (60, 94)], fill=(150, 200, 255))
+        im.save(path, "PNG")
+        return path
+
+    def open_folder(self, pid: str) -> bool:
+        idx = self._page_index(pid)
+        if idx < 0:
+            return False
+        return self.goto_page(idx) or idx == self.page
+
+    def folder_back(self) -> bool:
+        """返回上级：子页回到放文件夹的那一页；主页面上没有上级，不动。"""
+        p = self.pages[self.page]
+        if not p.get("folder"):
+            return False
+        owner = self._folder_owner(p.get("id"))
+        target = owner[0] if owner else (self._main_pages() or [0])[0]
+        return self.goto_page(target)
+
+    def _drop_orphan_folders(self) -> int:
+        """删掉没有任何按键指向的文件夹子页（连带子页里的子文件夹）。"""
+        removed = 0
+        while True:
+            refs = set()
+            for p in self.pages:
+                specs = list((p.get("actions") or {}).values())
+                for g in (p.get("gestures") or {}).values():
+                    specs.extend((g or {}).values())
+                refs.update(s.get("page") for s in specs if isinstance(s, dict) and s.get("type") == "folder")
+            orphans = [i for i, p in enumerate(self.pages) if p.get("folder") and p.get("id") not in refs]
+            if not orphans:
+                return removed
+            cur_id = self.pages[self.page].get("id")
+            for i in reversed(orphans):
+                self.pages.pop(i)
+                removed += 1
+            idx = self._page_index(cur_id)
+            self.page = idx if idx >= 0 else (self._main_pages() or [0])[0]
+
     def _bind_page(self) -> None:
+        self._ensure_page_ids()
         page = self.pages[self.page]
         self.key_overrides = page["images"]
         self.key_actions = page["actions"]
@@ -1555,12 +1751,14 @@ class App:
         if self.device.connected:
             self.apply_keys()
         self.broadcast({"type": "page", "page": self.page, "pageCount": len(self.pages)})
-        log(f"切换到第 {self.page + 1} 页")
+        p = self.pages[self.page]
+        log(f"进入文件夹「{p.get('name')}」" if p.get("folder") else f"切换到第 {self.page + 1} 页")
         return True
 
     def add_page(self) -> int:
         self.pages.append({
-            "name": f"第 {len(self.pages) + 1} 页",
+            "id": self._new_page_id(),
+            "name": f"第 {len(self._main_pages()) + 1} 页",
             "images": {}, "actions": {
                 16: {"type": "nav", "name": "上一页"},
                 17: {"type": "nav", "name": "主页"},
@@ -1571,14 +1769,27 @@ class App:
         return len(self.pages) - 1
 
     def delete_page(self, index: int) -> bool:
-        if len(self.pages) <= 1:
-            return False
         index = max(0, min(len(self.pages) - 1, index))
-        self.pages.pop(index)
-        if self.page >= len(self.pages):
-            self.page = len(self.pages) - 1
-        elif self.page > index:
-            self.page -= 1
+        target = self.pages[index]
+        if not target.get("folder") and len(self._main_pages()) <= 1:
+            return False
+        if target.get("folder"):
+            # 删除文件夹子页 = 去掉指向它的按键，子页和里面的子文件夹一起回收
+            owner = self._folder_owner(target.get("id"))
+            if owner:
+                self.pages[owner[0]]["actions"].pop(owner[1], None)
+                self.page = owner[0]
+        else:
+            cur_id = self.pages[self.page].get("id")
+            self.pages.pop(index)
+            idx = self._page_index(cur_id)
+            if idx < 0:                      # 删的就是当前页：落到它前面一页（没有就第一页）
+                mains = self._main_pages()
+                before = [i for i in mains if i < index]
+                idx = before[-1] if before else mains[0]
+            self.page = idx
+        self._drop_orphan_folders()
+        self.page = max(0, min(len(self.pages) - 1, self.page))
         self._bind_page()
         self._save_config()
         self._dirty = True
@@ -1593,18 +1804,29 @@ class App:
         if not (0 <= index < len(self.pages)) or not name:
             return False
         self.pages[index]["name"] = name
+        if self.pages[index].get("folder"):        # 文件夹改名：指向它的按键名字跟着改
+            owner = self._folder_owner(self.pages[index].get("id"))
+            if owner:
+                self.pages[owner[0]]["actions"][owner[1]]["name"] = name
         self._save_config()
         self.broadcast({"type": "page", "page": self.page, "pageCount": len(self.pages)})
         return True
 
     def add_nav_pages(self, name: str) -> None:
+        """翻页只在主页面之间走；在文件夹里按上一页 / 下一页 = 返回上级。"""
+        mains = self._main_pages()
+        if name == "返回上级" or (self.pages[self.page].get("folder") and name in ("上一页", "下一页")):
+            self.folder_back()
+            return
+        pos = mains.index(self.page) if self.page in mains else 0
         if name == "下一页":
-            if self.page + 1 < len(self.pages):
-                self.goto_page(self.page + 1)
+            if pos + 1 < len(mains):
+                self.goto_page(mains[pos + 1])
         elif name == "上一页":
-            self.goto_page(self.page - 1)
+            if pos > 0:
+                self.goto_page(mains[pos - 1])
         elif name == "主页":
-            self.goto_page(0)
+            self.goto_page(mains[0] if mains else 0)
 
     def _read_config_file(self) -> dict:
         """读 config.json。Windows 上文件正被原子替换的瞬间会 PermissionError，
@@ -1656,17 +1878,38 @@ class App:
             self.wallpaper_zoom = max(0.2, min(4.0, float(cfg.get("zoom", 1.0))))
             self.wallpaper_ox = int(cfg.get("ox", 0))
             self.wallpaper_oy = int(cfg.get("oy", 0))
-            self.standby_sec = max(5, min(1800, int(cfg.get("standby", 300))))
+            self.standby_sec = max(STANDBY_MIN, min(STANDBY_MAX, int(cfg.get("standby", 300))))
+            lit = cfg.get("lighting")
+            if isinstance(lit, dict):
+                for k in ("mode", "color", "speed", "brightness"):
+                    if lit.get(k) is not None:
+                        self.lighting[k] = lit[k]
+                if self.lighting["mode"] not in MODES:
+                    self.lighting["mode"] = DEFAULT_LIGHTING["mode"]
+                custom = lit.get("custom")
+                if isinstance(custom, list) and len(custom) == LED_COUNT:
+                    self.lighting["custom"] = [[int(v) for v in c[:3]] for c in custom]
+            alb = cfg.get("album")
+            if isinstance(alb, dict):
+                self.album_items = [str(n) for n in (alb.get("items") or [])
+                                    if os.path.isfile(os.path.join(UPLOAD_DIR, os.path.basename(str(n))))]
+                self.album_slideshow = bool(alb.get("slideshow", True))
+                self.album_interval = max(2, min(600, int(alb.get("interval", 8))))
+                tr = str(alb.get("transition") or "fade")
+                self.album_transition = tr if tr in ALBUM_TRANSITIONS else "fade"
+                self.album_fit = "contain" if alb.get("fit") == "contain" else "cover"
+            self.standby_source = "album" if cfg.get("standbySource") == "album" else "wallpaper"
             self.standby_brightness = max(0, min(100, int(cfg.get("standbyBrightness", 60))))
             self.custom_scene_name = str(cfg.get("customScene") or "自定义")[:40]
             self.active_scene = str(cfg.get("activeScene") or "")
-            self.lighting_only = bool(cfg.get("lightingOnly", True))
             self.wallpaper_enabled = bool(cfg.get("wallpaperEnabled", self.wallpaper_enabled))
             pages = cfg.get("pages")
             if isinstance(pages, list) and pages:
                 self.pages = []
                 for p in pages:
                     self.pages.append({
+                        "id": str(p.get("id") or "") or self._new_page_id(),
+                        "folder": bool(p.get("folder")),
                         "name": str(p.get("name") or "页"),
                         "images": {},
                         "actions": {},
@@ -1790,10 +2033,16 @@ class App:
             "standbyBrightness": self.standby_brightness,
             "customScene": self.custom_scene_name,
             "activeScene": self.active_scene,
-            "lightingOnly": self.lighting_only,
             "wallpaperEnabled": self.wallpaper_enabled,
+            "lighting": {k: self.lighting[k] for k in ("mode", "color", "speed", "brightness", "custom")},
+            "standbySource": self.standby_source,
+            "album": {"items": self.album_items, "slideshow": self.album_slideshow,
+                      "interval": self.album_interval, "transition": self.album_transition,
+                      "fit": self.album_fit},
             "pages": [
                 {
+                    "id": p.get("id") or "",
+                    **({"folder": True} if p.get("folder") else {}),
                     "name": p.get("name", "页"),
                     "images": {str(k): os.path.basename(v.get("file", "") or "")
                                for k, v in p["images"].items() if v.get("file")},
@@ -1906,7 +2155,12 @@ class App:
             return False
         self.key_overrides.pop(key, None)
         self._save_config()
-        return self.apply_wallpaper()
+        # 以前这里会整屏铺壁纸（像进了待机），只重画这一个键就够了
+        if self.device.connected and not self.in_standby:
+            self._gif_update_key(key)
+            self.device.send_image(key, self._render_key(key))
+            self.device.refresh()
+        return True
 
     def _apply_key(self, key: int) -> None:
         self._gif_update_key(key)
@@ -2008,17 +2262,23 @@ class App:
         d.line([(0, cy), (w, cy)], fill=(120, 255, 170), width=1)
         return img
 
-    def _canvas(self) -> Image.Image | None:
+    def _canvas(self, mode: str | None = None) -> Image.Image | None:
         """当前要显示的画面，尺寸 = 含缝隙的总画布。支持填充方式 / 缩放 / 位移。"""
         w, h = self._canvas_size()
-        if self.preview_mode == "calibration":
+        mode = mode or self.preview_mode
+        if mode == "album":
+            return self._album_canvas(self.album_index)
+        if mode == "calibration":
             return self._calibration_source()
         try:
             src = Image.open(self.wallpaper_file).convert("RGB")
         except Exception as exc:  # noqa: BLE001
             log(f"壁纸处理失败：{exc}")
             return None
+        return self._fit_canvas(src, w, h)
 
+    def _fit_canvas(self, src: Image.Image, w: int, h: int, zoom_offset: bool = True) -> Image.Image:
+        """壁纸和相册共用的铺放：填充 / 完整 / 拉伸 + 缩放（壁纸还有拖动位移）+ 待机亮度。"""
         zoom = max(0.2, min(4.0, float(self.wallpaper_zoom)))
         tw, th = max(1, int(w * zoom)), max(1, int(h * zoom))
         fit = self.wallpaper_fit
@@ -2032,10 +2292,10 @@ class App:
             scaled = ImageOps.fit(src, (tw, th), Image.Resampling.LANCZOS)
 
         canvas = Image.new("RGB", (w, h), (0, 0, 0))
-        x = (w - scaled.width) // 2 + int(self.wallpaper_ox)
-        y = (h - scaled.height) // 2 + int(self.wallpaper_oy)
+        x = (w - scaled.width) // 2 + (int(self.wallpaper_ox) if zoom_offset else 0)
+        y = (h - scaled.height) // 2 + (int(self.wallpaper_oy) if zoom_offset else 0)
         canvas.paste(scaled, (x, y))
-        # 待机壁纸单独调暗（不影响按键画面的屏幕亮度）
+        # 待机画面单独调暗（不影响按键画面的屏幕亮度）
         dim = max(0, min(100, int(self.standby_brightness)))
         if dim < 100:
             k = dim / 100.0
@@ -2050,16 +2310,17 @@ class App:
         return (
             self.wallpaper_file, mtime, self.wallpaper_gap, self.wallpaper_zoom,
             self.wallpaper_ox, self.wallpaper_oy, self.wallpaper_fit,
-            self.wallpaper_flip, self.rotation, self.preview_mode,
+            self.wallpaper_flip, self.rotation, "calibration" if self.preview_mode == "calibration" else "wp",
             self.standby_brightness,
         )
 
     def canvas_png(self) -> bytes | None:
+        """壁纸卡片的预览：相册播放时也显示壁纸本身。"""
         key = self._canvas_key()
         cached = getattr(self, "_canvas_cache", None)
         if cached and cached[0] == key:
             return cached[1]
-        canvas = self._canvas()
+        canvas = self._canvas("calibration" if self.preview_mode == "calibration" else "wallpaper")
         if canvas is None:
             return None
         buf = io.BytesIO()
@@ -2115,9 +2376,7 @@ class App:
                 left = slot_col * pitch
                 top = slot_row * pitch
                 tile = canvas.crop((left, top, left + KEY_SIZE, top + KEY_SIZE))
-                if self.rotation:
-                    tile = tile.rotate(self.rotation, expand=False)
-                buf = io.BytesIO()
+                buf = io.BytesIO()           # 方向由设备层统一转（DeviceWS.image_rotation）
                 tile.save(buf, "JPEG", quality=88, subsampling=0)
                 if not self.device.send_image(key, buf.getvalue()):
                     ok = False
@@ -2129,6 +2388,294 @@ class App:
         log(f"{note}已铺满 {KEY_COUNT} 键（间隙补偿 {gap}px，画布 {w}×{h}，旋转 {self.rotation}°）"
             + ("" if ok else "  ⚠ 有按键写入失败"))
         return ok
+
+    # -- 旋转 ---------------------------------------------------------------- #
+    def set_rotation(self, value: int) -> bool:
+        rot = value % 360
+        self.rotation = rot if rot in (0, 90, 180, 270) else 0
+        self.device.image_rotation = self.rotation
+        self._num_cache.clear()
+        self._gif_active = {}
+        self._save_config()
+        if self.album_active():
+            return self._push_album()
+        if self.preview_mode == "calibration":
+            return self.apply_calibration()
+        if self.in_standby:
+            return self.apply_standby()
+        threading.Thread(target=self.apply_keys, daemon=True).start()
+        return True
+
+    # -- 相册 ------------------------------------------------------------------ #
+    def album_active(self) -> bool:
+        return self.in_standby and self.preview_mode == "album"
+
+    def album_state(self, active: bool | None = None) -> dict:
+        return {"items": list(self.album_items), "index": self.album_index,
+                "active": self.album_active() if active is None else active,
+                "slideshow": self.album_slideshow, "interval": self.album_interval,
+                "transition": self.album_transition, "fit": self.album_fit,
+                "source": self.standby_source}
+
+    def _album_file(self, index: int) -> str | None:
+        if not self.album_items:
+            return None
+        name = os.path.basename(self.album_items[index % len(self.album_items)])
+        path = os.path.join(UPLOAD_DIR, name)
+        return path if os.path.isfile(path) else None
+
+    def album_add(self, files: list) -> bool:
+        added = 0
+        for f in files[:200]:
+            p = asset_path(f)
+            if not p or not _inside(p, UPLOAD_DIR) or not os.path.isfile(p):
+                continue
+            try:
+                with Image.open(p) as im:
+                    im.verify()
+            except Exception:  # noqa: BLE001
+                continue
+            name = os.path.relpath(p, UPLOAD_DIR).replace("\\", "/")
+            if "/" in name:              # 拖进来的是文件夹里的图：复制一份到上传目录根下
+                dst = os.path.join(UPLOAD_DIR, f"album_{int(time.time() * 1000)}_{added}{os.path.splitext(p)[1]}")
+                shutil.copyfile(p, dst)
+                name = os.path.basename(dst)
+            self.album_items.append(name)
+            added += 1
+        if added:
+            self._save_config()
+        return bool(added)
+
+    def album_remove(self, index: int) -> bool:
+        if not (0 <= index < len(self.album_items)):
+            return False
+        self.album_items.pop(index)
+        if self.album_index >= len(self.album_items):
+            self.album_index = 0
+        if not self.album_items and self.album_active():
+            threading.Thread(target=self.album_stop, daemon=True).start()
+        self._save_config()
+        return True
+
+    def album_move(self, src: int, dst: int) -> bool:
+        n = len(self.album_items)
+        if not (0 <= src < n and 0 <= dst < n) or src == dst:
+            return False
+        self.album_items.insert(dst, self.album_items.pop(src))
+        self._save_config()
+        return True
+
+    def album_settings(self, body: dict) -> None:
+        if body.get("source") in ("wallpaper", "album"):
+            self.standby_source = body["source"]
+            self._save_config()
+        if "slideshow" in body:
+            self.album_slideshow = bool(body["slideshow"])
+            self._album_last = time.time()
+        if "interval" in body:
+            self.album_interval = max(2, min(600, int(body["interval"])))
+        if body.get("transition") in ALBUM_TRANSITIONS:
+            self.album_transition = body["transition"]
+        if body.get("fit") in ("cover", "contain"):
+            self.album_fit = body["fit"]
+            if self.album_active():
+                threading.Thread(target=self._push_album, daemon=True).start()
+        self._save_soon(0.5)
+
+    def _album_canvas(self, index: int) -> Image.Image | None:
+        """相册图片铺满整版（含键间缝隙补偿和旋转），按内容缓存。"""
+        path = self._album_file(index)
+        w, h = self._canvas_size()
+        if not path:
+            return Image.new("RGB", (w, h), (0, 0, 0))
+        key = (path, os.path.getmtime(path), w, h, self.wallpaper_fit, self.wallpaper_zoom, self.standby_brightness)
+        cache = getattr(self, "_album_cache", {})
+        if key in cache:
+            return cache[key]
+        try:
+            with Image.open(path) as im:
+                src = self._flat_rgb(im)
+            img = self._fit_canvas(src, w, h, zoom_offset=False)
+        except Exception as exc:  # noqa: BLE001
+            log(f"相册图片读取失败 {path}: {exc}")
+            return Image.new("RGB", (w, h), (0, 0, 0))
+        cache = dict(list(cache.items())[-8:])
+        cache[key] = img
+        self._album_cache = cache
+        return img
+
+    def _canvas_tiles(self, canvas: Image.Image) -> dict:
+        """整版画面切成 15 块（设备方向由 DeviceWS 统一转）。"""
+        pitch = KEY_SIZE + self._gap()
+        out = {}
+        for key in range(1, KEY_COUNT + 1):
+            col = (key - 1) % GRID_COLS
+            row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+            sc, sr = self._cell_slot(col, row_top)
+            out[key] = canvas.crop((sc * pitch, sr * pitch, sc * pitch + KEY_SIZE, sr * pitch + KEY_SIZE))
+        return out
+
+    def _send_tiles(self, tiles: dict, keys=None) -> None:
+        for key in keys or tiles:
+            buf = io.BytesIO()
+            tiles[key].save(buf, "JPEG", quality=88, subsampling=0)
+            self.device.send_image(key, buf.getvalue())
+
+    def _album_can_push(self) -> bool:
+        return (self.device.connected and not (self.writes_paused or self.quiet or self.yielded
+                                               or self.screen_off))
+
+    def _push_album(self, prev: Image.Image | None = None) -> bool:
+        """把当前相册图片推到设备；prev 不为空时按设置的过渡效果切换。"""
+        if not self._album_can_push():
+            return False
+        with self._album_lock:
+            cur = self._album_canvas(self.album_index)
+            if cur is None:
+                return False
+            mode = self.album_transition if prev is not None and prev.size == cur.size else "none"
+            self._pushing = True
+            try:
+                if mode in ("fade", "slide"):
+                    steps = 5
+                    w = cur.width
+                    for i in range(1, steps + 1):
+                        k = i / steps
+                        if mode == "fade":
+                            frame = Image.blend(prev, cur, k)
+                        else:
+                            ease = 1 - (1 - k) ** 2
+                            off = int(w * ease)
+                            frame = Image.new("RGB", cur.size)
+                            frame.paste(prev, (-off, 0))
+                            frame.paste(cur, (w - off, 0))
+                        self._send_tiles(self._canvas_tiles(frame))
+                        self.device.refresh()
+                        time.sleep(0.07)
+                elif mode in ("wipe", "mosaic"):
+                    tiles = self._canvas_tiles(cur)
+                    if mode == "wipe":       # 从左往右一列一列换（按观看方向的列）
+                        pitch = KEY_SIZE + self._gap()
+                        groups: dict = {}
+                        for key in tiles:
+                            col = (key - 1) % GRID_COLS
+                            row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+                            groups.setdefault(self._cell_slot(col, row_top)[0], []).append(key)
+                        order = [groups[c] for c in sorted(groups)]
+                        gap_s = 0.09
+                    else:
+                        keys = list(tiles)
+                        random.shuffle(keys)
+                        order = [[k] for k in keys]
+                        gap_s = 0.035
+                    for group in order:
+                        self._send_tiles(tiles, group)
+                        self.device.refresh()
+                        time.sleep(gap_s)
+                else:
+                    self._send_tiles(self._canvas_tiles(cur))
+                    self.device.refresh()
+            finally:
+                self._pushing = False
+            self._last_paint = time.time()
+        return True
+
+    def album_play(self, index: int | None = None) -> bool:
+        if not self.album_items:
+            return False
+        if index is not None:
+            self.album_index = index % len(self.album_items)
+        self._gif_stop_all()
+        self.preview_mode = "album"
+        self.in_standby = True
+        self._album_last = time.time()
+        try:
+            self.device.set_screen_brightness(self.screen_brightness)
+        except Exception:  # noqa: BLE001
+            pass
+        threading.Thread(target=self._push_album, daemon=True).start()
+        self.broadcast({"type": "album", **self.album_state()})
+        self.broadcast({"type": "scene", "name": self.ALBUM_SCENE, "ok": True, "quiet": True})
+        log(f"相册开始播放（{len(self.album_items)} 张）")
+        return True
+
+    def album_goto(self, delta: int = 1, index=None) -> bool:
+        if not self.album_items:
+            return False
+        prev = self._album_canvas(self.album_index) if self.album_active() else None
+        if index is not None:
+            self.album_index = int(index) % len(self.album_items)
+        else:
+            self.album_index = (self.album_index + delta) % len(self.album_items)
+        self._album_last = time.time()
+        if self.album_active():
+            threading.Thread(target=self._push_album, args=(prev,), daemon=True).start()
+        self.broadcast({"type": "album", **self.album_state()})
+        return True
+
+    def album_stop(self) -> None:
+        if self.preview_mode != "album":
+            return
+        self.preview_mode = "wallpaper"
+        self.in_standby = False
+        self._last_activity = time.time()
+        self.broadcast({"type": "album", **self.album_state()})
+        back = getattr(self, "_album_return", None)
+        self._album_return = None
+        log("相册已退出" + (f"，回到「{back}」" if back else ""))
+        if back and back != (self.active_scene or self.custom_scene_name) and self.apply_scene(back):
+            self.broadcast({"type": "scene", "name": back, "ok": True})
+            return
+        self.apply_keys()
+        self.broadcast({"type": "scene", "name": self.current_scene(), "ok": True, "quiet": True})
+
+    def _album_loop(self) -> None:
+        while True:
+            time.sleep(0.25)
+            try:
+                if (self.album_active() and self.album_slideshow and len(self.album_items) > 1
+                        and time.time() - self._album_last >= self.album_interval):
+                    self.album_goto(1)
+            except Exception as exc:  # noqa: BLE001
+                log(f"幻灯片出错：{exc}")
+                time.sleep(2)
+
+    def album_thumb(self, index: int) -> bytes | None:
+        path = self._album_file(index) if 0 <= index < len(self.album_items) else None
+        if not path:
+            return None
+        try:
+            with Image.open(path) as im:
+                img = ImageOps.fit(self._flat_rgb(im), (160, 96), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=82)
+            return buf.getvalue()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def album_preview_jpg(self) -> bytes | None:
+        """相册卡片里的大预览：当前图片按整版画布（观看方向）渲染。"""
+        if not self.album_items:
+            return None
+        canvas = self._album_canvas(self.album_index)
+        buf = io.BytesIO()
+        canvas.save(buf, "JPEG", quality=85)
+        return buf.getvalue()
+
+    def album_tiles_png(self) -> bytes | None:
+        """相册当前图切成 15 块拼成精灵图（和设备上一致），给界面键盘预览叠在上面。"""
+        canvas = self._album_canvas(self.album_index)
+        if canvas is None:
+            return None
+        sprite = Image.new("RGB", (GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE), (0, 0, 0))
+        for key, tile in self._canvas_tiles(canvas).items():
+            col = (key - 1) % GRID_COLS
+            row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+            # 界面里键格会反向转回正，所以这里给「观看方向」的图块，不转
+            sprite.paste(tile, (col * KEY_SIZE, row_top * KEY_SIZE))
+        buf = io.BytesIO()
+        sprite.save(buf, "PNG")
+        return buf.getvalue()
 
     def tiles_png(self) -> bytes | None:
         """15 个键的画面拼成一张 320×192 的精灵图，供界面上的键格直接铺。"""
@@ -2145,8 +2692,6 @@ class App:
             slot_col, slot_row = self._cell_slot(col, row_top)
             tile = canvas.crop((slot_col * pitch, slot_row * pitch,
                                 slot_col * pitch + KEY_SIZE, slot_row * pitch + KEY_SIZE))
-            if self.rotation:
-                tile = tile.rotate(self.rotation, expand=False)
             item = self.key_overrides.get(key)
             if item:
                 jpeg = item["jpeg"] if item["type"] == "image" else item["frames"][item["idx"]][0]
@@ -2155,6 +2700,8 @@ class App:
                         (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
                 except Exception:  # noqa: BLE001
                     pass
+            if self.rotation:
+                tile = tile.rotate(self.rotation, expand=False)
             sprite.paste(tile, (col * KEY_SIZE, row_top * KEY_SIZE))
         buf = io.BytesIO()
         sprite.save(buf, "PNG")
@@ -2192,6 +2739,22 @@ class App:
     # -- 外部输入 ---------------------------------------------------------- #
     def _on_input(self, key: int, state: int) -> None:
         if self.input_muted:
+            return
+        if state == 1 and self.lighting.get("mode") == "ripple":
+            self.add_ripple(key)
+            self._dirty = True
+        if self.album_active():
+            # 相册播放中：◀ ▶ 导航键切换照片，其他键退出相册（这一下不触发按键动作）
+            self._last_activity = time.time()
+            if state == 1:
+                self._wake_swallow.add(key)
+                if key in (16, 18) and len(self.album_items) > 1:
+                    threading.Thread(target=self.album_goto, args=(-1 if key == 16 else 1,),
+                                     daemon=True).start()
+                else:
+                    threading.Thread(target=self.album_stop, daemon=True).start()
+            elif key in self._wake_swallow:
+                self._wake_swallow.discard(key)
             return
         idle = time.time() - self._last_activity
         self._last_activity = time.time()
@@ -2329,10 +2892,48 @@ class App:
         safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in (name or ""))[:40]
         return os.path.join(SCENE_DIR, safe.strip() + ".json")
 
+    ALBUM_SCENE = "相册"
+
+    def _scene_flags(self) -> dict:
+        """场景的界面属性（停用等），存在场景目录的 .scene-flags.json 里；自定义 / 相册场景也能设。"""
+        try:
+            with open(os.path.join(SCENE_DIR, ".scene-flags.json"), encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def set_scene_muted(self, name: str, muted: bool) -> bool:
+        name = self._canonical_scene(name)
+        flags = self._scene_flags()
+        item = flags.setdefault(name, {})
+        if muted:
+            item["muted"] = True
+        else:
+            item.pop("muted", None)
+            if not item:
+                flags.pop(name, None)
+        try:
+            os.makedirs(SCENE_DIR, exist_ok=True)
+            with open(os.path.join(SCENE_DIR, ".scene-flags.json"), "w", encoding="utf-8") as fh:
+                json.dump(flags, fh, ensure_ascii=False, indent=1)
+        except OSError:
+            return False
+        self._links_cache = None
+        log(f"场景「{name}」已{'停用（切换时跳过）' if muted else '启用'}")
+        return True
+
+    def scene_muted(self, name: str) -> bool:
+        return bool(self._scene_flags().get(self._canonical_scene(name), {}).get("muted"))
+
     def list_scenes(self) -> list:
         official_names = self.official_scene_names()
+        flags = self._scene_flags()
+        cur = self.current_scene()
         items = [{"name": self.custom_scene_name, "custom": True,
-                  "active": self.active_scene in ("", self.custom_scene_name)}]
+                  "active": cur == self.custom_scene_name},
+                 {"name": self.ALBUM_SCENE, "album": True, "count": len(self.album_items),
+                  "active": cur == self.ALBUM_SCENE}]
         try:
             files = sorted(os.listdir(SCENE_DIR))
         except OSError:
@@ -2341,6 +2942,8 @@ class App:
             if not f.lower().endswith(".json") or f.startswith(("__", ".")):
                 continue
             name = os.path.splitext(f)[0]
+            if name == self.ALBUM_SCENE:
+                continue
             apps = []
             try:
                 with open(os.path.join(SCENE_DIR, f), encoding="utf-8-sig") as fh:
@@ -2350,8 +2953,16 @@ class App:
             items.append({"name": name, "custom": False,
                           "official": name in official_names,
                           "apps": apps,
-                          "active": name == self.active_scene})
+                          "active": cur == name})
+        for it in items:
+            it["muted"] = bool(flags.get(it["name"], {}).get("muted"))
         return items
+
+    def current_scene(self) -> str:
+        """当前在用的场景名；相册播放中就是「相册」。"""
+        if self.album_active():
+            return self.ALBUM_SCENE
+        return self.active_scene or self.custom_scene_name
 
     @staticmethod
     def _fresh_contexts(data: dict) -> dict:
@@ -2364,7 +2975,7 @@ class App:
 
     def save_scene(self, name: str) -> bool:
         name = (name or "").strip()[:40]
-        if not name:
+        if not name or name == self.ALBUM_SCENE:
             return False
         try:
             os.makedirs(SCENE_DIR, exist_ok=True)
@@ -2379,7 +2990,7 @@ class App:
 
     def rename_scene(self, old: str, new: str) -> bool:
         new = (new or "").strip()[:40]
-        if not new or old == self.custom_scene_name:
+        if not new or old in (self.custom_scene_name, self.ALBUM_SCENE) or new == self.ALBUM_SCENE:
             return False
         src = self._scene_path(old)
         if not os.path.isfile(src):
@@ -2394,6 +3005,8 @@ class App:
         return True
 
     def duplicate_scene(self, name: str) -> bool:
+        if name == self.ALBUM_SCENE:
+            return False
         src = self._scene_path(name)
         if not os.path.isfile(src):
             return False
@@ -2443,6 +3056,140 @@ class App:
                 merged[k] = data[k]
         return self.import_config(merged)
 
+    # -- 单个场景导出 / 导入（.m18scene = zip：scene.json + 图片 + 用到的自制插件） ----------- #
+    SCENE_PKG_VERSION = 1
+
+    def _scene_data(self, name: str) -> dict | None:
+        if name == self.custom_scene_name or not name:
+            if self.active_scene in ("", self.custom_scene_name):
+                return self.export_config()
+            path = os.path.join(SCENE_DIR, "__custom__.json")
+        else:
+            path = self._scene_path(name)
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def export_scene(self, name: str) -> dict:
+        """打包一个场景：只含按键内容（页面、图片、动作、样式、关联程序），不含全局设置。"""
+        if name == self.active_scene and name != self.custom_scene_name:
+            self._snapshot_custom_scene()
+        data = self._scene_data(name)
+        if not data or not isinstance(data.get("pages"), list):
+            return {"ok": False, "error": "读取场景失败"}
+        scene = {k: data[k] for k in ("pages", "page", "apps") if k in data}
+        buf = io.BytesIO()
+        images, plugins = set(), set()
+        for p in scene["pages"]:
+            images.update(str(v) for v in (p.get("images") or {}).values() if v)
+            specs = list((p.get("actions") or {}).values())
+            for g in (p.get("gestures") or {}).values():
+                specs.extend((g or {}).values())
+            for s in specs:
+                if isinstance(s, dict) and s.get("type") == "plugin" and str(s.get("plugin", "")).startswith(CUSTOM_PREFIX):
+                    plugins.add(s["plugin"])
+        missing = []
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("scene.json", json.dumps({"format": "m18scene", "version": self.SCENE_PKG_VERSION,
+                                                  "name": name, "app": "M18 Console",
+                                                  "scene": scene}, ensure_ascii=False, indent=1))
+            for img in sorted(images):
+                src = os.path.join(UPLOAD_DIR, os.path.basename(img))
+                if not os.path.isfile(src):
+                    src = os.path.join(ICON_DIR, os.path.basename(img))
+                if os.path.isfile(src):
+                    zf.write(src, f"images/{os.path.basename(img)}")
+                else:
+                    missing.append(img)
+            for pid in sorted(plugins):
+                folder = self._custom_folder(pid)
+                if not os.path.isdir(folder):
+                    continue
+                for root, _dirs, files in os.walk(folder):
+                    for f in files:
+                        full = os.path.join(root, f)
+                        zf.write(full, "plugins/" + os.path.relpath(full, CUSTOM_PLUGIN_DIR).replace("\\", "/"))
+        log(f"已导出场景「{name}」：{len(images) - len(missing)} 张图片，{len(plugins)} 个自制插件")
+        return {"ok": True, "name": name, "filename": f"{name}.m18scene",
+                "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+                "images": len(images) - len(missing), "plugins": len(plugins)}
+
+    def import_scene_package(self, b64: str, name: str = "") -> dict:
+        try:
+            raw = base64.b64decode(b64.split(",", 1)[-1])
+            zf = zipfile.ZipFile(io.BytesIO(raw))
+            meta = json.loads(zf.read("scene.json").decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "不是有效的场景文件（.m18scene）"}
+        if meta.get("format") != "m18scene" or not isinstance((meta.get("scene") or {}).get("pages"), list):
+            return {"ok": False, "error": "不是有效的场景文件（.m18scene）"}
+        total = sum(i.file_size for i in zf.infolist())
+        if total > 300 * 1024 * 1024 or len(zf.infolist()) > 5000:
+            return {"ok": False, "error": "场景文件过大"}
+        scene = meta["scene"]
+        # 图片：按内容哈希改名放进上传目录，同一张图重复导入不会堆副本
+        renamed = {}
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        for info in zf.infolist():
+            if not info.filename.startswith("images/") or info.is_dir():
+                continue
+            base = os.path.basename(info.filename)
+            ext = os.path.splitext(base)[1].lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp") or not base:
+                continue
+            data = zf.read(info)
+            new = f"scn_{hashlib.sha1(data).hexdigest()[:16]}{ext}"
+            dst = os.path.join(UPLOAD_DIR, new)
+            if not os.path.isfile(dst):
+                with open(dst, "wb") as fh:
+                    fh.write(data)
+            renamed[base] = new
+        # 自制插件：已存在同 id 的不覆盖（保留本机的版本）
+        plugins_added = 0
+        existing = set(os.listdir(CUSTOM_PLUGIN_DIR)) if os.path.isdir(CUSTOM_PLUGIN_DIR) else set()
+        for info in zf.infolist():
+            parts = info.filename.split("/")
+            if parts[0] != "plugins" or len(parts) < 3 or info.is_dir():
+                continue
+            if not parts[1].startswith(CUSTOM_PREFIX) or not parts[1].endswith(".sdPlugin") or ".." in parts:
+                continue
+            dst = os.path.join(CUSTOM_PLUGIN_DIR, *parts[1:])
+            if not _inside(dst, CUSTOM_PLUGIN_DIR):
+                continue
+            if parts[1] in existing:
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, "wb") as fh:
+                fh.write(zf.read(info))
+            if parts[2] == "manifest.json":
+                plugins_added += 1
+        for p in scene["pages"]:
+            p["images"] = {k: renamed.get(os.path.basename(str(v)), os.path.basename(str(v)))
+                           for k, v in (p.get("images") or {}).items() if v}
+        self._fresh_contexts(scene)
+        # 场景名：重名自动加序号
+        base_name = ((name or meta.get("name") or "导入的场景").strip() or "导入的场景")[:36]
+        if base_name == self.custom_scene_name:
+            base_name += " 导入"
+        target, i = base_name, 2
+        while os.path.isfile(self._scene_path(target)):
+            target = f"{base_name} {i}"
+            i += 1
+        try:
+            os.makedirs(SCENE_DIR, exist_ok=True)
+            with open(self._scene_path(target), "w", encoding="utf-8") as fh:
+                json.dump(scene, fh, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            return {"ok": False, "error": f"保存失败：{exc}"}
+        if plugins_added:
+            self._refresh_plugins()
+        target = self._canonical_scene(target)
+        log(f"已导入场景「{target}」：{len(renamed)} 张图片，{plugins_added} 个自制插件")
+        return {"ok": True, "name": target, "images": len(renamed), "plugins": plugins_added}
+
     def _canonical_scene(self, name: str) -> str:
         """场景名统一成文件名对应的写法（全角括号等会被换成 _），避免同一场景两种名字。"""
         if not name or name == self.custom_scene_name:
@@ -2450,6 +3197,16 @@ class App:
         return os.path.splitext(os.path.basename(self._scene_path(name)))[0]
 
     def apply_scene(self, name: str) -> bool:
+        if name == self.ALBUM_SCENE:
+            if not self.album_items:
+                log("相册是空的，先在「待机画面 → 相册」里加图片")
+                return False
+            if not self.album_active():
+                self._album_return = self.active_scene or self.custom_scene_name
+            return self.album_play()
+        if self.album_active():
+            self.preview_mode = "wallpaper"            # 退出相册，下面会整屏重画按键
+            self.in_standby = False
         name = self._canonical_scene(name)
         if not self._auto_applying:
             self._auto_scene = None
@@ -2473,7 +3230,7 @@ class App:
             self._applying_scene = False
 
     def delete_scene(self, name: str) -> bool:
-        if name == self.custom_scene_name:
+        if name in (self.custom_scene_name, self.ALBUM_SCENE):
             return False
         path = self._scene_path(name)
         if not os.path.isfile(path):
@@ -2915,12 +3672,24 @@ class App:
 
     def next_scene(self) -> bool:
         """官方「场景切换」键：按场景列表顺序切到下一个。"""
-        names = [it["name"] for it in self.list_scenes()]
-        if len(names) < 2:
-            return False
-        cur = self.active_scene or self.custom_scene_name
+        items = self.list_scenes()
+        names = [it["name"] for it in items]
+        cur = self.current_scene()
+        usable = {it["name"] for it in items
+                  if not it.get("muted") and not (it.get("album") and not self.album_items)}
         idx = names.index(cur) if cur in names else -1
-        target = names[(idx + 1) % len(names)]
+        target = None
+        for step in range(1, len(names) + 1):
+            cand = names[(idx + step) % len(names)]
+            if cand in usable and cand != cur:
+                target = cand
+                break
+        if not target:
+            log("没有其他可切换的场景（其余都已停用）")
+            return False
+        if cur != target:
+            self._scene_history.append(cur)
+            del self._scene_history[:-20]
         ok = self.apply_scene(target)
         self.broadcast({"type": "scene", "name": target, "ok": ok})
         return ok
@@ -2982,6 +3751,8 @@ class App:
         self.key_actions.pop(key, None)
         self.key_styles.pop(key, None)
         self.key_gestures.pop(key, None)
+        if self._drop_orphan_folders():
+            self._bind_page()
         self._save_config()
         self._dirty = True
         if self.device.connected:
@@ -3034,9 +3805,14 @@ class App:
             return
         kind = act.get("type") or "launch"
 
+        if kind == "folder":
+            ok = self.open_folder(str(act.get("page") or ""))
+            log(f"按键 {key} → 打开文件夹「{act.get('name')}」" + ("" if ok else "（子页不存在）"))
+            return
+
         if kind == "nav":
             name = act.get("name") or ""
-            if name in ("上一页", "下一页", "主页"):
+            if name in ("上一页", "下一页", "主页", "返回上级"):
                 self.add_nav_pages(name)
             elif name == "下一场景":
                 self.next_scene()
@@ -3044,8 +3820,9 @@ class App:
                 self.back_scene()
             elif name.startswith("跳到第"):
                 digits = "".join(ch for ch in name if ch.isdigit())
-                if digits:
-                    self.goto_page(int(digits) - 1)
+                mains = self._main_pages()
+                if digits and 0 < int(digits) <= len(mains):
+                    self.goto_page(mains[int(digits) - 1])
             else:
                 self.broadcast({"type": "nav", "key": key, "name": name})
             log(f"按键 {key} → 导航：{name}")
@@ -3114,7 +3891,7 @@ class App:
 
         if kind == "scene":
             name = act.get("scene", "")
-            self._scene_history.append(self.active_scene or self.custom_scene_name)
+            self._scene_history.append(self.current_scene())
             del self._scene_history[:-20]
             ok = self.apply_scene(name)
             self.broadcast({"type": "scene", "name": name, "ok": ok})
@@ -3234,6 +4011,19 @@ class App:
     def set_key_action(self, key: int, spec: dict) -> bool:
         if not (1 <= key <= KEY_COUNT + 3):
             return False
+        if spec.get("type") == "folder":
+            gesture = spec.get("gesture") if spec.get("gesture") in ("long", "double") else ""
+            cur = (self.key_gestures.get(key) or {}).get(gesture) if gesture else self.key_actions.get(key)
+            name = str(spec.get("name") or "").strip()[:20] or "文件夹"
+            if isinstance(cur, dict) and cur.get("type") == "folder" and self._page_index(cur.get("page", "")) >= 0:
+                cur["name"] = name                      # 已经是文件夹：改名
+                self.pages[self._page_index(cur["page"])]["name"] = name
+                self._save_config()
+                return True
+            ok = self.create_folder(key, name, gesture).get("ok", False)
+            if ok and self._drop_orphan_folders():
+                self._bind_page()
+            return ok
         action = self._build_action(spec)
         if action is None:
             return False
@@ -3242,6 +4032,8 @@ class App:
             self.key_gestures.setdefault(key, {})[gesture] = action
         else:
             self.key_actions[key] = action
+        if self._drop_orphan_folders():           # 原来是文件夹、被换成别的动作：子页一并回收
+            self._bind_page()
         self._save_config()
         if self.device.connected and 1 <= key <= KEY_COUNT and not self.in_standby:
             self.device.send_image(key, self._render_key(key))
@@ -3255,13 +4047,15 @@ class App:
         g.pop(gesture, None)
         if not g:
             self.key_gestures.pop(key, None)
+        if self._drop_orphan_folders():
+            self._bind_page()
         self._save_config()
         return True
 
     def back_scene(self) -> bool:
         while self._scene_history:
             name = self._scene_history.pop()
-            if name != self.active_scene:
+            if name != self.current_scene():
                 ok = self.apply_scene(name)
                 self.broadcast({"type": "scene", "name": name, "ok": ok})
                 return ok
@@ -3275,6 +4069,8 @@ class App:
             return cache[1]
         links = {}
         for item in self.list_scenes():
+            if item.get("muted"):
+                continue
             for app in item.get("apps") or []:
                 links.setdefault(app.lower(), item["name"])
         self._links_cache = (time.time(), links)
@@ -3348,6 +4144,8 @@ class App:
         if key not in self.key_actions:
             return False
         self.key_actions.pop(key, None)
+        if self._drop_orphan_folders():
+            self._bind_page()
         self._save_config()
         return True
 
@@ -4273,8 +5071,8 @@ __CODE__
         """模拟按一下设备上的键（短按 / 长按 / 双击），走和真实按键完全相同的处理流程。"""
         if not (1 <= key <= KEY_COUNT + 3) or gesture not in ("press", "long", "double"):
             return False
-        if self.in_standby:
-            self._wake_from_standby()          # 模拟按键不需要「第一下只唤醒」
+        if self.in_standby and not self.album_active():
+            self._wake_from_standby()          # 模拟按键不需要「第一下只唤醒」（相册里按键由相册自己处理）
         hold = 0.8 if gesture == "long" else 0.06
 
         def run():
@@ -4293,11 +5091,12 @@ __CODE__
         sheet = Image.new("RGB", (GRID_COLS * size + (GRID_COLS + 1) * gap,
                                   GRID_ROWS * size + (GRID_ROWS + 1) * gap), (24, 28, 36))
         d = ImageDraw.Draw(sheet)
+        album = self._canvas_tiles(self._album_canvas(self.album_index)) if self.album_active() else None
         for key in range(1, KEY_COUNT + 1):
             col, row_top = (key - 1) % GRID_COLS, GRID_ROWS - 1 - (key - 1) // GRID_COLS
             x, y = gap + col * (size + gap), gap + row_top * (size + gap)
             try:
-                tile = Image.open(io.BytesIO(self._number_tile(key))).convert("RGB").resize((size, size))
+                tile = album[key].resize((size, size)) if album else                     Image.open(io.BytesIO(self._number_tile(key))).convert("RGB").resize((size, size))
                 sheet.paste(tile, (x, y))
             except Exception:  # noqa: BLE001
                 d.rectangle([x, y, x + size, y + size], outline=(200, 60, 60))
@@ -4433,7 +5232,29 @@ __CODE__
                 log(f"官方驱动监测异常：{exc}")
 
     # -- 灯光 -------------------------------------------------------------- #
+    def _save_soon(self, delay: float = 1.2) -> None:
+        if self._save_timer:
+            self._save_timer.cancel()
+        self._save_timer = threading.Timer(delay, self._save_config)
+        self._save_timer.daemon = True
+        self._save_timer.start()
+
+    def reset_lighting(self) -> None:
+        with self.lock:
+            self.lighting.update(DEFAULT_LIGHTING)
+            self._dirty = True
+        self.effect_reverse = False
+        self.device.set_led_brightness(self.lighting["brightness"])
+        self._save_config()
+
+    def add_ripple(self, key: int) -> None:
+        if self.lighting.get("mode") != "ripple" or key not in KEY_POINTS:
+            return
+        now = time.time()
+        self._ripples = [r for r in self._ripples if now - r[1] < 3.0][-6:] + [(key, now)]
+
     def set_lighting(self, patch: dict) -> None:
+        self._save_soon()
         with self.lock:
             for k in ("mode", "color", "speed", "brightness"):
                 if k in patch and patch[k] is not None:
@@ -4447,6 +5268,7 @@ __CODE__
         self.device.set_led_brightness(self.lighting["brightness"])
 
     def paint_led(self, index: int, color: str) -> None:
+        self._save_soon()
         rgb = list(hex_to_rgb(color))
         with self.lock:
             index = max(0, min(LED_COUNT - 1, int(index)))
@@ -4455,6 +5277,7 @@ __CODE__
             self._dirty = True
 
     def set_custom(self, colors) -> None:
+        self._save_soon()
         with self.lock:
             cleaned = []
             for i in range(LED_COUNT):
@@ -4471,6 +5294,8 @@ __CODE__
         n = LED_COUNT - 2          # 外圈 22 颗
         if mode == "custom":
             return [list(c) for c in cfg["custom"]]
+        if mode == "ripple":
+            return self._ripple_frame(cfg, time.time())
         if mode == "off":
             ring = [[0, 0, 0]] * n
         elif mode == "solid":
@@ -4504,6 +5329,26 @@ __CODE__
         front = [list(ring[4]), list(ring[11])]
         return list(ring) + front
 
+    def _ripple_frame(self, cfg: dict, now: float):
+        """涟漪：从按下的键向四周扩散的光环，按灯珠到按键的真实距离点亮；没按键时整圈微亮。"""
+        base = hex_to_rgb(cfg["color"])
+        speed = 700.0 * max(0.2, float(cfg["speed"]))          # 每秒扩散多远（坐标单位）
+        width = 95.0
+        out = []
+        ripples = list(self._ripples)
+        for (x, y) in LED_POINTS:
+            k = 0.0                       # 平时全灭，只有按键时才亮
+            for key, t0 in ripples:
+                kx, ky = KEY_POINTS[key]
+                radius = (now - t0) * speed
+                d = math.hypot(x - kx, y - ky)
+                fade = max(0.0, 1.0 - radius / 1300.0)
+                k = max(k, math.exp(-((d - radius) / width) ** 2) * fade)
+            out.append([int(c * min(1.0, k)) for c in base])
+        if ripples and now - ripples[-1][1] > 3.0:
+            self._ripples = []
+        return out
+
     def _engine_loop(self) -> None:
         t0 = time.time()
         ui_hash = None
@@ -4515,10 +5360,14 @@ __CODE__
                 frame[self._identify[0]] = [255, 255, 255]
             else:
                 frame = self._compute(t)
-            static = self.lighting["mode"] in ("off", "solid", "gradient", "custom")
+            static = self.lighting["mode"] in ("off", "solid", "gradient", "custom") or (
+                self.lighting["mode"] == "ripple" and not self._ripples)
             h = hash(tuple(tuple(c) for c in frame))
-            # 让位 / 静默 / 暂停写入 / 图片传输中，一律不碰灯带
-            can_write = not (self._pushing or self.writes_paused or self.quiet or self.yielded)
+            # 让位 / 静默 / 暂停写入 / 图片传输中，一律不碰灯带。
+            # 例外：涟漪正在扩散时照写（灯带一帧很小）——否则按「切换场景」键时，
+            # 换场景推 15 张图的那段时间灯带停住，涟漪看起来一卡一卡。
+            rippling = self.lighting["mode"] == "ripple" and bool(self._ripples)
+            can_write = not ((self._pushing and not rippling) or self.writes_paused or self.quiet or self.yielded)
 
             if static:
                 if can_write and self._dirty and h != self._frame_hash:
@@ -4586,12 +5435,16 @@ __CODE__
                 "activeScene": self.active_scene,
                 "autostart": self.autostart,
                 "inStandby": self.in_standby,
+                "album": self.album_state(),
                 "inputStats": dict(self.device.stats),
                 "lastResponse": getattr(self.device, "last_response", None),
                 "rotation": self.rotation,
                 "page": self.page,
                 "pageCount": len(self.pages),
                 "pageNames": [p.get("name", "") for p in self.pages],
+                "pageFolder": [bool(p.get("folder")) for p in self.pages],
+                "mainPages": self._main_pages(),
+                "folderPath": self._folder_path(),
                 "view": {
                     "fit": self.wallpaper_fit,
                     "zoom": self.wallpaper_zoom,
@@ -4604,7 +5457,7 @@ __CODE__
                 "keyStyles": {str(k): v for k, v in self.key_styles.items()},
                 "keyActionValues": {str(k): action_value(v) for k, v in self.key_actions.items()},
                 "keyActionSpecs": {str(k): {f: v.get(f) for f in ("enter", "secret", "button", "pos",
-                                                                  "action", "state", "op")}
+                                                                  "action", "state", "op", "page")}
                                    for k, v in self.key_actions.items() if isinstance(v, dict)},
                 "keyGestures": {
                     str(k): {gname: {"type": gv.get("type"), "label": action_label(gv),
@@ -4748,6 +5601,27 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "image/png")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        elif path in ("/api/album/tiles.png", "/api/album/preview.jpg") or (
+                path.startswith("/api/album/thumb/") and path.endswith(".jpg")):
+            if path.endswith("tiles.png"):
+                data, ctype = APP.album_tiles_png(), "image/png"
+            elif path.endswith("preview.jpg"):
+                data, ctype = APP.album_preview_jpg(), "image/jpeg"
+            else:
+                try:
+                    data = APP.album_thumb(int(path.rsplit("/", 1)[1][:-4]))
+                except ValueError:
+                    data = None
+                ctype = "image/jpeg"
+            if not data:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=600" if "/thumb/" in path else "no-store")
             self.end_headers()
             self.wfile.write(data)
         elif path == "/api/wallpaper/canvas.png":
@@ -4973,7 +5847,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, **APP.snapshot()})
         elif path == "/api/activity":
             APP._last_activity = time.time()
-            if body.get("wake") and APP.in_standby:
+            if body.get("wake") and APP.in_standby and not APP.album_active():
                 threading.Thread(target=APP.apply_keys, daemon=True).start()
             self._json({"ok": True})
         elif path == "/api/page/delete":
@@ -5010,6 +5884,9 @@ class Handler(BaseHTTPRequestHandler):
                             "items": APP.list_scenes()})
             elif body.get("save"):
                 self._json({"ok": APP.save_scene(str(body.get("name") or body.get("save") or "")),
+                            "items": APP.list_scenes()})
+            elif "mute" in body and body.get("name"):
+                self._json({"ok": APP.set_scene_muted(str(body["name"]), bool(body["mute"])),
                             "items": APP.list_scenes()})
             elif body.get("apply"):
                 self._json({"ok": APP.apply_scene(str(body.get("apply"))),
@@ -5086,10 +5963,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/standby-brightness":
             APP.standby_brightness = max(0, min(100, int(body.get("value", 60))))
             APP._save_config()
-            ok = APP.apply_standby() if APP.device.connected else True
+            if APP.album_active():
+                ok = APP._push_album()
+            else:
+                ok = APP.apply_standby() if APP.device.connected else True
             self._json({"ok": bool(ok), "value": APP.standby_brightness})
         elif path == "/api/standby":
-            APP.standby_sec = max(5, min(1800, int(body.get("sec", 300))))
+            APP.standby_sec = max(STANDBY_MIN, min(STANDBY_MAX, int(body.get("sec", 300))))
             APP._save_config()
             self._json({"ok": True, "sec": APP.standby_sec})
         elif path == "/api/wallpaper":
@@ -5185,7 +6065,9 @@ class Handler(BaseHTTPRequestHandler):
                 APP.wallpaper_oy = int(body["oy"])
             APP._save_config()
             # 只在待机画面上生效时才重画设备，否则仅更新预览
-            if APP.preview_mode == "calibration":
+            if APP.album_active():
+                ok = APP._push_album()
+            elif APP.preview_mode == "calibration":
                 ok = APP.apply_calibration()
             else:
                 ok = APP.apply_standby()
@@ -5232,13 +6114,31 @@ class Handler(BaseHTTPRequestHandler):
             APP._save_config()
             APP._dirty = True
             self._json({"ok": True, "value": APP.effect_reverse})
+        elif path == "/api/folder/create":
+            r = APP.create_folder(int(body.get("key", 0)), str(body.get("name") or ""),
+                                  str(body.get("gesture") or ""))
+            self._json({**r, **APP.snapshot()})
+        elif path == "/api/folder/open":
+            ok = APP.open_folder(str(body.get("page") or ""))
+            self._json({"ok": ok, **APP.snapshot()})
+        elif path == "/api/folder/back":
+            ok = APP.folder_back()
+            self._json({"ok": ok, **APP.snapshot()})
+        elif path == "/api/scenes/export":
+            r = APP.export_scene(str(body.get("name") or ""))
+            self._json(r)
+        elif path == "/api/scenes/import":
+            r = APP.import_scene_package(str(body.get("data") or ""), str(body.get("name") or ""))
+            self._json({**r, "items": APP.list_scenes()})
         elif path == "/api/page":
             if body.get("add"):
                 APP.goto_page(APP.add_page())
             elif "index" in body:
                 APP.goto_page(int(body["index"]))
             else:
-                APP.goto_page(APP.page + int(body.get("delta", 0)))
+                delta = int(body.get("delta", 0))
+                if delta:
+                    APP.add_nav_pages("下一页" if delta > 0 else "上一页")
             self._json({"ok": True, "page": APP.page, "pageCount": len(APP.pages),
                         **APP.snapshot()})
         elif path == "/api/wallpaper/reset":
@@ -5252,15 +6152,31 @@ class Handler(BaseHTTPRequestHandler):
             APP.apply_wallpaper()
             self._json({"ok": True})
         elif path == "/api/rotation":
-            APP.rotation = int(body.get("value", 0)) % 360
-            if APP.rotation not in (0, 90, 180, 270):
-                APP.rotation = 0
-            APP._save_config()
-            ok = APP.apply_calibration() if APP.preview_mode == "calibration" else APP.apply_wallpaper()
-            self._json({"ok": ok, "rotation": APP.rotation})
+            self._json({"ok": APP.set_rotation(int(body.get("value", 0))), "rotation": APP.rotation})
         elif path == "/api/lighting/reset":
-            APP.device.reset_leds()
-            self._json({"ok": True})
+            APP.reset_lighting()
+            self._json(APP.snapshot())
+        elif path == "/api/album":
+            self._json(APP.album_state())
+        elif path == "/api/album/add":
+            self._json({"ok": APP.album_add([str(f) for f in (body.get("files") or [])]), **APP.album_state()})
+        elif path == "/api/album/remove":
+            self._json({"ok": APP.album_remove(int(body.get("index", -1))), **APP.album_state()})
+        elif path == "/api/album/move":
+            self._json({"ok": APP.album_move(int(body.get("from", -1)), int(body.get("to", -1))),
+                        **APP.album_state()})
+        elif path == "/api/album/settings":
+            APP.album_settings(body)
+            self._json(APP.album_state())
+        elif path == "/api/album/play":
+            idx = body.get("index")
+            self._json({"ok": APP.album_play(None if idx is None else int(idx)), **APP.album_state()})
+        elif path == "/api/album/stop":
+            threading.Thread(target=APP.album_stop, daemon=True).start()
+            self._json({"ok": True, **APP.album_state(active=False)})
+        elif path == "/api/album/goto":
+            ok = APP.album_goto(int(body.get("delta", 0)), body.get("index"))
+            self._json({"ok": ok, **APP.album_state()})
         elif path == "/api/quit":
             self._json({"ok": True})
             threading.Thread(target=_shutdown, daemon=True).start()

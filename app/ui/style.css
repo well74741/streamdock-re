@@ -251,7 +251,7 @@ body {
   text-shadow: 0 0 3px rgba(0, 0, 0, .95), 0 1px 2px rgba(0, 0, 0, .95);
   transform: rotate(calc(-1 * var(--rot, 0deg)));
 }
-.cell-num { transform: rotate(calc(-1 * var(--rot, 0deg))); }
+.ring-board .cell { transform: rotate(calc(-1 * var(--rot, 0deg))); }
 .ring.painting .dot { cursor: crosshair; }
 .ring.erasing .dot { cursor: cell; }
 .ring.erasing .dot:hover { border-color: rgba(255, 120, 120, .85); }
@@ -1397,3 +1397,148 @@ html, body { overflow: hidden; height: 100%; }
 .agent-code pre.wrap { white-space: pre-wrap; }
 .agent-code button { position: absolute; top: 8px; right: 8px; }
 .agent-card code { background: rgba(0, 0, 0, .08); padding: 0 4px; border-radius: 4px; word-break: break-all; }
+
+/* ==================== 设置区 v3：统一的卡片 / 按钮 / 开关 ==================== */
+.side { gap: 14px; }
+.set-card { padding: 16px 18px 18px; }
+.set-card .card-head { align-items: center; margin-bottom: 12px; min-height: 26px; }
+.set-card .card-head h2 { font-size: 14px; }
+.set-card .card-head .muted { font-size: 12px; }
+.set-sub {
+  margin: 14px 0 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .5px;
+  color: #6a778b; text-transform: none;
+  display: flex; align-items: center; gap: 8px;
+}
+.set-sub::after { content: ""; flex: 1; height: 1px; background: rgba(90, 110, 140, .18); }
+
+/* 统一按钮：同高、同圆角、等宽网格 */
+.set-card .seg, .set-card .chip, .set-card .btn {
+  height: 32px; padding: 0 10px; border-radius: 8px;
+  font-size: 12.5px; line-height: 30px; text-align: center;
+  background: #f4f6fa; border: 1px solid #c3ccda; color: #33415a;
+  box-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.set-card .seg:hover, .set-card .chip:hover { background: #e9eef6; border-color: #a9b7cc; color: #182130; }
+.set-card .seg.on, .set-card .chip.active, .set-card .seg.fit-btn.on {
+  background: #2f6fe0; border-color: #2f6fe0; color: #fff;
+}
+.set-card .seg:disabled { opacity: .45; cursor: default; }
+.btn-grid { display: grid; gap: 8px; margin-top: 12px; }
+.btn-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.btn-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.seg-grid { display: grid; gap: 6px; }
+.seg-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.seg-grid .chip { width: 100%; padding: 0 4px; }
+
+/* 分段选择：一整条，选中项高亮 */
+.seg-group {
+  display: flex; padding: 3px; gap: 3px; border-radius: 9px;
+  background: #e3e8f0; border: 1px solid #c3ccda;
+}
+.set-card .seg-group .seg {
+  flex: 1; height: 26px; line-height: 24px; padding: 0 4px; border: 0; border-radius: 6px;
+  background: transparent; color: #4a566a; font-size: 12px;
+}
+.set-card .seg-group .seg:hover { background: rgba(255, 255, 255, .6); }
+.set-card .seg-group .seg.on { background: #fff; color: #1f5fd0; box-shadow: 0 1px 3px rgba(20, 40, 80, .18); }
+.seg-group.compact { flex: 0 0 auto; }
+.seg-group.compact .seg { min-width: 42px; }
+
+/* 开关行 / 文字按钮 */
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; margin-top: 8px; }
+.set-row > span { font-size: 12.5px; color: #46536a; }
+.set-link {
+  border: 0; background: none; padding: 2px 4px; cursor: pointer;
+  color: #2f6fe0; font-size: 12px;
+}
+.set-link:hover { text-decoration: underline; }
+
+/* 滑杆：标签 / 滑条 / 数值三列对齐 */
+.set-card .slider-row.tight { grid-template-columns: 40px 1fr 52px; gap: 10px; margin: 6px 0; }
+.set-card .slider-row span { color: #46536a; font-size: 12.5px; }
+.set-card .slider-row b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* 灯光 */
+.mode-line { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
+.mode-line .mode-desc { margin: 0; flex: 1; font-size: 12px; line-height: 1.6; }
+.set-card .swatches.small { gap: 8px; margin-bottom: 10px; }
+.set-card .color-row { gap: 10px; }
+.set-card .color-row input[type="color"] { width: 46px; height: 28px; border-radius: 7px; }
+.set-card .color-row span { font: 12px Consolas, monospace; color: #46536a; }
+
+/* 壁纸预览 */
+.set-card .wp-thumb { border-radius: 10px; overflow: hidden; }
+
+/* 相册 */
+.album-view {
+  position: relative; aspect-ratio: 1.74; border-radius: 10px; overflow: hidden; cursor: pointer;
+  background: #1a2130; border: 1px dashed #9aa8bd;
+  display: flex; align-items: center; justify-content: center;
+}
+.album-view img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.album-view.drop-hot { border-color: #2f6fe0; box-shadow: 0 0 0 3px rgba(47, 111, 224, .25); }
+.album-empty { color: #c9d3e2; font-size: 12.5px; text-align: center; line-height: 1.7; pointer-events: none; }
+.album-empty span { color: #8e9bb0; font-size: 11.5px; }
+.album-live {
+  position: absolute; top: 8px; left: 8px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(47, 111, 224, .92); color: #fff; font-size: 11px;
+}
+.album-strip { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 2px; }
+.album-strip:empty { display: none; }
+.album-thumb {
+  position: relative; flex: 0 0 auto; width: 64px; height: 38px; border-radius: 6px; overflow: hidden;
+  border: 2px solid transparent; cursor: pointer; background: #1a2130;
+}
+.album-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.album-thumb.on { border-color: #2f6fe0; }
+.album-del {
+  position: absolute; top: 1px; right: 1px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(0, 0, 0, .6); color: #fff; font-size: 12px; line-height: 15px; cursor: pointer; display: none;
+}
+.album-thumb:hover .album-del { display: block; }
+
+/* 相册播放中：键盘预览铺相册画面 */
+.ring-board.album-on .cell { background-image: var(--album) !important; background-size: 500% 300%; background-position: var(--album-pos); }
+.ring-board.album-on .cell > * { visibility: hidden; }
+
+/* 顶栏：两个滑动开关统一样式 */
+.tb-switch {
+  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px 0 12px;
+  border-radius: 999px; background: rgba(255, 255, 255, .55); border: 1px solid #b8c2d0;
+  font-size: 12.5px; color: #2c3a4e;
+}
+.tb-switch .switch { flex: 0 0 auto; }
+.topbar { gap: 10px; }
+
+/* 竖放时壁纸画布是竖的：预览限高、居中，卡片不被撑得很长 */
+.set-card .wp-thumb { width: fit-content; max-width: 100%; margin: 0 auto 10px; }
+.set-card .wp-thumb img { width: auto; max-width: 100%; max-height: 240px; }
+
+/* 文件夹：页码行显示路径 */
+.page-label.in-folder { color: #b07a10; font-weight: 600; }
+#page-back { background: #fff4d9; border-color: #e6c46e; color: #8a5a00; }
+
+/* 待机画面：壁纸 / 相册 页签 */
+.seg-group.tabs { margin-bottom: 12px; }
+.set-card .seg-group.tabs .seg { height: 30px; line-height: 28px; font-size: 13px; }
+.seg-group.tabs em { font-style: normal; font-size: 11px; color: #7a879b; margin-left: 2px; }
+.seg-group.tabs .seg.on em { color: #1f5fd0; }
+.sb-pane[hidden] { display: none; }
+.sb-pane .btn-grid { margin-top: 10px; }
+#standby-source .seg { min-width: 72px; }
+
+/* 场景列表：相册行、停用开关 */
+.scene-row { display: flex; align-items: center; gap: 6px; }
+.scene-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-row.album b::before { content: "▣ "; color: #c47f00; }
+.scene-row b em { font-style: normal; font-weight: 400; font-size: 11px; color: #7a879b; margin-left: 4px; }
+.scene-row.muted b { color: #9aa5b5; text-decoration: line-through; text-decoration-color: rgba(120, 130, 150, .5); }
+.scene-ops { margin-left: auto; }
+.scene-mute {
+  width: 26px; height: 14px; padding: 0; border-radius: 999px; border: 0; cursor: pointer;
+  background: #b9c3d2; position: relative; flex: 0 0 auto; opacity: .55; transition: opacity .12s, background .12s;
+}
+.scene-mute span { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: left .12s; }
+.scene-mute.on { background: #2f6fe0; }
+.scene-mute.on span { left: 14px; }
+.scene-row:hover .scene-mute, .scene-mute:not(.on) { opacity: 1; }

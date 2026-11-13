@@ -270,7 +270,7 @@ def t_bind_key(a: dict):
 
 
 ACTION_TYPES = ("launch", "url", "hotkey", "toggle", "media", "text", "macro", "mouse", "window",
-                "close", "scene", "sound", "nav")
+                "close", "scene", "sound", "nav", "folder")
 
 
 def t_set_action(a: dict):
@@ -372,7 +372,7 @@ TOOLS = [
       "pos": {"type": "string", "description": "mouse：可选坐标 x,y"},
       "op": {"type": "string", "enum": ["minimize", "maximize", "desktop"]},
       "target": {"type": "string", "description": "close：进程名，空 = 当前窗口"},
-      "scene": {"type": "string"}, "name": {"type": "string", "description": "nav：上一页/下一页/主页/下一场景/返回上一场景"}},
+      "scene": {"type": "string"}, "name": {"type": "string", "description": "nav：上一页/下一页/主页/返回上级/下一场景/返回上一场景；folder：文件夹名（按下进入子页，子页 11 号键返回）"}},
      t_set_action, False),
     ("m18_set_key_style", "设置按键标题文字和颜色（插件键的画面以插件为准）",
      {"key": _key_schema(), "text": {"type": "string", "description": "≤12 字"},

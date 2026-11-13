@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261113h" />
+  <link rel="stylesheet" href="style.css?v=20261114c" />
 </head>
 <body>
 <div class="app">
@@ -28,12 +28,14 @@
         <div class="side-sec-head">
           <button class="sec-toggle" type="button"><i class="chev"></i><span>场景</span><b id="scene-count"></b></button>
           <span class="side-sec-actions">
+            <button class="seg tiny icon-btn" id="scene-import" title="导入场景（.m18scene）">⇩</button>
             <button class="seg tiny icon-btn" id="scene-add" title="新建场景">＋</button>
             <button class="seg tiny icon-btn" id="scene-del-btn" title="删除选中场景">－</button>
           </span>
         </div>
         <div class="side-sec-body">
           <div class="lib-list" id="scene-list"></div>
+          <input id="scene-import-file" type="file" accept=".m18scene,.zip" hidden />
         </div>
       </section>
 
@@ -83,7 +85,8 @@
       <h1 id="page-title">自定义控制台</h1>
       <button class="seg small" id="device-btn">设备设置</button>
       <div class="spacer"></div>
-      <span class="switch-row" title="屏幕开关"><span class="switch on" id="sleep-btn"><span></span></span><b class="switch-label" id="screen-label">亮</b></span>      <button class="seg" id="mute-btn">屏蔽按钮</button>
+      <span class="tb-switch" title="关掉 = 设备屏幕息屏（灯光不受影响）"><span>屏幕</span><button class="switch on" id="sleep-btn" role="switch" aria-checked="true"><span></span></button></span>
+      <span class="tb-switch" title="打开后设备按键不执行任何动作（防误触）"><span>屏蔽按键</span><button class="switch" id="mute-btn" role="switch" aria-checked="false"><span></span></button></span>
       <label class="inline-slider" title="按键屏幕亮度">
         <span>屏幕亮度</span>
         <input id="screen-brightness" type="range" min="0" max="100" value="100" />
@@ -117,6 +120,7 @@
               <span class="muted" id="rot-label">正向</span>
             </div>
             <div class="page-row">
+              <button class="seg small" id="page-back" hidden title="回到放这个文件夹的那一页">↩ 返回上级</button>
               <button class="seg small" id="page-prev">◀</button>
               <span class="page-label" id="page-label">第 1 / 1 页</span>
               <button class="seg small" id="page-next">▶</button>
@@ -172,6 +176,7 @@
                     <option value="scene">切换到场景</option>
                     <option value="sound">播放音效</option>
                     <option value="nav">导航</option>
+                    <option value="folder">文件夹（子页）</option>
                     <option value="plugin" disabled>插件动作（从侧栏拖入）</option>
                   </select>
                 </div>
@@ -252,6 +257,7 @@
                     <option value="desktop">显示桌面</option>
                   </select>
                   <button class="seg small" id="sel-pick" hidden>选择文件…</button>
+                  <button class="seg small" id="sel-open-folder" hidden>打开文件夹编辑</button>
                 </div>
                 <p class="hint-line" id="sel-hint">先点一下上面的按键。</p>
               </div>
@@ -308,26 +314,34 @@
         </div>
 
         <div class="side">
-          <div class="card compact">
-            <div class="card-head"><h2>灯光</h2></div>
-            <div class="chips small" id="modes">
+          <!-- 灯光 -->
+          <div class="card compact set-card">
+            <div class="card-head">
+              <h2>灯光</h2>
+              <span class="spacer"></span>
+              <button class="set-link" id="reset-led" title="恢复为默认的流光效果">恢复默认</button>
+            </div>
+            <div class="seg-grid cols-4" id="modes">
               <button class="chip" data-mode="solid">常亮</button>
-              <button class="chip active" data-mode="rainbow">彩虹</button>
+              <button class="chip" data-mode="rainbow">彩虹</button>
               <button class="chip" data-mode="breathe">呼吸</button>
-              <button class="chip" data-mode="chase">流光</button>
+              <button class="chip active" data-mode="chase">流光</button>
               <button class="chip" data-mode="gradient">渐变</button>
+              <button class="chip" data-mode="ripple">涟漪</button>
               <button class="chip" data-mode="custom">自定义</button>
               <button class="chip" data-mode="off">关闭</button>
             </div>
-            <p class="mode-desc" id="mode-desc">色相沿灯圈循环流动。</p>
-            <div class="divider"></div>
+            <div class="mode-line">
+              <p class="mode-desc" id="mode-desc">单点亮光沿灯圈追逐移动。</p>
+              <button class="set-link" id="clear-led" hidden>清空涂色</button>
+            </div>
+            <div class="set-sub">颜色</div>
             <div class="swatches small" id="swatches"></div>
             <label class="color-row">
               <input type="color" id="color" value="#00aaff" />
               <span id="color-hex">#00AAFF</span>
-              <button class="btn ghost small" id="reset-led" style="margin-left:auto">复位</button>
             </label>
-            <div class="divider"></div>
+            <div class="set-sub">参数</div>
             <div class="slider-row tight">
               <span>亮度</span>
               <input id="led-brightness" type="range" min="0" max="100" value="100" />
@@ -338,26 +352,80 @@
               <input id="speed" type="range" min="0.2" max="10" step="0.1" value="1" />
               <b id="speed-val">1.0×</b>
             </div>
-            <div class="actions tight">
-              <button class="seg" id="clear-led">全部熄灭</button>
-              <button class="seg" id="reverse-led">反向</button>
+            <div class="set-row">
+              <span>反向流动</span>
+              <button class="switch" id="reverse-led" role="switch" aria-checked="false"><span></span></button>
             </div>
           </div>
 
-          <div class="card compact">
+          <!-- 待机画面：壁纸 / 相册 -->
+          <div class="card compact set-card" id="standby-card">
             <div class="card-head">
-              <h2>待机壁纸</h2>
+              <h2>待机画面</h2>
               <span class="spacer"></span>
-              <button class="switch on" id="wallpaper-toggle" role="switch" aria-checked="true"><span></span></button>
+              <button class="switch on" id="wallpaper-toggle" role="switch" aria-checked="true" title="闲置一段时间后自动显示待机画面"><span></span></button>
             </div>
-            <div class="wp-thumb" id="wp-thumb">
-            <img id="wp-preview" alt="壁纸预览" />
-            <div class="wp-grid" id="wp-grid"></div>
-          </div>
-            <div class="actions tight">
-              <button class="btn small" id="choose-wallpaper">选择壁纸…</button>
-              <button class="seg" id="default-wallpaper">默认壁纸</button>
-              <button class="seg" id="calibrate">校准图</button>
+            <div class="seg-group tabs" id="standby-tabs">
+              <button class="seg on" data-tab="wallpaper">壁纸</button>
+              <button class="seg" data-tab="album">相册 <em id="album-count">0</em></button>
+            </div>
+
+            <!-- 壁纸 -->
+            <div class="sb-pane" data-pane="wallpaper">
+              <div class="wp-thumb" id="wp-thumb" title="拖动平移；把图片拖到这里直接替换">
+                <img id="wp-preview" alt="壁纸预览" />
+                <div class="wp-grid" id="wp-grid"></div>
+              </div>
+              <div class="btn-grid cols-3">
+                <button class="seg" id="choose-wallpaper">选择图片</button>
+                <button class="seg" id="default-wallpaper">默认壁纸</button>
+                <button class="seg" id="calibrate">校准图</button>
+              </div>
+            </div>
+
+            <!-- 相册 -->
+            <div class="sb-pane" data-pane="album" id="album-card" hidden>
+              <div class="album-view" id="album-view" title="拖入图片，或点击选择">
+                <img id="album-preview" alt="" hidden />
+                <div class="album-empty" id="album-empty">拖入图片，或点击选择<br><span>整页 15 个键拼成一张大图</span></div>
+                <span class="album-live" id="album-live" hidden>播放中</span>
+              </div>
+              <div class="album-strip" id="album-strip"></div>
+              <div class="btn-grid cols-2">
+                <button class="seg" id="album-add">添加图片</button>
+                <button class="seg" id="album-play">▶ 立即播放</button>
+              </div>
+              <div class="set-row">
+                <span>幻灯片自动切换</span>
+                <button class="switch on" id="album-slideshow" role="switch" aria-checked="true"><span></span></button>
+              </div>
+              <div class="slider-row tight">
+                <span>时长</span>
+                <input id="album-interval" type="range" min="2" max="60" step="1" value="8" />
+                <b id="album-interval-val">8 秒</b>
+              </div>
+              <div class="set-sub">过渡</div>
+              <div class="seg-group" id="album-transition">
+                <button class="seg" data-tr="none">无</button>
+                <button class="seg on" data-tr="fade">淡入</button>
+                <button class="seg" data-tr="slide">滑动</button>
+                <button class="seg" data-tr="wipe">擦除</button>
+                <button class="seg" data-tr="mosaic">马赛克</button>
+              </div>
+              <input id="album-file" type="file" accept="image/*" multiple hidden />
+            </div>
+
+            <!-- 两边共用 -->
+            <div class="set-sub">铺放（壁纸和相册共用）</div>
+            <div class="seg-group" id="fit-group">
+              <button class="seg fit-btn" data-fit="cover">填充</button>
+              <button class="seg fit-btn" data-fit="contain">完整</button>
+              <button class="seg fit-btn" data-fit="fill">拉伸</button>
+            </div>
+            <div class="slider-row tight">
+              <span>缩放</span>
+              <input id="wp-zoom" type="range" min="0.5" max="3" step="0.05" value="1" />
+              <b id="wp-zoom-val">100%</b>
             </div>
             <div class="slider-row tight">
               <span>间隙</span>
@@ -365,50 +433,53 @@
               <b id="wallpaper-gap-val">27</b>
             </div>
             <div class="slider-row tight">
-              <span>待机</span>
-              <input id="standby-sec" type="range" min="5" max="1800" step="5" value="300" />
-              <b id="standby-sec-val">5 分钟</b>
-            </div>
-            <div class="slider-row tight">
               <span>亮度</span>
               <input id="standby-brightness" type="range" min="0" max="100" step="1" value="60" />
               <b id="standby-brightness-val">60</b>
             </div>
+            <div class="set-sub">待机</div>
+            <div class="set-row">
+              <span>闲置后显示</span>
+              <div class="seg-group compact" id="standby-source">
+                <button class="seg on" data-src="wallpaper">壁纸</button>
+                <button class="seg" data-src="album">相册幻灯片</button>
+              </div>
+            </div>
             <div class="slider-row tight">
-              <span>缩放</span>
-              <input id="wp-zoom" type="range" min="0.5" max="3" step="0.05" value="1" />
-              <b id="wp-zoom-val">100%</b>
+              <span>等待</span>
+              <input id="standby-sec" type="range" min="3" max="300" step="1" value="300" />
+              <b id="standby-sec-val">300 秒</b>
             </div>
-            <div class="actions tight">
-              <button class="seg fit-btn" data-fit="cover">填充</button>
-              <button class="seg fit-btn" data-fit="contain">完整</button>
-              <button class="seg fit-btn" data-fit="fill">拉伸</button>
-              <button class="seg" id="wake-btn">唤醒</button>
-              <button class="seg" id="wp-reset">重置</button>
+            <div class="btn-grid cols-2">
+              <button class="seg" id="wake-btn">唤醒按键</button>
+              <button class="seg" id="wp-reset">重置参数</button>
             </div>
+            <p class="hint-line">相册在左侧场景列表里也有一项「相册」，在 Dock 上用「下一场景」键就能切过去；播放时 ◀ ▶ 翻照片，按其他键回到原来的场景。</p>
           </div>
 
-          <div class="card compact">
+          <!-- 更多设置 -->
+          <div class="card compact set-card">
             <div class="card-head"><h2>更多设置</h2></div>
-            <div class="actions tight">
-              <button class="seg" id="rotate-btn">旋转 90°</button>
-              <button class="seg" id="repaint-btn">按键重绘</button>
-              <button class="seg" id="awake-btn">保持唤醒</button>
-              <button class="seg" id="reset-device">强制复位</button>
-              <button class="seg" id="mode-btn">切换输入模式</button>
-              <button class="seg" id="probe-btn">输入探测</button>
-              <button class="seg" id="pause-btn">暂停写入</button>
-              <button class="seg" id="lightonly-btn">仅灯光模式</button>
-              <button class="seg" id="autostart-btn">开机自启</button>
-              <button class="seg" id="export-btn">导出配置</button>
-              <button class="seg" id="import-btn">导入配置</button>
-              <button class="seg" id="restore-btn">恢复备份</button>
-              <input id="import-file" type="file" accept=".json,application/json" hidden />
+            <div class="set-row">
+              <span>屏幕方向</span>
+              <div class="seg-group compact" id="rotate-group">
+                <button class="seg" data-rot="0" title="正常摆放">0°</button>
+                <button class="seg" data-rot="90" title="顺时针竖放">90°</button>
+                <button class="seg" data-rot="180" title="倒置">180°</button>
+                <button class="seg" data-rot="270" title="逆时针竖放">270°</button>
+              </div>
             </div>
-            <p class="hint-line">
-              设备息屏后按键会显示开机图。打开「按键重绘」会在按键时补画一次画面（可能造成闪一下），
-              关掉则只在手动「唤醒」时重画。
-            </p>
+            <div class="set-row">
+              <span>开机自启</span>
+              <button class="switch" id="autostart-btn" role="switch" aria-checked="false"><span></span></button>
+            </div>
+            <div class="set-sub">配置</div>
+            <div class="btn-grid cols-3">
+              <button class="seg" id="export-btn">导出</button>
+              <button class="seg" id="import-btn">导入</button>
+              <button class="seg" id="restore-btn">恢复备份</button>
+            </div>
+            <input id="import-file" type="file" accept=".json,application/json" hidden />
           </div>
         </div>
       </div>
@@ -455,6 +526,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261113h"></script>
+<script src="app.js?v=20261114c"></script>
 </body>
 </html>
