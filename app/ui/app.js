@@ -595,7 +595,8 @@ async function loadPlugins(refresh = false) {
   const row = (p) => {
     const icon = p.hasIcon ? `<img class="pl-icon" src="${pluginIconUrl(p.id, -1)}" alt="" />` : `<span class="pl-icon none">◇</span>`;
     const acts = p.actions.map((a, i) =>
-      `<div class="pl-act" title="${escHtml(a.tooltip || a.name)}">`
+      `<div class="pl-act${a.supported === false ? " unsupported" : ""}" title="${escHtml(a.supported === false
+        ? `${a.name}：官方程序内置的功能，控制台暂不支持` : (a.tooltip || a.name))}">`
       + (a.hasIcon
         ? `<img loading="lazy" draggable="false" data-name="plugin:${escHtml(p.id)}/${i}" src="${pluginIconUrl(p.id, i)}" alt="" />`
         : `<span class="pl-act-noimg">—</span>`)
@@ -677,8 +678,22 @@ function bindIconDrag(container) {
         const m = img.dataset.name.slice(7).match(/^(.*)\/(\d+)$/);
         const r = m ? await post("/api/key/plugin", { key, plugin: m[1], index: Number(m[2]) }) : { ok: false };
         const name = img.closest(".pl-act")?.querySelector("span")?.textContent || "插件动作";
-        toast(r.ok ? `按键 ${key} 已绑定「${name}」，按下由插件处理` : "绑定失败", 2200);
-        if (r.ok) await refreshState();
+        if (!r.ok) {
+          toast(r.error || "绑定失败", 2600);
+          return;
+        }
+        await refreshState();
+        if (r.native) {
+          // 官方内置功能换成了控制台原生动作；要填值的直接选中这个键去编辑
+          if (r.needsInput) {
+            selectKey(key);
+            $("#key-editor")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+          toast(r.needsInput ? `「${name}」已换成控制台的「${r.label}」动作，请在下方补充内容后点「保存」`
+            : `按键 ${key}：${r.label}`, r.needsInput ? 3600 : 1800);
+        } else {
+          toast(`按键 ${key} 已绑定「${name}」，按下由插件处理`, 2200);
+        }
         return;
       }
       const ok = await post("/api/key/icon", { key, name: img.dataset.name });
@@ -2370,8 +2385,11 @@ function bindUI() {
        { value: "all", label: "全部重新导入（覆盖已导入的官方场景）" }]);
     if (!mode) return;
     if (mode === "all" && !(await confirmDialog("已导入的官方场景里你改过的按键会被覆盖，继续？"))) return;
-    toast("正在同步官方资源…", 1500);
-    const r = await post("/api/official/sync", { mode });
+    const withPlugins = await confirmDialog(
+      "同时把官方插件（含 Node 运行环境，约 500 MB）复制到本地？<br>"
+      + "<span class='muted'>复制后即使卸载官方 Stream Dock 软件，插件也能继续使用。图标包总是会备份。</span>");
+    toast(withPlugins ? "正在同步并备份插件，可能要一两分钟…" : "正在同步官方资源…", 2500);
+    const r = await post("/api/official/sync", { mode, plugins: withPlugins });
     iconPacks = null;
     pluginItems = null;
     await loadIcons(true);
@@ -2379,7 +2397,8 @@ function bindUI() {
     await window.m18ReloadScenes?.();
     await refreshState();
     const n = (r.scenes || []).length;
-    toast(`同步完成：${mode === "all" ? "重导" : "新增"}场景 ${n} 个 · 图标包 ${r.packs ?? "-"} 个（${r.icons ?? "-"} 个图标）· 插件 ${r.plugins ?? "-"} 个`, 3600);
+    toast(`同步完成：${mode === "all" ? "重导" : "新增"}场景 ${n} 个 · 图标包 ${r.packs ?? "-"} 个（${r.icons ?? "-"} 个图标）`
+      + `${withPlugins ? ` · 已备份插件 ${r.plugins ?? 0} 个` : ""}`, 4200);
   });
   let searchTimer = null;
   $("#icon-search").addEventListener("input", () => {

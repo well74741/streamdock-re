@@ -1377,3 +1377,7 @@ html, body { overflow: hidden; height: 100%; }
 .cp-api p { margin: 4px 0; }
 .cp-api code { background: rgba(20,30,50,.08); padding: 0 4px; border-radius: 4px; font-size: 11.5px; }
 .custom-acts { max-height: none; padding: 2px 0; }
+
+/* 官方内置插件里控制台暂不支持的动作 */
+.pl-act.unsupported img { filter: grayscale(1); opacity: .45; }
+.pl-act.unsupported span { color: #8a96a8; text-decoration: line-through; }

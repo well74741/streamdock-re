@@ -94,6 +94,10 @@ def _find_sd_root() -> str:
 
 
 SD_ROOT = _find_sd_root()
+if os.environ.get("M18_NO_OFFICIAL"):
+    # 模拟「这台电脑没装官方驱动」（测试用）：官方安装目录和数据目录都当不存在
+    SD_ROOT = os.path.join(os.environ.get("TEMP", "C:\\"), "m18-no-official")
+    official.SD_DATA = os.path.join(SD_ROOT, "data")
 WALLPAPER = os.path.join(HERE, "assets", "wallpaper.jpg")
 WS_SDK_EXE = os.environ.get("M18_WS_SDK") or os.path.normpath(
     os.path.join(APP_DIR, "ws-sdk", "StreamDockWebsocketSDK.exe"))
@@ -103,7 +107,10 @@ GIF_CACHE = os.path.join(DATA_DIR, "assets", "gifcache")   # 交给 SDK 原生�
 PLUGIN_DATA = os.path.join(DATA_DIR, "plugin-data")          # 插件全局设置、进程日志
 CUSTOM_PLUGIN_DIR = os.path.join(DATA_DIR, "custom-plugins")  # 自制插件（标准 .sdPlugin 目录）
 CUSTOM_PREFIX = "com.m18.custom."
-official.EXTRA_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
+MIRROR_DIR = os.path.join(DATA_DIR, "official-mirror")   # 官方图标包 / 插件 / Node 的本地备份
+official.EXTRA_PLUGIN_ROOTS.extend([os.path.join(MIRROR_DIR, "plugins"), CUSTOM_PLUGIN_DIR])
+official.CUSTOM_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
+official.EXTRA_ICON_ROOTS.append(os.path.join(MIRROR_DIR, "icons"))
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
@@ -858,6 +865,8 @@ class App:
         self._pushing = False
         self._migrate_official_plugins()
         self._load_config()
+        if self._convert_builtin_plugins():
+            self._save_config()
         self._bind_page()
         self._ensure_custom_snapshot()
         for page in self.pages:
@@ -886,6 +895,7 @@ class App:
         threading.Thread(target=self._warm_gif_cache, daemon=True).start()
         threading.Thread(target=self.index_official_sources, daemon=True).start()
         threading.Thread(target=self._app_watch_loop, daemon=True).start()
+        threading.Thread(target=self._auto_mirror_icons, daemon=True).start()
 
     # -- 热插拔 ------------------------------------------------------------ #
     def _watch_loop(self) -> None:
@@ -2299,6 +2309,7 @@ class App:
         self._suspend_snapshot = True
         try:
             self._load_config()
+            self._convert_builtin_plugins()
             self._bind_page()
         finally:
             self._suspend_snapshot = False
@@ -2648,7 +2659,105 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"补记图标来源失败：{exc}")
 
-    def sync_official(self, mode: str = "new") -> dict:
+    # -- 官方资源本地备份 ---------------------------------------------------- #
+    @staticmethod
+    def _shrink_gif(data: bytes, size: int) -> bytes:
+        """动图逐帧缩小（按键只有 64×64），保留每帧时长和循环；本来就小的原样返回。"""
+        try:
+            with Image.open(io.BytesIO(data)) as im:
+                if max(im.size) <= size:
+                    return data
+                frames, durations = [], []
+                for frame in ImageSequence.Iterator(im):
+                    f = frame.convert("RGBA")
+                    f.thumbnail((size, size), Image.Resampling.LANCZOS)
+                    frames.append(f)
+                    durations.append(max(20, int(frame.info.get("duration", 100) or 100)))
+            buf = io.BytesIO()
+            frames[0].save(buf, "GIF", save_all=True, append_images=frames[1:], duration=durations,
+                           loop=0, disposal=2, optimize=True)
+            out = buf.getvalue()
+            return out if len(out) < len(data) else data
+        except Exception:  # noqa: BLE001
+            return data
+
+    def mirror_icons(self) -> int:
+        """官方图标包备份到数据目录：PNG/JPG 缩成 144×144（按键只要 64×64），动图原样复制。"""
+        root = os.path.join(MIRROR_DIR, "icons")
+        made = 0
+        for folder in official.icon_pack_dirs(SD_ROOT):
+            if os.path.normpath(folder).startswith(os.path.normpath(root)):
+                continue                                   # 已经是备份
+            dst = os.path.join(root, os.path.basename(folder))
+            info = official.icon_pack_info(folder)
+            os.makedirs(os.path.join(dst, "icons"), exist_ok=True)
+            for fname in os.listdir(folder):
+                if fname.lower().endswith(".json"):
+                    shutil.copyfile(os.path.join(folder, fname), os.path.join(dst, fname))
+            for src in info["files"]:
+                name = os.path.basename(src)
+                ext = os.path.splitext(name)[1].lower()
+                out = os.path.join(dst, "icons", name if ext in (".gif",) else os.path.splitext(name)[0] + ".png")
+                if os.path.isfile(out):
+                    continue
+                try:
+                    if ext in (".gif", ".mbg"):
+                        img = official.read_image(src)
+                        if img:
+                            with open(os.path.join(dst, "icons", os.path.splitext(name)[0] + ".gif"), "wb") as fh:
+                                fh.write(self._shrink_gif(img[1], 72))
+                    else:
+                        with Image.open(src) as im:
+                            im = im.convert("RGBA")
+                            im.thumbnail((96, 96), Image.Resampling.LANCZOS)
+                            im.save(out, "PNG", optimize=True)
+                    made += 1
+                except Exception:  # noqa: BLE001
+                    continue
+        if made:
+            log(f"官方图标包已备份到本地：新增 {made} 个图标")
+            self._catalog(refresh=True)
+        return made
+
+    def mirror_plugins(self) -> dict:
+        """第三方插件 + 官方自带的 Node 复制到数据目录：卸载官方驱动后插件照样能跑。"""
+        root = os.path.join(MIRROR_DIR, "plugins")
+        os.makedirs(root, exist_ok=True)
+        copied = 0
+        for p in self._catalog()["plugins"].values():
+            folder = p["folder"]
+            if p.get("builtin") or p.get("custom") or os.path.normpath(folder).startswith(os.path.normpath(MIRROR_DIR)):
+                continue
+            dst = os.path.join(root, os.path.basename(folder))
+            man_old = official._plugin_manifest(dst) or {}
+            if man_old.get("Version") == p.get("version") and os.path.isdir(dst):
+                continue
+            shutil.rmtree(dst, ignore_errors=True)
+            try:
+                shutil.copytree(folder, dst)
+                copied += 1
+            except OSError as exc:
+                log(f"备份插件失败 {p['id']}：{exc}")
+        node_src = os.path.join(SD_ROOT, "node", "node20.exe")
+        node_dst = os.path.join(MIRROR_DIR, "node", "node20.exe")
+        if os.path.isfile(node_src) and (not os.path.isfile(node_dst)
+                                         or os.path.getsize(node_src) != os.path.getsize(node_dst)):
+            os.makedirs(os.path.dirname(node_dst), exist_ok=True)
+            shutil.copyfile(node_src, node_dst)
+        if self.plugin_host:
+            self.plugin_host.fallback_node = node_dst
+        log(f"官方插件已备份到本地：{copied} 个")
+        self._refresh_plugins()
+        return {"plugins": copied, "node": os.path.isfile(node_dst)}
+
+    def _auto_mirror_icons(self) -> None:
+        time.sleep(20)                                     # 等启动忙完再在后台慢慢做
+        try:
+            self.mirror_icons()
+        except Exception as exc:  # noqa: BLE001
+            log(f"备份图标包失败：{exc}")
+
+    def sync_official(self, mode: str = "new", include_plugins: bool = False) -> dict:
         """「同步官方」按钮：重新读取图标包 / 插件；场景按 mode 只加新的（new）或全部覆盖重导（all）。"""
         self._catalog(refresh=True)
         if self.plugin_host:
@@ -2659,6 +2768,9 @@ class App:
                     plugins[uid] = {"folder": p["folder"], "manifest": man}
             self.plugin_host.register_plugins(plugins)
         result = self.sync_official_scenes(only_new=(mode != "all"))
+        result["iconsMirrored"] = self.mirror_icons()
+        if include_plugins:
+            result.update(self.mirror_plugins())
         active = self.active_scene
         if mode == "all" and active and active in [r["name"] for r in result["scenes"]]:
             self.apply_scene(active)          # 当前场景被重导了，重新载入
@@ -3321,7 +3433,10 @@ class App:
                 "id": p["id"], "name": p["name"], "author": p["author"],
                 "version": p["version"], "description": p["description"],
                 "downloaded": p["downloaded"], "hasIcon": bool(p["icon"]), "custom": p.get("custom", False),
-                "actions": [{"name": a["name"], "tooltip": a["tooltip"], "hasIcon": bool(a["icon"])}
+                "builtin": p.get("builtin", False), "hotkeyPack": p.get("hotkeyPack", False),
+                "mirrored": os.path.normpath(p["folder"]).startswith(os.path.normpath(MIRROR_DIR)),
+                "actions": [{"name": a["name"], "tooltip": a["tooltip"], "hasIcon": bool(a["icon"]),
+                             "supported": a.get("supported", True)}
                             for a in p["actions"]],
             })
         return out
@@ -3402,6 +3517,7 @@ class App:
                 if man:
                     plugins[uid] = {"folder": p["folder"], "manifest": man}
             self.plugin_host.register_plugins(plugins)
+            self.plugin_host.fallback_node = os.path.join(MIRROR_DIR, "node", "node20.exe")
             serial = (self.device.info or {}).get("serial") or "M18"
             self.plugin_host.set_device(f"M18-{serial}")
         except Exception as exc:  # noqa: BLE001
@@ -4044,17 +4160,54 @@ __CODE__
                     plugins[uid] = {"folder": p["folder"], "manifest": man}
             self.plugin_host.register_plugins(plugins)
 
-    def bind_plugin_action(self, key: int, plugin_id: str, idx: int) -> bool:
+    def _native_for(self, plugin_id: str, action_uuid: str) -> dict | None:
+        """官方内置 / 热键包的动作 → 控制台原生动作；不能转换返回 None。"""
+        native = official.builtin_native(action_uuid)
+        if native:
+            return native
+        p = self._catalog()["plugins"].get(plugin_id or "")
+        man = official._plugin_manifest(p["folder"]) if p else None
+        if man and official.is_hotkey_pack(man):
+            for a in man.get("Actions") or []:
+                if isinstance(a, dict) and a.get("UUID") == action_uuid:
+                    keys = official.hotkey_pack_keys(a, self._vk_reverse())
+                    if keys and keys != "?":
+                        return {"type": "hotkey", "keys": keys}
+        return None
+
+    def _convert_builtin_plugins(self) -> int:
+        """以前绑定成「插件」的官方内置动作（创建文件夹、打开、热键…）跑不起来：换成原生动作。"""
+        changed = 0
+        for page in self.pages:
+            for key, spec in list((page.get("actions") or {}).items()):
+                if isinstance(spec, dict) and spec.get("type") == "plugin":
+                    native = self._native_for(str(spec.get("plugin") or ""), str(spec.get("action") or ""))
+                    if native:
+                        page["actions"][key] = native
+                        changed += 1
+        if changed:
+            log(f"已把 {changed} 个官方内置插件动作换成控制台原生动作")
+        return changed
+
+    def bind_plugin_action(self, key: int, plugin_id: str, idx: int) -> dict:
         if not (1 <= key <= KEY_COUNT + 3):
-            return False
+            return {"ok": False}
         p = self._catalog()["plugins"].get(plugin_id)
         if not p or not (0 <= idx < len(p["actions"])):
-            return False
+            return {"ok": False}
         act = p["actions"][idx]
-        self.key_actions[key] = {
-            "type": "plugin", "plugin": plugin_id, "action": act["uuid"], "name": act["name"],
-            "settings": {}, "context": os.urandom(16).hex(), "state": 0,
-        }
+        native = None
+        if p.get("builtin") or p.get("hotkeyPack"):
+            # 官方内置插件 / 热键包不能独立运行：换成控制台自己的动作
+            native = self._native_for(plugin_id, act["uuid"])
+            if native is None:
+                return {"ok": False, "error": f"「{act['name']}」是官方程序内置的功能，控制台暂不支持"}
+            self.key_actions[key] = native
+        else:
+            self.key_actions[key] = {
+                "type": "plugin", "plugin": plugin_id, "action": act["uuid"], "name": act["name"],
+                "settings": {}, "context": os.urandom(16).hex(), "state": 0,
+            }
         # 换成插件动作：原来的标题文字不再适用（插件自己画 / 设标题），保留配色
         style = self.key_styles.get(key)
         if style and style.pop("text", None) is not None and not any(style.values()):
@@ -4070,9 +4223,14 @@ __CODE__
         if self.device.connected and key <= KEY_COUNT:
             self._apply_key(key)
             self.device.refresh()
+        if native is not None:
+            field = official.NEEDS_INPUT.get(native["type"], "x")
+            needs = bool(field) and not native.get(field)
+            log(f"按键 {key} 绑定官方内置动作 {act['name']} → 原生动作「{action_label(native)}」")
+            return {"ok": True, "native": True, "label": action_label(native), "needsInput": needs}
         status = (self.plugin_host.status().get(plugin_id) if self.plugin_host else "unavailable")
         log(f"按键 {key} 绑定插件动作 {act['name']}（{plugin_id}，{status}）")
-        return True
+        return {"ok": True}
 
     def plugin_pi(self, key: int) -> dict:
         """打开插件设置页需要的参数（界面用 iframe 加载）。"""
@@ -4725,7 +4883,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/icons":
             self._json({"ok": True, "items": APP.list_icons()})
         elif path == "/api/official/sync":
-            self._json({"ok": True, **APP.sync_official(str(body.get("mode") or "new")),
+            self._json({"ok": True, **APP.sync_official(str(body.get("mode") or "new"),
+                                                        bool(body.get("plugins"))),
                         "items": APP.list_scenes()})
         elif path == "/api/apps/recent":
             self._json({"ok": True, "items": list(APP.recent_apps)})
@@ -4740,8 +4899,8 @@ class Handler(BaseHTTPRequestHandler):
             folder = APP._custom_folder(pid) if pid.startswith(CUSTOM_PREFIX) else ""
             self._json({"ok": bool(folder) and APP.reveal_in_explorer(os.path.join(folder, "manifest.json"))})
         elif path == "/api/key/plugin":
-            self._json({"ok": APP.bind_plugin_action(int(body.get("key", 0)), str(body.get("plugin") or ""),
-                                                     int(body.get("index", -1)))})
+            self._json(APP.bind_plugin_action(int(body.get("key", 0)), str(body.get("plugin") or ""),
+                                              int(body.get("index", -1))))
         elif path == "/api/plugin/pi":
             self._json(APP.plugin_pi(int(body.get("key", 0))))
         elif path == "/api/plugin/pi-closed":

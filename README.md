@@ -27,9 +27,17 @@ python packaging/build.py      # 需要 Python 3.9+、Pillow、PyInstaller，且
 - 静默安装：`Setup.exe --silent [--dir 目录] [--no-shortcut] [--no-launch]`
 
 对方电脑的要求：Windows 10/11 64 位、Microsoft Edge（系统自带）、M18 设备。
-装了官方 Stream Dock 软件时还能导入官方场景 / 图标包 / 插件（Node.js 插件用的是官方自带的 Node）；
-没装也能正常用按键、灯光、壁纸和自制插件。安装包没有数字签名，首次运行 Windows 可能提示「已保护你的电脑」，
-点「更多信息 → 仍要运行」即可。
+**不需要官方 Stream Dock 软件**：设备驱动用的是安装包自带的官方 WebSocket SDK。
+装了官方软件时还能导入官方场景 / 图标包 / 插件；导入后的内容存在本地，卸载官方软件也不会丢：
+
+| 内容 | 存放 | 官方软件卸载后 |
+|---|---|---|
+| 官方场景（含图标） | 导入时转换进 `%APPDATA%\M18Console\scenes`、`assets\uploads` | 照常可用 |
+| 图标包 | 启动后自动备份到 `official-mirror\icons`（缩小到按键尺寸，约 70 MB） | 照常可用 |
+| 第三方插件 + Node 运行环境 | 「同步官方」时选择备份，复制到 `official-mirror\plugins`、`node`（约 500 MB） | 备份过的照常可用 |
+| 官方内置功能（打开 / 热键 / 文本 / 页面…） | 拖到按键时换成控制台原生动作 | 照常可用 |
+
+安装包没有数字签名，首次运行 Windows 可能提示「已保护你的电脑」，点「更多信息 → 仍要运行」即可。
 
 ## 架构（重要）
 

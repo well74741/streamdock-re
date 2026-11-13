@@ -235,6 +235,7 @@ class PluginHost:
         self.html_wanted: set[str] = set()
         self.started: set[str] = set()
         self.failed: dict[str, str] = {}
+        self.fallback_node: str | None = None     # 官方驱动卸载后用本地备份的 node
         self._browser_started = 0.0
         os.makedirs(os.path.join(data_dir, "logs"), exist_ok=True)
         self.server = WSServer(self._on_message, self._on_close, self._origins)
@@ -341,6 +342,8 @@ class PluginHost:
                      os.path.join(self.install_root, "node", "node.exe")):
             if os.path.isfile(cand):
                 return cand
+        if self.fallback_node and os.path.isfile(self.fallback_node):
+            return self.fallback_node
         from shutil import which
         return which("node")
 

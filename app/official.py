@@ -171,7 +171,9 @@ def list_scene_sources() -> list[dict]:
 # --------------------------------------------------------------------------- #
 # 插件索引：动作 UUID → 插件目录（找默认图标 / 插件自带图片）
 # --------------------------------------------------------------------------- #
-EXTRA_PLUGIN_ROOTS: list[str] = []      # 额外的插件目录（控制台的「自制插件」）
+EXTRA_PLUGIN_ROOTS: list[str] = []      # 额外的插件目录：官方插件的本地备份、控制台的「自制插件」
+CUSTOM_PLUGIN_ROOTS: list[str] = []     # 其中属于「自制插件」的
+EXTRA_ICON_ROOTS: list[str] = []        # 官方图标包的本地备份（官方驱动卸载后还能用）
 
 
 def plugin_dirs(install_root: str) -> list[str]:
@@ -414,6 +416,79 @@ def convert_action(act: dict, vk_names: dict) -> tuple[dict | None, list]:
     return None, []
 
 
+# 官方「内置」插件（PrivateAPI）的功能写在官方程序里，没法当独立插件运行：
+# 能用控制台原生动作实现的映射过来（值为空的需要在编辑区补上），None = 暂不支持
+_P = "com.hotspot.streamdock."
+BUILTIN_NATIVE: dict[str, dict | None] = {
+    _P + "system.open": {"type": "launch", "path": ""},
+    _P + "system.openApps": {"type": "launch", "path": ""},
+    _P + "system.website": {"type": "url", "url": ""},
+    _P + "system.hotkey": {"type": "hotkey", "keys": ""},
+    _P + "system.hotkeySwitch": {"type": "toggle", "keys": [], "state": 0},
+    _P + "system.super.hotkey": {"type": "macro", "steps": [], "macro": ""},
+    _P + "system.multimedia": {"type": "media", "action": "playpause"},
+    _P + "system.volume": {"type": "media", "action": "volup"},
+    _P + "system.text": {"type": "text", "text": "", "enter": False, "secret": False},
+    _P + "plain.text": {"type": "text", "text": "", "enter": False, "secret": False},
+    _P + "system.password": {"type": "text", "text": "", "enter": True, "secret": True},
+    _P + "system.close": {"type": "close", "target": ""},
+    _P + "mouse.event": {"type": "mouse", "button": "click", "pos": ""},
+    _P + "device.brightness": {"type": "media", "action": "brightup"},
+    _P + "profile.rotate": {"type": "nav", "name": "下一场景"},
+    _P + "profile.openchild": {"type": "scene", "scene": ""},
+    _P + "profile.backtoparent": {"type": "nav", "name": "返回上一场景"},
+    _P + "page.previous": {"type": "nav", "name": "上一页"},
+    _P + "page.next": {"type": "nav", "name": "下一页"},
+    _P + "page.goto": {"type": "nav", "name": "跳到第 1 页"},
+    _P + "page.indicator": {"type": "nav", "name": "下一页"},
+    _P + "page.change": {"type": "nav", "name": "下一页"},
+    _P + "multiactions.routine": {"type": "macro", "steps": [], "macro": ""},
+    _P + "multiactions.delay": {"type": "macro", "steps": [{"op": "delay", "sec": 1.0}], "macro": "delay 1"},
+    _P + "soundboard.playaudio": {"type": "sound", "path": ""},
+    _P + "soundboard.stopaudioplay": {"type": "sound", "path": ""},
+    _P + "hotkey.quickcontrol.switchscreen": {"type": "hotkey", "keys": "win+p"},
+    _P + "hotkey.quickcontrol.speechrecognition": {"type": "hotkey", "keys": "win+h"},
+    _P + "hotkey.quickcontrol.displaydesktop": {"type": "window", "op": "desktop"},
+    _P + "hotkey.quickcontrol.mute": {"type": "media", "action": "mute"},
+    _P + "hotkey.quickcontrol.volumedown": {"type": "media", "action": "voldown"},
+    _P + "hotkey.quickcontrol.volumeup": {"type": "media", "action": "volup"},
+    _P + "quicktool.calculator": {"type": "launch", "path": r"C:\Windows\System32\calc.exe"},
+    _P + "hotkey.quicktool.emoticons": {"type": "hotkey", "keys": "win+."},
+    _P + "quicktool.mail": {"type": "url", "url": "mailto:"},
+    _P + "quicktool.homepage": {"type": "url", "url": ""},
+    _P + "hotkey.quicktool.notification": {"type": "hotkey", "keys": "win+n"},
+    _P + "hotkey.quicktool.taskmanager": {"type": "hotkey", "keys": "ctrl+shift+esc"},
+    _P + "quicktool.controlpanel": {"type": "launch", "path": r"C:\Windows\System32\control.exe"},
+    _P + "hotkey.quicktool.searchbar": {"type": "hotkey", "keys": "win+s"},
+    _P + "hotkey.browser.back": {"type": "hotkey", "keys": "alt+left"},
+    _P + "hotkey.browser.forward": {"type": "hotkey", "keys": "alt+right"},
+    _P + "hotkey.browser.refresh": {"type": "hotkey", "keys": "f5"},
+    _P + "hotkey.browser.collect": {"type": "hotkey", "keys": "ctrl+d"},
+    _P + "touchbar.showdesktop": {"type": "window", "op": "desktop"},
+    _P + "touchbar.screenshot": {"type": "hotkey", "keys": "win+shift+s"},
+    _P + "touchbar.screenlock": {"type": "hotkey", "keys": "win+l"},
+    _P + "touchbar.notificationcenter": {"type": "hotkey", "keys": "win+n"},
+    _P + "touchbar.focusonsearch": {"type": "hotkey", "keys": "win+s"},
+    _P + "touchbar.dictation": {"type": "hotkey", "keys": "win+h"},
+    _P + "touchbar.inputmethod": {"type": "hotkey", "keys": "win+space"},
+    _P + "touchbar.previoustrack": {"type": "media", "action": "prev"},
+    _P + "touchbar.playpause": {"type": "media", "action": "playpause"},
+    _P + "touchbar.nexttrack": {"type": "media", "action": "next"},
+    _P + "touchbar.volumeup": {"type": "media", "action": "volup"},
+    _P + "touchbar.volumedown": {"type": "media", "action": "voldown"},
+    _P + "touchbar.mute": {"type": "media", "action": "mute"},
+}
+
+NEEDS_INPUT = {"launch": "path", "url": "url", "hotkey": "keys", "toggle": "keys", "macro": "macro",
+               "text": "text", "scene": "scene", "sound": None, "close": None}
+
+
+def builtin_native(action_uuid: str) -> dict | None:
+    """官方内置动作 → 控制台原生动作（拷贝一份）；不支持返回 None。"""
+    spec = BUILTIN_NATIVE.get(action_uuid)
+    return json.loads(json.dumps(spec)) if spec else None
+
+
 def plugin_action(act: dict, plugins: PluginIndex) -> dict | None:
     """官方场景里的第三方插件动作（时钟、天气、日历…）→ 本控制台的插件动作，带上官方存的设置。"""
     uuid = str(act.get("UUID") or "")
@@ -532,6 +607,11 @@ def convert_page(manifest: dict, page_src, plugins: PluginIndex, install_root: s
         spec, _ = convert_action(act, vk_names)
         if not spec:
             spec = plugin_action(act, plugins)
+        if not spec:
+            native = builtin_native(str(act.get("UUID") or ""))
+            field = NEEDS_INPUT.get((native or {}).get("type"), "x")
+            if native and (field is None or native.get(field)):
+                spec = native              # 只收「不用再填值就能用」的，比如计算器、截图
         if spec:
             actions[key] = spec
             supported += 1
@@ -585,7 +665,7 @@ def convert_scene(item: dict, plugins: PluginIndex, install_root: str, vk_names:
 # 图标包 / 插件清单
 # --------------------------------------------------------------------------- #
 def icon_pack_dirs(install_root: str) -> list[str]:
-    roots = [os.path.join(SD_DATA, "icons"), os.path.join(install_root, "icons")]
+    roots = [os.path.join(SD_DATA, "icons"), os.path.join(install_root, "icons")] + EXTRA_ICON_ROOTS
     out = []
     for root in roots:
         out.extend(sorted(glob.glob(os.path.join(root, "*.sdIconPack"))))
@@ -626,6 +706,20 @@ def _plugin_locale(folder: str) -> dict:
     return {}
 
 
+def is_hotkey_pack(man: dict) -> bool:
+    """没有可执行代码、动作设置里直接写着按键的「热键包」插件（如 ETS2 Hotkey）。"""
+    return (not man.get("PrivateAPI") and not (man.get("CodePathWin") or man.get("CodePath"))
+            and any(isinstance(a, dict) and isinstance(a.get("Settings"), dict) and a["Settings"].get("VKeyCode")
+                    for a in man.get("Actions") or []))
+
+
+def hotkey_pack_keys(act: dict, vk_names: dict | None = None) -> str:
+    st = act.get("Settings") if isinstance(act, dict) else None
+    if not isinstance(st, dict) or not st.get("VKeyCode"):
+        return ""
+    return hotkey_combo(st, vk_names or {}) or "?"
+
+
 def plugin_list(install_root: str) -> list[dict]:
     """官方插件：内置 + 用户下载。downloaded=True 表示在用户目录（商店下载）。"""
     user_root = os.path.normpath(os.path.join(SD_DATA, "plugins"))
@@ -650,14 +744,18 @@ def plugin_list(install_root: str) -> list[dict]:
             a_icon = (find_file(folder, state0.get("Image") if isinstance(state0, dict) else None)
                       or find_file(folder, act.get("Icon")))
             actions.append({
+                "supported": (aid in BUILTIN_NATIVE and BUILTIN_NATIVE[aid] is not None)
+                if man.get("PrivateAPI") else (bool(hotkey_pack_keys(act)) if is_hotkey_pack(man) else True),
                 "uuid": aid,
                 "name": str(aloc.get("Name") or act.get("Name") or aid.rsplit(".", 1)[-1]),
                 "tooltip": str(aloc.get("Tooltip") or act.get("Tooltip") or ""),
                 "icon": a_icon,
             })
         custom = any(os.path.normpath(folder).startswith(os.path.normpath(r) + os.sep)
-                     for r in EXTRA_PLUGIN_ROOTS)
+                     for r in CUSTOM_PLUGIN_ROOTS)
         out.append({
+            "hotkeyPack": is_hotkey_pack(man),
+            "builtin": bool(man.get("PrivateAPI")),
             "custom": custom,
             "id": uid,
             "name": str(loc.get("Name") or _plugin_name(folder, man)),
