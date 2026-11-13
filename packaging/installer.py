@@ -81,8 +81,15 @@ def stop_running() -> None:
     for port in range(8642, 8654):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.6) as r:
-                if b"m18-console" not in r.read():
+                body = r.read()
+            if b"m18-console" not in body:
+                continue
+            # 源码版不归安装程序管：只退出安装版（旧版本没有 edition 字段，当作安装版）
+            try:
+                if json.loads(body.decode("utf-8")).get("edition") == "源码版":
                     continue
+            except ValueError:
+                pass
             origin = f"http://127.0.0.1:{port}"
             req = urllib.request.Request(f"{origin}/api/quit", b"{}",
                                          {"Content-Type": "application/json", "Origin": origin})
