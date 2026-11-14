@@ -1658,6 +1658,28 @@ function draftLabel(d) {
   return val ? `打开：${val}` : t;
 }
 
+// 草稿状态即时反馈：保存按钮、页签小条、标题行
+function paintDraftMarks() {
+  const dirtyBtn = $("#sel-save-top");
+  if (dirtyBtn) dirtyBtn.classList.toggle("dirty", Object.keys(formDrafts).length > 0);
+  document.querySelectorAll("#sel-gesture button").forEach((b) => {
+    b.classList.toggle("dirty", !!formDrafts[b.dataset.g]);
+  });
+  const n = selectedKey;
+  const d = n ? formDrafts[editGesture] : null;
+  if (!d) return;
+  const line = $("#sel-action");
+  if (line) {
+    line.textContent = editGesture === "press"
+      ? "短按：未保存的改动"
+      : `${gestureLabel(editGesture)}：${draftLabel(d)}（未保存）`;
+  }
+  const h = $("#sel-hint");
+  if (h && !h.textContent.startsWith("有未保存的改动")) {
+    h.textContent = "有未保存的改动 —— 三种触发方式改完一起点右上角「保存」生效。" + h.textContent;
+  }
+}
+
 function gestureView(n, g) {
   if (g === "press") {
     const act = state?.keyActions?.[n];
@@ -2529,7 +2551,11 @@ function bindUI() {
   ["#sel-value", "#sel-macro", "#sel-media", "#sel-mouse", "#sel-window", "#sel-scene", "#sel-enter", "#sel-secret", "#sel-nav"].forEach((sel) => {
     const el = $(sel);
     if (!el) return;
-    const snap = () => { if (selectedKey) formDrafts[editGesture] = readFormDraft(); };
+    const snap = () => {
+      if (!selectedKey) return;
+      formDrafts[editGesture] = readFormDraft();
+      paintDraftMarks();
+    };
     el.addEventListener("input", snap);
     el.addEventListener("change", snap);
   });
