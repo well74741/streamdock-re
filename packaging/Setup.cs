@@ -274,6 +274,43 @@ static class M18Setup
             {
                 return Uninstall(silent, args.Contains("--purge")) ? 0 : 1;
             }
+            // 只补建快捷方式 + 卸载登记，不重新解压：装好了却不在「开始菜单→所有应用」里时用
+            if (args.Contains("--shortcut-only"))
+            {
+                int si = args.IndexOf("--dir");
+                string dir = (si >= 0 && si + 1 < args.Count) ? args[si + 1] : (InstalledDir() ?? DefaultDir);
+                string exe2 = Path.Combine(dir, EXE_NAME);
+                if (!File.Exists(exe2))
+                {
+                    Console.Error.WriteLine("找不到程序：" + exe2 + " —— 先正常装一次，或用 --dir 指定安装目录");
+                    return 1;
+                }
+                bool made = false;
+                try { MakeShortcut(StartMenuLnk(), exe2, dir); made = true; }
+                catch (Exception ex) { Console.Error.WriteLine("× 开始菜单快捷方式没建成：" + Short(ex, 160)); }
+                try { MakeShortcut(DesktopLnk(), exe2, dir); made = true; }
+                catch (Exception ex) { Console.Error.WriteLine("× 桌面快捷方式没建成：" + Short(ex, 160)); }
+                NotifyShell(Path.GetDirectoryName(StartMenuLnk()));
+                NotifyShell(Path.GetDirectoryName(DesktopLnk()));
+                try
+                {
+                    using (var k = Registry.CurrentUser.CreateSubKey(REG_KEY))
+                    {
+                        k.SetValue("DisplayName", APP_NAME);
+                        k.SetValue("DisplayVersion", VERSION);
+                        k.SetValue("Publisher", "M18 Console");
+                        k.SetValue("DisplayIcon", "\"" + exe2 + "\",0");
+                        k.SetValue("InstallLocation", dir);
+                        k.SetValue("UninstallString", "\"" + Path.Combine(dir, "uninstall.exe") + "\" --uninstall");
+                        k.SetValue("NoModify", 1, RegistryValueKind.DWord);
+                        k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine("警告：卸载信息没登记上（不影响使用）：" + Short(ex, 120)); }
+                if (!made) return 3;
+                Console.WriteLine("{\"ok\": true, \"lnk\": \"" + StartMenuLnk().Replace("\\", "\\\\") + "\"}");
+                return 0;
+            }
             if (silent)
             {
                 int i = args.IndexOf("--dir");
