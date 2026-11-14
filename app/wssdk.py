@@ -198,9 +198,32 @@ class DeviceWS:
         self._gif_status = threading.Event()
 
     # -- 进程/连接 ---------------------------------------------------------- #
+    @staticmethod
+    def _kill_sdk_process() -> None:
+        """杀掉所有 StreamDockWebsocketSDK.exe。
+
+        这个 exe 只服务本控制台（官方驱动跑的是 StreamDock.exe），所以可以安全强杀。
+        目的是清掉上一个实例崩溃/被结束之后留下的孤儿进程——它可能还占着设备，
+        新实例连上去会表现为「命令都发出去了，屏幕却不动」。
+        """
+        try:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.run(["taskkill", "/F", "/IM", "StreamDockWebsocketSDK.exe"],
+                           capture_output=True, creationflags=flags, timeout=15)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _start_server(self) -> bool:
         if port_open(self.port):
-            return True
+            # 9002 已被占用：如果我们自己没起过 SDK，那它多半是上个实例留下的孤儿进程
+            if self._proc is None:
+                self._kill_sdk_process()
+                for _ in range(30):
+                    if not port_open(self.port):
+                        break
+                    time.sleep(0.1)
+            if port_open(self.port):
+                return True
         if not self.exe or not os.path.isfile(self.exe):
             self.error = f"找不到 StreamDockWebsocketSDK.exe，请把官方 WebSocket SDK 放到：{self.exe}"
             return False

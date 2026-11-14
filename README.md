@@ -110,6 +110,10 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 - **接入 AI 智能体（MCP）**：「自制插件 → 接入 AI」一键复制 Codex / DeepSeek Harness / Claude / Cursor 的配置。
   AI 能写插件、绑到按键、模拟按键、看键面截图和日志，自己测到能用为止（16 个工具，见 [AGENTS.md](AGENTS.md)）。
   插件开发指南：[app/plugin_guide.md](app/plugin_guide.md)。ChatGPT 网页版连不到本机，请用 Codex。
+- **托盘常驻**：关掉控制台窗口不会退出程序，控制台缩到系统托盘继续跑（第一次会弹一条提示）。
+  双击托盘图标重新打开窗口，右键菜单可「打开控制台 / 退出控制台」；退出时会把后台 SDK 一起收掉。
+- **场景保护**：切场景前会先保存「自定义」里的改动；如果某个场景里没有任何图片和动作（空场景），
+  切换会被拒绝并提示，避免一切场景就把刚摆好的画面清空。
 
 ## 关键参数
 

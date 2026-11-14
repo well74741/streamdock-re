@@ -272,6 +272,7 @@ def main() -> int:
         "--hidden-import", "platform",
         "--hidden-import", "ctypes.util",
         "--hidden-import", "PIL.ImageSequence",
+        "--hidden-import", "tray",             # 托盘图标在函数里 import，显式列上更稳
         "--exclude-module", "tkinter",
         "--exclude-module", "numpy",          # Pillow 的可选依赖，控制台用不到（省 26 MB）
         os.path.join(APP, "server.py"),

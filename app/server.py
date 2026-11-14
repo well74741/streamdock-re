@@ -952,6 +952,7 @@ class App:
         self.autostart = self.autostart_state()["this"]
         self._last_activity = time.time()
         self._last_input_seen = time.time()   # 最近一次收到真实按键事件（看门狗用）
+        self._last_wake = 0.0                 # 最近一次发唤醒包的时间（防止连发把设备按回休眠）
         self.clear_before_paint = False
         self.writes_paused = False
         # 仅灯光模式（旧调试开关，界面已去掉，固定关闭）
@@ -1045,6 +1046,10 @@ class App:
             self._dirty = True
             # 唤醒一次：设备醒着才会开始上报按键
             self.device.wakeup()
+            # WS SDK 的 wakeup() 是空实现，真正叫醒屏要用 Python SDK 的 wakeup_screen。
+            # 只在接管时发一次，别周期性发（连发会让设备进入「画面不刷新」的状态）。
+            if self.wake_panel():
+                self._last_wake = time.time()
             time.sleep(0.5)
             self.apply_keys()
             self.broadcast({"type": "status", "connected": True})
@@ -1623,9 +1628,11 @@ class App:
 
     def _wake_from_standby(self) -> None:
         """按键唤醒：先叫醒设备，再整屏重画。"""
-        # 打开第二个句柄会有扰动，只在确实很久没画过时才用
-        if time.time() - self._last_paint > 30:
-            self.wake_panel()
+        # 打开第二个句柄会有扰动，只有确实很久没画过、而且最近没叫醒过才用
+        now = time.time()
+        if now - self._last_paint > 600 and now - self._last_wake > 60:
+            if self.wake_panel():
+                self._last_wake = now
         try:
             self.device.set_screen_brightness(self.screen_brightness)
         except Exception:  # noqa: BLE001
@@ -2226,23 +2233,29 @@ class App:
             self._apply_key(key)
 
     def _keepalive_loop(self) -> None:
-        """低频唤醒（30 秒），只用来维持设备醒着；高频会让它反而睡过去。
+        """低频巡检（30 秒）。
 
-        设备自己睡过去以后 WS SDK 没有任何唤醒命令（Device.wakeup 是空实现），
-        只有官方 Python SDK 的 wakeup_screen 能把屏叫回来，所以这里走 _panel_device()。
+        注意：这里**不再**周期性发唤醒包。实测每 30 秒 call 一次 wakeup_screen，
+        设备过一阵会进入「灯亮着但画面不再更新」的状态（切场景不同步）。
+        唤醒只在真正需要时做一次（启动、按亮/灭、长时间没画过）。
         """
         while True:
             time.sleep(30)
             try:
                 if not self.device.connected or self.screen_off or self.yielded:
                     continue
-                if self.keep_awake:
-                    self.wake_panel()
+                now = time.time()
                 # 输入通道看门狗：半小时一个按键都没有，基本是休眠把读取停了，重订阅一次
-                if time.time() - self._last_input_seen > 1800:
+                if now - self._last_input_seen > 1800:
                     self.device.resubscribe_input()
-                    self._last_input_seen = time.time()
+                    self._last_input_seen = now
                     log("输入通道 30 分钟无事件，已重新订阅按键")
+                # 很久没画过（设备可能已睡过去）：叫醒一次再补画，别连发
+                if now - self._last_paint > 1800 and now - self._last_wake > 600:
+                    self._last_wake = now
+                    self.wake_panel()
+                    log("30 分钟没画过，发一次唤醒并补画")
+                    self.apply_keys("keepalive")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -3358,6 +3371,29 @@ class App:
             return name
         return os.path.splitext(os.path.basename(self._scene_path(name)))[0]
 
+    @staticmethod
+    def _scene_has_content(data) -> bool:
+        """场景里到底有没有内容：至少一个键有图片，或者有非导航动作。"""
+        if not isinstance(data, dict):
+            return False
+        for page in data.get("pages") or []:
+            if not isinstance(page, dict):
+                continue
+            if page.get("images"):
+                return True
+            for act in (page.get("actions") or {}).values():
+                if not (isinstance(act, dict) and act.get("type") == "nav"):
+                    return True
+        return False
+
+    def _scene_file_data(self, path: str) -> dict | None:
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
     def apply_scene(self, name: str) -> bool:
         if name == self.ALBUM_SCENE:
             if not self.album_items:
@@ -3372,6 +3408,16 @@ class App:
         name = self._canonical_scene(name)
         if not self._auto_applying:
             self._auto_scene = None
+        # 切走之前先把「自定义」里正在改的内容存一下，免得切回来少东西
+        if (self.active_scene or self.custom_scene_name) == self.custom_scene_name:
+            self._snapshot_custom_scene()
+        target = (os.path.join(SCENE_DIR, "__custom__.json")
+                  if name == self.custom_scene_name else self._scene_path(name))
+        data = self._scene_file_data(target)
+        if data is not None and not self._scene_has_content(data):
+            # 空场景一切换就会把刚摆好的画面清空，宁可不切
+            log(f"场景「{name}」里没有内容（图片和动作都是空的），不切换，免得把当前画面清掉")
+            return False
         self._applying_scene = True
         try:
             if name == self.custom_scene_name:
@@ -3415,6 +3461,12 @@ class App:
         if not custom and not os.path.isfile(path):
             return                      # 场景文件已被删掉，不要再凭空建回来
         cfg = self.export_config()
+        if not self._scene_has_content(cfg):
+            # 当前画面是空的——多半是刚切场景失败 / 配置丢了。
+            # 这时候写进快照会把原来存好的内容一起抹掉，所以只在快照本来就是空的时候才写。
+            if os.path.isfile(path) and self._scene_has_content(self._scene_file_data(path)):
+                log(f"当前画面是空的，没有写进场景「{name}」（避免覆盖已有内容）")
+                return
         try:
             with open(path, encoding="utf-8-sig") as fh:
                 data = json.load(fh)
@@ -5650,17 +5702,22 @@ __CODE__
 
 
 APP: App | None = None
+TRAY = None          # 系统托盘图标（见 tray.py），关掉界面窗口后靠它重新打开
 PORT = 8642
 
 
 def _shutdown() -> None:
     time.sleep(0.25)
     try:
+        if TRAY is not None:
+            TRAY.stop()
         if APP is not None:
             if APP.plugin_host:
                 APP.plugin_host.stop_all()   # 插件子进程 / 后台浏览器一起收掉
             APP._gif_stop_all()          # SDK 进程不一定随我们退出，别让它继续播旧动图
             APP.device.disconnect()
+            # 顺手收掉 SDK 进程：留着它成为孤儿进程，下次启动会连到一个「假死」的会话
+            APP.device._kill_sdk_process()
     except Exception:  # noqa: BLE001
         pass
     os._exit(0)
@@ -6500,6 +6557,51 @@ def open_window(url: str) -> bool:
     return False
 
 
+def _start_tray(url: str) -> None:
+    """托盘图标：关掉界面窗口后服务留在后台跑，双击图标可以再打开。"""
+    global TRAY
+    try:
+        from tray import Tray
+    except Exception as exc:  # noqa: BLE001
+        log(f"托盘图标不可用：{exc}")
+        return
+    try:
+        tray = Tray("Stream Dock M18 控制台（双击打开）", lambda: open_window(url),
+                    _shutdown, os.path.join(HERE, "icon.ico"))
+        if tray.start():
+            TRAY = tray
+            log("托盘图标已就绪（关掉窗口后仍在后台运行）")
+            threading.Thread(target=_tray_ui_watch, args=(tray,), daemon=True).start()
+        else:
+            log("托盘图标没创建成功，关掉窗口后只能用 exe 再打开")
+    except Exception as exc:  # noqa: BLE001
+        log(f"托盘图标出错：{exc}")
+
+
+def _tray_ui_watch(tray) -> None:
+    """界面窗口关掉（SSE 客户端归零）时，用气泡提示还在后台。"""
+    seen = False
+    while True:
+        time.sleep(2)
+        try:
+            n = len(APP.clients) if APP is not None else 0
+        except Exception:  # noqa: BLE001
+            n = 0
+        if n:
+            seen = True
+            continue
+        if not seen:
+            continue
+        time.sleep(4)                 # 刷新页面会短暂断开，等一下再确认
+        try:
+            if APP is not None and APP.clients:
+                continue
+        except Exception:  # noqa: BLE001
+            pass
+        tray.balloon("控制台已收进托盘", "双击托盘图标可以重新打开窗口")
+        seen = False
+
+
 def main() -> int:
     global APP, PORT
     parser = argparse.ArgumentParser()
@@ -6529,6 +6631,7 @@ def main() -> int:
     threading.Timer(0.5, APP.start_plugins).start()
     server.daemon_threads = True
     log(f"控制台已启动 {url}")
+    _start_tray(url)
     if not args.no_browser:
         threading.Timer(0.6, lambda: open_window(url)).start()
     try:
