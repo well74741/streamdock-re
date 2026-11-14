@@ -3062,8 +3062,11 @@ class App:
                 elif key in (16, 18) and len(self._alb_items()) > 1:
                     threading.Thread(target=self.album_goto, args=(-1 if key == 16 else 1,),
                                      daemon=True).start()
-                else:
+                elif key in (16, 18):
                     threading.Thread(target=self.album_stop, daemon=True).start()
+                else:
+                    # 内置相册也能一直往后切场景（以前是按一下退回原场景，就再也切不动了）
+                    threading.Thread(target=self.next_scene, daemon=True).start()
             elif key in self._wake_swallow:
                 self._wake_swallow.discard(key)
             return
