@@ -938,6 +938,7 @@ class App:
         self.input_muted = False
         self.repaint_on_press = False
         self.keep_awake = True       # 默认保活：设备自己睡过去后，WS SDK 叫不醒它（黑屏、收不到按键）
+        self.close_to_tray = True    # 关掉界面窗口后留在托盘后台（关掉这个开关就是直接退出）
         self.standby_sec = 300
         self.standby_brightness = 60
         self.in_standby = False
@@ -1962,6 +1963,7 @@ class App:
             self.active_scene = str(cfg.get("activeScene") or "")
             self.wallpaper_enabled = bool(cfg.get("wallpaperEnabled", self.wallpaper_enabled))
             self.keep_awake = bool(cfg.get("keepAwake", True))
+            self.close_to_tray = bool(cfg.get("closeToTray", True))
             pages = cfg.get("pages")
             if isinstance(pages, list) and pages:
                 self.pages = []
@@ -2094,6 +2096,7 @@ class App:
             "activeScene": self.active_scene,
             "wallpaperEnabled": self.wallpaper_enabled,
             "keepAwake": self.keep_awake,
+            "closeToTray": self.close_to_tray,
             "lighting": {k: self.lighting[k] for k in ("mode", "color", "speed", "brightness", "custom")},
             "standbySource": self.standby_source,
             "album": {"items": self.album_items, "slideshow": self.album_slideshow,
@@ -5820,6 +5823,7 @@ __CODE__
                 "inputMuted": self.input_muted,
                 "repaintOnPress": self.repaint_on_press,
                 "keepAwake": self.keep_awake,
+                "closeToTray": self.close_to_tray,
                 "writesPaused": self.writes_paused,
                 "quiet": self.quiet,
                 "yielded": self.yielded,
@@ -5890,6 +5894,14 @@ PORT = 8642
 
 
 def _shutdown() -> None:
+    log("正在退出控制台…")
+
+    def _hard_exit() -> None:
+        # 收尾里要等浏览器 / SDK 正常退出，万一哪一步卡住，也不能让程序永远挂着
+        time.sleep(8)
+        os._exit(0)
+
+    threading.Thread(target=_hard_exit, daemon=True).start()
     time.sleep(0.25)
     try:
         if TRAY is not None:
@@ -6269,6 +6281,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/autostart":
             self._json({"ok": APP.set_autostart(bool(body.get("value"))),
                         "value": APP.autostart})
+        elif path == "/api/closetotray":
+            APP.close_to_tray = bool(body.get("value"))
+            APP._save_config()
+            self._json({"ok": True, "value": APP.close_to_tray})
         elif path == "/api/config/export":
             self._json({"ok": True, "config": APP.export_config()})
         elif path == "/api/config/import":
@@ -6780,28 +6796,83 @@ def _start_tray(url: str) -> None:
         log(f"托盘图标出错：{exc}")
 
 
+def _ui_window_open() -> bool:
+    """界面的应用窗口还在不在。
+
+    不能只看 SSE 客户端数量：Edge 关掉窗口后进程可能还赖在后台，
+    SSE 连接不断，于是「关了窗口」永远检测不到。这里直接枚举窗口标题。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+    except Exception:  # noqa: BLE001
+        return True                     # 查不了就当还开着，别误退出
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found = [True]
+
+    def on_enum(hwnd, _lparam):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, buf, n + 1)
+            if buf.value.startswith("Stream Dock M18 控制台"):
+                found[0] = False
+                return False            # 找到了，不用再枚举
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    try:
+        user32.EnumWindows(WNDENUMPROC(on_enum), 0)
+    except Exception:  # noqa: BLE001
+        return True
+    return not found[0]
+
+
+def _close_app_windows() -> None:
+    """收掉界面窗口背后的浏览器进程（温和关闭，免得 Edge 下次弹「还原页面」）。"""
+    profile = os.path.join(os.environ.get("LOCALAPPDATA") or HERE, "M18Console", "browser")
+    marker = profile.replace("'", "''")
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' OR Name='chrome.exe'\" | "
+             f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{marker}') }} | "
+             "ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; "
+             "if ($p) { $p.CloseMainWindow() | Out-Null } }"],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _tray_ui_watch(tray) -> None:
-    """界面窗口关掉（SSE 客户端归零）时，用气泡提示还在后台。"""
+    """界面窗口关掉时：按设置收进托盘，或者直接退出。"""
     seen = False
     while True:
         time.sleep(2)
-        try:
-            n = len(APP.clients) if APP is not None else 0
-        except Exception:  # noqa: BLE001
-            n = 0
-        if n:
+        if _ui_window_open():
             seen = True
             continue
         if not seen:
+            continue                  # 刚启动时窗口还没画出来，别急着当「关掉了」
+        time.sleep(6)                 # 刷新页面 / 切场景会短暂消失，等一下再确认
+        if _ui_window_open():
+            seen = True
             continue
-        time.sleep(4)                 # 刷新页面会短暂断开，等一下再确认
-        try:
-            if APP is not None and APP.clients:
-                continue
-        except Exception:  # noqa: BLE001
-            pass
-        tray.balloon("控制台已收进托盘", "双击托盘图标可以重新打开窗口")
         seen = False
+        if APP is not None and not APP.close_to_tray:
+            log("界面窗口已关闭，按设置退出控制台（想让它在后台继续跑，去「更多设置 → 关窗口后收进托盘」打开）")
+            _shutdown()
+            return
+        tray.balloon("控制台已收进托盘", "双击托盘图标可以重新打开窗口")
+        log("界面窗口已关闭，控制台收进系统托盘继续运行（双击托盘图标重新打开）")
+        _close_app_windows()          # 窗口背后那个浏览器进程留着只会占内存、还挂着死连接
 
 
 def main() -> int:

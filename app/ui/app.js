@@ -1944,6 +1944,7 @@ function applyState(s) {
   setSwitch($("#autostart-btn"), s.autostart);
   const note = $("#autostart-note");
   if (note) note.textContent = s.autostartOther ? `（当前是${s.autostartOther}开机自启，打开这里会改成${s.edition}）` : "";
+  setSwitch($("#closetotray-btn"), s.closeToTray !== false);
   const ver = $("#app-version");
   if (ver && s.edition) {
     ver.textContent = ver.textContent.replace(/ · .*$/, ` · ${s.edition}`);
@@ -2565,6 +2566,14 @@ function bindUI() {
       toast(r.value ? `已设置开机自启（${state?.edition || ""}）` : "已关闭开机自启", 1600);
     }
     refreshState();
+  });
+
+  $("#closetotray-btn").addEventListener("click", async () => {
+    const v = !(state?.closeToTray !== false);
+    const r = await post("/api/closetotray", { value: v });
+    if (state) state.closeToTray = r.value;
+    setSwitch($("#closetotray-btn"), r.value);
+    toast(r.value ? "关掉界面窗口后会继续在托盘里后台运行" : "关掉界面窗口会直接退出控制台", 2400);
   });
 
   $("#export-btn").addEventListener("click", async () => {
