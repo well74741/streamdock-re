@@ -497,6 +497,9 @@ static class M18Setup
             Warn("卸载信息没登记上（不影响使用，卸载时删安装目录即可）", ex);
         }
         Step("完成");
+        // 让开始菜单/桌面立即刷新，新装的条目马出现在「所有应用」里
+        try { NotifyShell(Path.GetDirectoryName(StartMenuLnk())); } catch { }
+        try { NotifyShell(Path.GetDirectoryName(DesktopLnk())); } catch { }
         progress(100, "安装完成");
         return exe;
     }
@@ -535,17 +538,39 @@ static class M18Setup
 
     static void MakeShortcut(string lnk, string target, string workdir)
     {
+        string dir = Path.GetDirectoryName(lnk);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         Type t = Type.GetTypeFromProgID("WScript.Shell");
         object shell = Activator.CreateInstance(t);
         object sc = t.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { lnk });
         Type st = sc.GetType();
         st.InvokeMember("TargetPath", BindingFlags.SetProperty, null, sc, new object[] { target });
         st.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, sc, new object[] { workdir });
-        st.InvokeMember("IconLocation", BindingFlags.SetProperty, null, sc, new object[] { target + ",0" });
+        // 图标位置必须带引号：目录里带空格（M18 Console）时，shell 解析会失败，快捷方式显示空白图标
+        st.InvokeMember("IconLocation", BindingFlags.SetProperty, null, sc, new object[] { "\"" + target + "\",0" });
         st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { APP_NAME });
         st.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
         Marshal.FinalReleaseComObject(sc);
         Marshal.FinalReleaseComObject(shell);
+    }
+
+    // 让「开始菜单 / 桌面」立刻刷新，不然新装的条目要等一会儿（甚至要重启）才出现在应用列表里
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
+
+    static void NotifyShell(string dir)
+    {
+        try
+        {
+            SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);            // SHCNE_ASSOCCHANGED
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                IntPtr p = Marshal.StringToHGlobalUni(dir);
+                try { SHChangeNotify(0x00001000, 0x0005, p, IntPtr.Zero); }           // SHCNE_UPDATEDIR | SHCNF_PATHW
+                finally { Marshal.FreeHGlobal(p); }
+            }
+        }
+        catch { }
     }
 
     // ------------------------------------------------------------------ 关掉正在运行的安装版
