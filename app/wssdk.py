@@ -465,5 +465,13 @@ class DeviceWS:
     def wakeup(self) -> bool:
         return True
 
+    def resubscribe_input(self) -> bool:
+        """重新订阅按键事件。
+
+        设备自己进入休眠后，SDK 那边的读取可能停掉；重发一次 read 能把通道拉回来，
+        比整条连接重连温和得多（重连会闪一下屏）。
+        """
+        return self._send("read", {})
+
     def get_firmware(self) -> str:
         return self.firmware

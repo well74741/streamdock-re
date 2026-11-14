@@ -267,6 +267,11 @@ def main() -> int:
         "--add-data", f"{os.path.join(APP, 'icon.ico')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'icon.png')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'config.example.json')}{SEP}.",
+        # 官方 Python SDK 是以「数据目录」形式带进来的，PyInstaller 静态分析看不到它的 import，
+        # 这里把它用到的标准库显式列上（少了 platform 会报 No module named 'platform'）
+        "--hidden-import", "platform",
+        "--hidden-import", "ctypes.util",
+        "--hidden-import", "PIL.ImageSequence",
         "--exclude-module", "tkinter",
         "--exclude-module", "numpy",          # Pillow 的可选依赖，控制台用不到（省 26 MB）
         os.path.join(APP, "server.py"),
@@ -275,6 +280,15 @@ def main() -> int:
 
     # 2) 官方 WebSocket SDK 放在 exe 旁边（server.py 里 APP_DIR/ws-sdk）
     shutil.copytree(os.path.join(ROOT, "ws-sdk"), os.path.join(app_dir, "ws-sdk"))
+
+    # 2a) 官方 Python 版设备 SDK（transport.dll）：开关屏 / 唤醒屏只有它有，
+    #     WebSocket SDK 没有「唤醒」命令。缺了它，设备睡过去就再也叫不醒（黑屏）。
+    sdk_src = os.path.join(ROOT, "refs", "devicesdk", "Python-SDK", "src", "StreamDock")
+    if os.path.isdir(sdk_src):
+        shutil.copytree(sdk_src, os.path.join(app_dir, "sdk", "StreamDock"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+    else:
+        print("! 缺 refs\\devicesdk\\Python-SDK\\src\\StreamDock：开关屏 / 唤醒指令将不可用")
 
     # 2b) MCP 服务：给 Codex / DeepSeek Harness / Claude 等 AI 智能体用（带控制台、走标准输入输出）。
     #     文件夹版放在 mcp/ 子目录（不用单文件版：单文件启动要解压到临时目录，会被安全软件拦）

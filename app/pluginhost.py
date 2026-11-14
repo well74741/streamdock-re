@@ -440,21 +440,52 @@ class PluginHost:
 
         窗口本身留在屏幕外不关闭——关掉它插件就停了；插件自己打开的弹窗是
         独立窗口，不受影响，照常显示在桌面上。
+
+        坑：Edge 的窗口标题是「M18 插件宿主 - 用户配置 1 - Microsoft Edge」，
+        以前用 FindWindowW 按完整标题精确匹配，永远匹配不上 → 任务栏一直留一个
+        空图标，关掉它插件就断，于是又被自动拉起来。这里改成按标题前缀枚举。
         """
         try:
             import ctypes
+            from ctypes import wintypes
             user32 = ctypes.windll.user32
         except Exception:  # noqa: BLE001
             return
         GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x00000080, 0x00040000
-        for _ in range(80):                      # 最多等 20 秒
-            hwnd = user32.FindWindowW(None, "M18 插件宿主")
-            if hwnd:
+        prefix = "M18 插件宿主"
+        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        found = [0]
+
+        def on_enum(hwnd, _lparam):
+            try:
+                n = user32.GetWindowTextLengthW(hwnd)
+                if n <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if not buf.value.startswith(prefix):
+                    return True
                 style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-                user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
-                                      (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+                want = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+                if want != style:
+                    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, want)
+                    # 改扩展样式必须重新显示一次才会从任务栏消失（窗口在屏幕外，不会闪到人）
+                    user32.ShowWindow(hwnd, 0)          # SW_HIDE
+                    user32.ShowWindow(hwnd, 4)          # SW_SHOWNOACTIVATE
+                    found[0] += 1
+            except Exception:  # noqa: BLE001
+                pass
+            return True
+
+        proc = WNDENUMPROC(on_enum)
+        for _ in range(120):                 # 最多盯 60 秒：标题会随插件加载变化
+            try:
+                user32.EnumWindows(proc, 0)
+            except Exception:  # noqa: BLE001
                 return
-            time.sleep(0.25)
+            time.sleep(0.5)
+        if found[0] == 0:
+            self.log("没找到后台插件浏览器窗口，任务栏可能留着它的图标（不影响插件运行）")
 
     def _push_html_list(self) -> None:
         with self.lock:

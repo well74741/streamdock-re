@@ -104,6 +104,10 @@ def _ensure_data_dir(path: str) -> str:
 DATA_DIR = _ensure_data_dir(DATA_DIR)
 SDK_SRC = os.path.join(ROOT, "refs", "devicesdk", "Python-SDK", "src")
 sys.path.insert(0, SDK_SRC)
+# 打包版：refs/ 不会带进安装目录，官方 Python SDK 被复制到 sdk/ 下（开关屏 / 唤醒要用）
+SDK_BUNDLED = os.path.join(APP_DIR, "sdk")
+if os.path.isdir(SDK_BUNDLED):
+    sys.path.insert(0, SDK_BUNDLED)
 
 # 用 pythonw 启动时没有控制台，把输出重定向到日志，避免 print 崩溃
 if sys.stdout is None or sys.stderr is None:
@@ -933,7 +937,7 @@ class App:
         self.effect_reverse = False
         self.input_muted = False
         self.repaint_on_press = False
-        self.keep_awake = False
+        self.keep_awake = True       # 默认保活：设备自己睡过去后，WS SDK 叫不醒它（黑屏、收不到按键）
         self.standby_sec = 300
         self.standby_brightness = 60
         self.in_standby = False
@@ -947,6 +951,7 @@ class App:
         self._applying_scene = False
         self.autostart = self.autostart_state()["this"]
         self._last_activity = time.time()
+        self._last_input_seen = time.time()   # 最近一次收到真实按键事件（看门狗用）
         self.clear_before_paint = False
         self.writes_paused = False
         # 仅灯光模式（旧调试开关，界面已去掉，固定关闭）
@@ -1949,6 +1954,7 @@ class App:
             self.custom_scene_name = str(cfg.get("customScene") or "自定义")[:40]
             self.active_scene = str(cfg.get("activeScene") or "")
             self.wallpaper_enabled = bool(cfg.get("wallpaperEnabled", self.wallpaper_enabled))
+            self.keep_awake = bool(cfg.get("keepAwake", True))
             pages = cfg.get("pages")
             if isinstance(pages, list) and pages:
                 self.pages = []
@@ -2080,6 +2086,7 @@ class App:
             "customScene": self.custom_scene_name,
             "activeScene": self.active_scene,
             "wallpaperEnabled": self.wallpaper_enabled,
+            "keepAwake": self.keep_awake,
             "lighting": {k: self.lighting[k] for k in ("mode", "color", "speed", "brightness", "custom")},
             "standbySource": self.standby_source,
             "album": {"items": self.album_items, "slideshow": self.album_slideshow,
@@ -2219,12 +2226,23 @@ class App:
             self._apply_key(key)
 
     def _keepalive_loop(self) -> None:
-        """低频唤醒（30 秒），只用来维持设备醒着；高频会让它反而睡过去。"""
+        """低频唤醒（30 秒），只用来维持设备醒着；高频会让它反而睡过去。
+
+        设备自己睡过去以后 WS SDK 没有任何唤醒命令（Device.wakeup 是空实现），
+        只有官方 Python SDK 的 wakeup_screen 能把屏叫回来，所以这里走 _panel_device()。
+        """
         while True:
             time.sleep(30)
             try:
-                if self.keep_awake and self.device.connected:
-                    self.device.wakeup()
+                if not self.device.connected or self.screen_off or self.yielded:
+                    continue
+                if self.keep_awake:
+                    self.wake_panel()
+                # 输入通道看门狗：半小时一个按键都没有，基本是休眠把读取停了，重订阅一次
+                if time.time() - self._last_input_seen > 1800:
+                    self.device.resubscribe_input()
+                    self._last_input_seen = time.time()
+                    log("输入通道 30 分钟无事件，已重新订阅按键")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -2784,6 +2802,7 @@ class App:
 
     # -- 外部输入 ---------------------------------------------------------- #
     def _on_input(self, key: int, state: int) -> None:
+        self._last_input_seen = time.time()
         if self.input_muted:
             return
         if state == 1 and self.lighting.get("mode") == "ripple":
