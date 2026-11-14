@@ -153,7 +153,7 @@ function hardenBrowser() {
   const noMouseButton = (e) => { if (e.button !== 0) e.preventDefault(); };
 
   document.addEventListener("contextmenu", (e) => {
-    if (e.target.closest(".ring-board .cell, .ring-btn, .icon-group img, .key-menu, #sel-thumb")) return;
+    if (e.target.closest(".ring-board .cell, .ring-btn, .key-menu, #sel-thumb, .lib-menu")) return;
     e.preventDefault();
   }, { capture: true });
   document.addEventListener("selectstart", noDefault, { capture: true });
@@ -165,9 +165,33 @@ function hardenBrowser() {
   ["pointerdown", "pointerup", "mousedown", "mouseup"].forEach((type) => {
     document.addEventListener(type, noMouseButton, { capture: true });
   });
+  // 右键按住拖动：不给浏览器留任何「拖动 / 选区 / 自动滚动」的机会
+  let rightHeld = false;
+  document.addEventListener("pointerdown", (e) => {
+    if (e.button !== 2) return;
+    rightHeld = true;
+    document.body.classList.add("no-select");
+  }, { capture: true });
+  const releaseRight = (e) => {
+    if (e && e.type === "pointerup" && e.button !== 2 && e.buttons !== 0) return;
+    rightHeld = false;
+    document.body.classList.remove("no-select");
+  };
+  document.addEventListener("pointerup", releaseRight, { capture: true });
+  document.addEventListener("pointercancel", releaseRight, { capture: true });
+  document.addEventListener("blur", releaseRight);
+  window.addEventListener("blur", releaseRight);
+  ["pointermove", "mousemove", "pointerrawupdate"].forEach((type) => {
+    document.addEventListener(type, (e) => {
+      // 已经没有右键按下了（pointerup 可能丢在窗口外）：顺手复位
+      if (rightHeld && (e.buttons & 2) === 0) { rightHeld = false; document.body.classList.remove("no-select"); }
+      if (rightHeld || (e.buttons & 2)) e.preventDefault();
+    }, { passive: false, capture: true });
+  });
   document.addEventListener("wheel", (e) => {
     if (e.ctrlKey) e.preventDefault();
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) e.preventDefault();
+    if (e.buttons & 2) e.preventDefault();
   }, { passive: false, capture: true });
   document.addEventListener("keydown", (e) => {
     if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) e.preventDefault();
@@ -599,13 +623,13 @@ async function loadPlugins(refresh = false) {
   const row = (p) => {
     const icon = p.hasIcon ? `<img class="pl-icon" src="${pluginIconUrl(p.id, -1)}" alt="" />` : `<span class="pl-icon none">◇</span>`;
     const acts = p.actions.map((a, i) =>
-      `<div class="pl-act${a.supported === false ? " unsupported" : ""}" title="${escHtml(a.supported === false
+      `<div class="pl-act${a.supported === false ? " unsupported" : ""}" data-uuid="${escHtml(a.uuid || "")}" title="${escHtml(a.supported === false
         ? `${a.name}：官方程序内置的功能，控制台暂不支持` : (a.tooltip || a.name))}">`
       + (a.hasIcon
         ? `<img loading="lazy" draggable="false" data-name="plugin:${escHtml(p.id)}/${i}" src="${pluginIconUrl(p.id, i)}" alt="" />`
         : `<span class="pl-act-noimg">—</span>`)
       + `<span>${escHtml(a.name)}</span></div>`).join("");
-    return `<details class="plugin${p.downloaded ? " downloaded" : ""}">`
+    return `<details class="plugin${p.downloaded ? " downloaded" : ""}" data-plugin="${escHtml(p.id)}">`
       + `<summary>${icon}<span class="pl-meta"><b>${escHtml(p.name)}</b>`
       + `<small>${escHtml([p.author, p.version && `v${p.version}`].filter(Boolean).join(" · "))}</small></span>`
       + `<em>${p.actions.length}</em></summary>`
@@ -629,6 +653,137 @@ async function loadPlugins(refresh = false) {
       sideState.pluginGroups = { ...(sideState.pluginGroups || {}), [d.dataset.group]: d.open };
       saveSideState();
     });
+  });
+}
+
+/* ------------------------------------------------- 图标库 / 插件库的右键菜单 */
+let libMenuEl = null;
+
+function hideLibMenu() {
+  if (libMenuEl) {
+    libMenuEl.remove();
+    libMenuEl = null;
+  }
+}
+
+function showLibMenu(x, y, items) {
+  hideLibMenu();
+  if (!items.length) return;
+  const menu = document.createElement("div");
+  menu.className = "key-menu lib-menu";
+  menu.innerHTML = items.map((it, i) =>
+    `<button data-i="${i}"${it.danger ? ' class="danger"' : ""}>${escHtml(it.label)}</button>`).join("");
+  document.body.appendChild(menu);
+  libMenuEl = menu;
+  const w = 230, h = items.length * 34 + 10;
+  menu.style.left = `${Math.max(6, Math.min(x, window.innerWidth - w - 8))}px`;
+  menu.style.top = `${Math.max(6, Math.min(y, window.innerHeight - h - 8))}px`;
+  menu.addEventListener("pointerdown", (e) => e.stopPropagation());
+  menu.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const it = items[Number(btn.dataset.i)];
+    hideLibMenu();
+    it?.onPick?.();
+  });
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (libMenuEl && !libMenuEl.contains(e.target)) hideLibMenu();
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideLibMenu();
+});
+
+async function deleteIconFile(packId, fname) {
+  if (!(await confirmDialog(`删除图标「${escHtml(fname)}」？<br><br>文件会移进回收站，可以从回收站还原。`))) return;
+  const r = await post("/api/iconpacks/delete", { pack: packId, file: fname });
+  toast(r.message || (r.ok ? "已删除" : "删除失败"), 2600);
+  if (r.ok) await loadIcons(true);
+}
+
+async function deleteIconPack(packId, packName) {
+  if (packId === "local") {
+    toast("本地图标是单个文件，请在小图标上右键逐个删除", 2400);
+    return;
+  }
+  if (!(await confirmDialog(`删除整个图标包「${escHtml(packName)}」？<br><br>`
+    + `官方 Stream Dock 里也会消失，需要时得在商店重新下载。<br>文件会移进回收站。`))) return;
+  const r = await post("/api/iconpacks/delete", { pack: packId });
+  toast(r.message || (r.ok ? "已删除" : "删除失败"), 2800);
+  if (r.ok) await loadIcons(true);
+}
+
+async function deletePluginAction(pid, uuid, aname) {
+  if (!(await confirmDialog(`删除动作「${escHtml(aname)}」？<br><br>`
+    + `会改写这个插件的 manifest.json（原文件备份成 manifest.json.m18bak），`
+    + `官方软件里也会看不到这个动作。`))) return;
+  const r = await post("/api/plugins/delete-action", { plugin: pid, uuid });
+  toast(r.message || (r.ok ? "已删除" : "删除失败"), 3200);
+  if (r.ok) {
+    await loadPlugins(true);
+    await refreshState();
+  }
+}
+
+async function deletePlugin(pid, pname) {
+  if (!(await confirmDialog(`删除整个插件「${escHtml(pname)}」？<br><br>`
+    + `插件文件夹会移进回收站；绑着它的按键会被清空。<br>`
+    + `官方 Stream Dock 里也会消失，需要时得在商店重新下载。`))) return;
+  const r = await post("/api/plugins/delete", { plugin: pid });
+  toast(r.message || (r.ok ? "已删除" : "删除失败"), 3000);
+  if (r.ok) {
+    await loadPlugins(true);
+    await loadIcons(true);
+    await refreshState();
+  }
+}
+
+function bindLibMenus() {
+  $("#icon-groups")?.addEventListener("contextmenu", (e) => {
+    const det = e.target.closest("details.icon-group");
+    if (!det) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const packId = det.dataset.pack || "";
+    const packName = det.querySelector(".g-name")?.textContent?.trim() || packId;
+    const items = [];
+    const img = e.target.closest("img[data-name]");
+    if (img && img.dataset.name.startsWith("pack:")) {
+      const rest = img.dataset.name.slice(5);
+      const cut = rest.indexOf("/");
+      const pid = cut === -1 ? rest : rest.slice(0, cut);
+      const fname = cut === -1 ? "" : rest.slice(cut + 1);
+      if (fname) {
+        items.push({ label: `删除这个图标（${fname.replace(/\.[^.]+$/, "")}）`, danger: true,
+                     onPick: () => deleteIconFile(pid, fname) });
+      }
+      items.push({ label: `删除整个图标包（${packName}）`, danger: true,
+                   onPick: () => deleteIconPack(pid, packName) });
+    } else {
+      items.push({ label: `删除整个图标包（${packName}）`, danger: true,
+                   onPick: () => deleteIconPack(packId, packName) });
+    }
+    showLibMenu(e.clientX, e.clientY, items);
+  });
+
+  $("#plugin-list")?.addEventListener("contextmenu", (e) => {
+    const row = e.target.closest("details.plugin");
+    if (!row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pid = row.dataset.plugin || "";
+    const pname = row.querySelector(".pl-meta b")?.textContent?.trim() || pid;
+    const act = e.target.closest(".pl-act");
+    const items = [];
+    if (act && act.dataset.uuid) {
+      const aname = act.querySelector("span")?.textContent?.trim() || act.dataset.uuid;
+      items.push({ label: `删除这个动作（${aname}）`, danger: true,
+                   onPick: () => deletePluginAction(pid, act.dataset.uuid, aname) });
+    }
+    items.push({ label: `删除整个插件（${pname}）`, danger: true, onPick: () => deletePlugin(pid, pname) });
+    items.push({ label: "在资源管理器里打开", onPick: () => post("/api/plugins/reveal", { plugin: pid }) });
+    showLibMenu(e.clientX, e.clientY, items);
   });
 }
 
@@ -993,6 +1148,7 @@ function bindSidebar() {
   bindIconDrag($("#icon-groups"));
   bindIconDrag($("#plugin-list"));
   bindIconDrag($("#custom-plugin-list"));
+  bindLibMenus();
 }
 
 /* ------------------------------------------------------- 拖拽幽灵（通用） */

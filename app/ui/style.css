@@ -892,6 +892,10 @@ body { background: radial-gradient(1200px 600px at 20% -10%, #d8dee8 0%, #bcc5d2
   border-radius: 6px; cursor: pointer;
 }
 .key-menu button:hover { background: #dfe7f4; }
+.lib-menu { min-width: 210px; max-width: 300px; }
+.lib-menu button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-menu button.danger { color: #a3221b; }
+.lib-menu button.danger:hover { background: #f6d9d6; }
 
 .side-sec-actions { display: inline-flex; gap: 4px; }
 .scene-row { cursor: pointer; border-radius: 6px; padding: 4px 4px; }

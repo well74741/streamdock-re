@@ -4465,7 +4465,8 @@ class App:
                 "downloaded": p["downloaded"], "hasIcon": bool(p["icon"]), "custom": p.get("custom", False),
                 "builtin": p.get("builtin", False), "hotkeyPack": p.get("hotkeyPack", False),
                 "mirrored": os.path.normpath(p["folder"]).startswith(os.path.normpath(MIRROR_DIR)),
-                "actions": [{"name": a["name"], "tooltip": a["tooltip"], "hasIcon": bool(a["icon"]),
+                "actions": [{"uuid": a.get("uuid", ""), "name": a["name"], "tooltip": a["tooltip"],
+                             "hasIcon": bool(a["icon"]),
                              "supported": a.get("supported", True)}
                             for a in p["actions"]],
             })
@@ -4479,6 +4480,157 @@ class App:
             return p["icon"]
         acts = p["actions"]
         return acts[idx]["icon"] if 0 <= idx < len(acts) else None
+
+    # -- 删除图标 / 插件（进回收站，可恢复） ---------------------------------- #
+    @staticmethod
+    def _recycle(path: str) -> bool:
+        """把文件或目录移进 Windows 回收站；成功返回 True。"""
+        path = os.path.abspath(path or "")
+        if not path or not os.path.exists(path):
+            return False
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [("hwnd", ctypes.c_void_p),
+                        ("wFunc", ctypes.c_uint),
+                        ("pFrom", ctypes.c_wchar_p),
+                        ("pTo", ctypes.c_wchar_p),
+                        ("fFlags", ctypes.c_ushort),
+                        ("fAnyOperationsAborted", ctypes.c_int),
+                        ("hNameMappings", ctypes.c_void_p),
+                        ("lpszProgressTitle", ctypes.c_wchar_p)]
+
+        op = SHFILEOPSTRUCTW()
+        op.wFunc = 3                                    # FO_DELETE
+        op.pFrom = path + "\0"                          # 文件名列表以双 0 结尾
+        op.fFlags = 0x40 | 0x10 | 0x4 | 0x400           # 允许撤销 / 不确认 / 静默 / 不弹错误框
+        try:
+            shell32 = ctypes.windll.shell32
+            shell32.SHFileOperationW.argtypes = [ctypes.POINTER(SHFILEOPSTRUCTW)]
+            shell32.SHFileOperationW.restype = ctypes.c_int
+            rc = shell32.SHFileOperationW(ctypes.byref(op))
+        except Exception as exc:  # noqa: BLE001
+            log(f"调回收站失败：{exc}")
+            return False
+        return rc == 0 and not op.fAnyOperationsAborted
+
+    def delete_icon(self, pack_id: str, fname: str) -> tuple[bool, str]:
+        """删掉图标包里的一个图标（pack_id = local 时删本地图标）。"""
+        path = self.icon_pack_file(pack_id, fname)
+        if not path:
+            return False, "找不到这个图标"
+        if not self._recycle(path):
+            return False, f"删除失败（可能被占用）：{os.path.basename(path)}"
+        self._catalog_cache = None
+        log(f"已删除图标：{path}")
+        return True, "已删除这个图标"
+
+    def delete_icon_pack(self, pack_id: str) -> tuple[bool, str]:
+        if pack_id == "local":
+            return False, "本地图标是单个文件，请在图标上右键逐个删除"
+        pack = self._catalog()["packs"].get(pack_id)
+        if not pack:
+            return False, "找不到这个图标包"
+        folder = pack["folder"]
+        if not self._recycle(folder):
+            return False, f"删除失败（可能被占用）：{folder}"
+        self._catalog_cache = None
+        log(f"已删除图标包：{folder}")
+        return True, f"已删除图标包「{pack['name']}」"
+
+    def _drop_plugin_bindings(self, plugin_id: str) -> int:
+        """把绑在已删插件上的按键清空，返回清掉的个数。"""
+        removed = 0
+        for page in self.pages:
+            acts = page.get("actions") or {}
+            for k in list(acts):
+                spec = acts.get(k)
+                if isinstance(spec, dict) and spec.get("type") == "plugin" and spec.get("plugin") == plugin_id:
+                    del acts[k]
+                    removed += 1
+            gest = page.get("gestures") or {}
+            for k in list(gest):
+                per = gest.get(k)
+                if not isinstance(per, dict):
+                    continue
+                for g in list(per):
+                    spec = per.get(g)
+                    if isinstance(spec, dict) and spec.get("type") == "plugin" and spec.get("plugin") == plugin_id:
+                        del per[g]
+                        removed += 1
+                if not per:
+                    gest.pop(k, None)
+        if removed:
+            self._save_config()
+        return removed
+
+    def delete_plugin(self, plugin_id: str) -> tuple[bool, str]:
+        """删除整个官方插件目录（进回收站）。"""
+        p = self._catalog()["plugins"].get(plugin_id)
+        if not p:
+            return False, "找不到这个插件"
+        folder, name = p["folder"], p["name"]
+        if p.get("custom"):
+            return False, "自制插件请到左侧「自制插件」里删除"
+        if self.plugin_host:
+            self.plugin_host.forget(plugin_id)
+        if not self._recycle(folder):
+            return False, f"删除失败（可能被插件占着）：{folder}"
+        self._catalog_cache = None
+        self._refresh_plugins()
+        cleared = self._drop_plugin_bindings(plugin_id)
+        if cleared:
+            self.apply_keys()
+        log(f"已删除插件：{name}（{folder}）" + (f"，清空 {cleared} 个按键绑定" if cleared else ""))
+        return True, f"已删除插件「{name}」" + (f"，{cleared} 个按键已清空" if cleared else "")
+
+    def delete_plugin_action(self, plugin_id: str, uuid: str) -> tuple[bool, str]:
+        """从插件的 manifest.json 里删掉一个动作（原清单备份为 manifest.json.m18bak）。"""
+        p = self._catalog()["plugins"].get(plugin_id)
+        if not p:
+            return False, "找不到这个插件"
+        if p.get("builtin"):
+            return False, "官方内置插件的动作是程序自带功能，删不掉"
+        folder = p["folder"]
+        mpath = os.path.join(folder, "manifest.json")
+        try:
+            with open(mpath, encoding="utf-8-sig") as fh:
+                man = json.load(fh)
+        except (OSError, ValueError):
+            return False, "读不到这个插件的 manifest.json"
+        acts = [a for a in (man.get("Actions") or []) if isinstance(a, dict)]
+        keep = [a for a in acts if str(a.get("UUID")) != uuid]
+        if len(keep) == len(acts):
+            return False, "找不到这个动作"
+        gone = next((a for a in acts if str(a.get("UUID")) == uuid), {})
+        aname = str(gone.get("Name") or uuid.rsplit(".", 1)[-1])
+        try:
+            shutil.copyfile(mpath, mpath + ".m18bak")
+            man["Actions"] = keep
+            with open(mpath, "w", encoding="utf-8") as fh:
+                json.dump(man, fh, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            return False, f"写插件清单失败：{exc}"
+        for lname in ("zh_CN.json", "zh-CN.json", "en.json", "en_US.json"):
+            lpath = os.path.join(folder, lname)
+            try:
+                with open(lpath, encoding="utf-8-sig") as fh:
+                    loc = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            if isinstance(loc, dict) and uuid in loc:
+                aname = str((loc.get(uuid) or {}).get("Name") or aname)
+                loc.pop(uuid, None)
+                try:
+                    with open(lpath, "w", encoding="utf-8") as fh:
+                        json.dump(loc, fh, ensure_ascii=False, indent=2)
+                except OSError:
+                    pass
+        if self.plugin_host:
+            self.plugin_host.reload(plugin_id)
+        self._catalog_cache = None
+        self._refresh_plugins()
+        log(f"已删除插件动作：{plugin_id}/{uuid}（原清单备份 manifest.json.m18bak）")
+        return True, f"已删除动作「{aname}」"
 
     def list_icons(self) -> list:
         try:
@@ -6151,6 +6303,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": APP.clear_key_all(int(body.get("key", 0)))})
         elif path == "/api/icons":
             self._json({"ok": True, "items": APP.list_icons()})
+        elif path == "/api/iconpacks/delete":
+            pack = str(body.get("pack") or "")
+            fname = str(body.get("file") or "")
+            ok, msg = APP.delete_icon(pack, fname) if fname else APP.delete_icon_pack(pack)
+            self._json({"ok": ok, "message": msg, "packs": APP.icon_packs()})
+        elif path == "/api/plugins/delete":
+            ok, msg = APP.delete_plugin(str(body.get("plugin") or ""))
+            self._json({"ok": ok, "message": msg, "plugins": APP.plugin_catalog()})
+        elif path == "/api/plugins/delete-action":
+            ok, msg = APP.delete_plugin_action(str(body.get("plugin") or ""), str(body.get("uuid") or ""))
+            self._json({"ok": ok, "message": msg, "plugins": APP.plugin_catalog()})
+        elif path == "/api/plugins/reveal":
+            p = APP._catalog()["plugins"].get(str(body.get("plugin") or ""))
+            self._json({"ok": bool(p) and APP.reveal_in_explorer(p["folder"])})
         elif path == "/api/official/sync":
             self._json({"ok": True, **APP.sync_official(str(body.get("mode") or "new"),
                                                         bool(body.get("plugins"))),
