@@ -1,4 +1,4 @@
-﻿# Stream Dock M18 控制台
+# Stream Dock M18 控制台
 
 自研 Stream Dock M18 驱动：一个本地图形控制台，**不经过官方 Stream Dock 软件**，自己接管设备的按键、屏幕和 24 颗灯珠。
 
@@ -139,6 +139,20 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 - 界面打不开：删掉 `%LOCALAPPDATA%\M18Console\browser` 后重启
 - 图标库 / 插件索引为空：官方软件不在常见安装位置时，在 `app/config.json` 里加
   `"officialRoot": "X:\\你的路径\\Stream Dock"`（或设环境变量 `M18_SD_ROOT`）
+
+## 官方插件兼容性
+
+控制台自带插件宿主（`app/pluginhost.py`），能直接跑官方驱动 `plugins` 目录里的插件，按入口类型区分：
+
+| 入口类型 | 数量（本机） | 情况 |
+|---|---|---|
+| `*.html`（网页插件） | 14 | 正常。宿主用**有窗口**的 Edge 在屏幕外跑，便签 / 待办这类 `window.open` 的弹窗会以独立窗口显示（窗口本身从任务栏隐藏） |
+| `plugin/index.js`（Node） | 10 | 正常，用官方目录里的 `node\node20.exe`（找不到时用系统 `node`） |
+| `*.exe` | 4 | 能启动；未签名的 exe 在装了火绒等安全软件的机器上可能被拦（表现为插件没反应，日志里没有「插件已启动」） |
+| `*.cmd` / `*.bat` | 1 | 能启动（用 `cmd /c` 转发参数），但插件自己的脚本要配好才能用（ScriptDeck 这类） |
+| 没有 `CodePath` | 1 | 跑不了：官方内置功能（如 ETS2 Hotkey），只能由官方驱动实现 |
+
+需要登录 / 填密钥的插件（Spotify、OBS、YouTube、PR、GitHub-CI 等）能加载，但要先在按键的**设置页**里把账号、API Key 填好，否则只会显示离线。
 
 ## 安全
 
