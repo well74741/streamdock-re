@@ -2413,7 +2413,11 @@ function bindUI() {
 
   $("#sel-nav").addEventListener("change", async (e) => {
     if (!selectedKey) return;
-    await post("/api/key/action", { key: selectedKey, type: "nav", name: e.target.value });
+    // 这里必须带上当前页签：原来少传 gesture，选个「下一场景」会被写成短按动作，
+    // 长按/双击页签随即刷新成「未绑定」，看起来就是“改了立刻变回去”。
+    const r = await post("/api/key/action", { key: selectedKey, type: "nav", name: e.target.value, gesture: editGesture });
+    if (!r.ok) toast("没设上，换个导航动作再试", 1800);
+    else if (editGesture !== "press") toast(`已设为${editGesture === "long" ? "长按" : "双击"}：${e.target.value}`, 1400);
     await refreshState();
   });
 
