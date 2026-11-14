@@ -94,35 +94,73 @@ static class M18Setup
     }
 
     // 装之前先看看这个位置能不能写：不能写就当场说清楚并给出能写的位置，别等解压到一半才报错
-    static bool CanWriteUnder(string dir)
+    // 注意：只判断"能不能新建并写入"。「删掉探测文件」失败不算——安全软件刚扫过会短暂占用新文件，
+    // 以前把删除失败也当成"写不进去"，结果每台装了杀毒软件的电脑都被判成哪里都写不了。
+    static bool CanWriteUnder(string dir, out string why)
     {
+        why = "";
+        string probeDir;
         try
         {
             dir = Path.GetFullPath(dir.Trim());
-            string probeDir = dir;
+            probeDir = dir;
             int guard = 0;
             while (!Directory.Exists(probeDir) && guard++ < 64)
             {
                 string parent = Path.GetDirectoryName(probeDir);
-                if (string.IsNullOrEmpty(parent) || string.Equals(parent, probeDir, StringComparison.OrdinalIgnoreCase)) return false;
+                if (string.IsNullOrEmpty(parent) || string.Equals(parent, probeDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    why = "找不到存在的上级目录";
+                    return false;
+                }
                 probeDir = parent;
             }
-            string probe = Path.Combine(probeDir, ".m18-probe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            using (var s = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) s.WriteByte(0);
-            File.Delete(probe);
-            return true;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            why = Short(ex, 140);
+            Log("× 路径无效 " + dir + "：" + why);
+            return false;
+        }
+
+        string probe = Path.Combine(probeDir, ".m18-probe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        try
+        {
+            using (var s = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite)) s.WriteByte(0);
+        }
+        catch (Exception ex)
+        {
+            why = Short(ex, 140);
+            Log("× 不能写 " + dir + "（探测 " + probeDir + "）：" + why);
+            return false;
+        }
+        try { File.Delete(probe); } catch { }      // 删不掉无所谓，写进去了就算能写
+        Log("√ 可以写 " + dir);
+        return true;
     }
 
-    static string FirstWritable(IEnumerable<string> candidates)
+    static bool CanWriteUnder(string dir)
+    {
+        string ignored;
+        return CanWriteUnder(dir, out ignored);
+    }
+
+    static string FirstWritable(IEnumerable<string> candidates, List<string> report)
     {
         foreach (var c in candidates)
         {
             if (string.IsNullOrEmpty(c)) continue;
-            if (CanWriteUnder(c)) return Path.GetFullPath(c.Trim());
+            string why;
+            bool ok = CanWriteUnder(c, out why);
+            if (report != null) report.Add((ok ? "√ " : "× ") + c + (ok ? "" : "  —— " + why));
+            if (ok) return Path.GetFullPath(c.Trim());
         }
         return null;
+    }
+
+    static string FirstWritable(IEnumerable<string> candidates)
+    {
+        return FirstWritable(candidates, null);
     }
 
     // 真正开始装之前再试写一次：权限问题在这一步就暴露，报错里带的是写不进去的那个目录
@@ -148,6 +186,21 @@ static class M18Setup
         bool silent = args.Contains("--silent");
         try
         {
+            Log("=== " + APP_NAME + " 安装程序 " + VERSION + " 启动 ===");
+            Log("参数：" + string.Join(" ", argv));
+            Log("用户：" + Environment.UserName + "；LocalAppData：" + LocalAppData);
+            Log("程序位置：" + Assembly.GetExecutingAssembly().Location);
+            // 排查用：只测某个目录能不能写，不安装
+            if (args.Contains("--probe"))
+            {
+                int pi = args.IndexOf("--probe");
+                string pd = (pi >= 0 && pi + 1 < args.Count) ? args[pi + 1] : DefaultDir;
+                string pwhy;
+                bool pok = CanWriteUnder(pd, out pwhy);
+                Console.Error.WriteLine((pok ? "可写：" : "不可写：") + pd + (pok ? "" : "  —— " + pwhy));
+                Log("探针 " + (pok ? "可写 " : "不可写 ") + pd + (pok ? "" : "：" + pwhy));
+                Environment.Exit(pok ? 0 : 1);
+            }
             long payloadLen;
             long payloadPos = FindPayload(out payloadLen);
             if (args.Contains("--uninstall") || payloadPos < 0)
@@ -158,6 +211,20 @@ static class M18Setup
             {
                 int i = args.IndexOf("--dir");
                 string target = (i >= 0 && i + 1 < args.Count) ? args[i + 1] : DefaultDir;
+                if (!CanWriteUnder(target))
+                {
+                    var cand = new List<string>();
+                    string envDir = Environment.GetEnvironmentVariable("M18_INSTALL_DIR");
+                    if (!string.IsNullOrEmpty(envDir)) cand.Add(envDir);
+                    cand.Add(DefaultDir);
+                    cand.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console"));
+                    string alt = FirstWritable(cand);
+                    if (alt != null && !string.Equals(Path.GetFullPath(alt), Path.GetFullPath(target.Trim()), StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.Error.WriteLine("警告：写不进 " + target + "，改装到 " + alt);
+                        target = alt;
+                    }
+                }
                 string exe = Install(target, !args.Contains("--no-shortcut"), payloadPos, payloadLen, null);
                 foreach (var w in Warnings) Console.Error.WriteLine("警告：" + w);
                 if (!args.Contains("--no-launch")) Launch(exe);
@@ -542,23 +609,33 @@ static class M18Setup
         void Start()
         {
             string target = string.IsNullOrWhiteSpace(dirBox.Text) ? DefaultDir : dirBox.Text;
-            if (!CanWriteUnder(target))
+            string why;
+            if (!CanWriteUnder(target, out why))
             {
-                string alt = FirstWritable(new[] { DefaultDir, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console") });
-                string msg = "这个位置写不进去：\n" + target + "\n\n";
+                var report = new List<string>();
+                report.Add("× " + target + "  —— " + why);
+                string alt = FirstWritable(new[] {
+                    DefaultDir,
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console"),
+                    Path.Combine(LocalAppData, "M18Console")
+                }, report);
+                string list = "· " + string.Join("\n· ", report.ToArray());
                 if (alt != null)
                 {
-                    msg += "要改装到下面这个能写的位置吗？\n" + alt + "\n\n（选「否」可以自己点「浏览…」换一个目录）";
+                    string msg = "这个位置写不进去：\n" + target + "\n\n" + list
+                               + "\n\n要改装到下面这个能写的位置吗？\n" + alt
+                               + "\n\n（选「否」可以自己点「浏览…」换一个目录）";
                     if (MessageBox.Show(this, msg, "安装位置不可写", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
                     dirBox.Text = alt;
                     target = alt;
                 }
                 else
                 {
-                    msg += "这台电脑上常见的位置都写不进去，多半是安全软件 / Windows 的「受控文件夹访问」在拦。\n\n"
-                         + "运行源码里的「诊断.bat」可以查出是谁拦截并放行；日志：" + LogPath();
-                    MessageBox.Show(this, msg, "安装位置不可写", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
+                    string msg = "这个位置写不进去：\n" + target + "\n\n探测结果：\n" + list
+                               + "\n\n多半是安全软件 / Windows 的「受控文件夹访问」在拦未签名的程序。\n"
+                               + "运行源码里的「诊断.bat」可以查出是谁拦截并放行。\n\n"
+                               + "仍要尝试安装吗？（可能装到一半失败，失败后日志里有确切原因）\n日志：" + LogPath();
+                    if (MessageBox.Show(this, msg, "安装位置不可写", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
                 }
             }
             installBtn.Enabled = browseBtn.Enabled = dirBox.Enabled = false;
