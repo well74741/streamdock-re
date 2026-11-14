@@ -1546,7 +1546,10 @@ async function appsDialog(name, current) {
 }
 
 function selectKey(n) {
-  if (n !== selectedKey) editGesture = "press";     // 换键时回到「短按」
+  if (n !== selectedKey) {
+    editGesture = "press";                          // 换键时回到「短按」
+    formDrafts = {};                                // 上一个键没保存的草稿丢弃
+  }
   selectedKey = n;
   refreshCells();
   renderEditor();
@@ -1556,6 +1559,8 @@ function selectKey(n) {
 }
 
 let editGesture = "press";
+// 三个触发方式的「草稿」：切页签不丢、点保存才一起提交
+let formDrafts = {};
 let sceneNames = [];
 const VALUE_TYPES = {
   launch: "程序 / 文件 / 文件夹路径（可点「选择文件…」）",
@@ -1568,6 +1573,90 @@ const VALUE_TYPES = {
   sound: "音频文件路径（wav / mp3）；留空 = 停止所有音效",
   folder: "文件夹名称，如：常用工具（按下进入子页，子页左上角是返回键）",
 };
+
+function gestureLabel(g) {
+  return g === "press" ? "短按" : g === "long" ? "长按" : "双击";
+}
+
+// 把服务端返回的「某个触发方式」转成和表单一样的结构，便于统一填充
+function viewToDraft(view) {
+  const spec = view?.spec || {};
+  const t = view ? view.type : "none";
+  const val = view?.value || "";
+  return {
+    type: t,
+    value: ["nav", "media", "macro", "scene", "plugin", "window"].includes(t) ? "" : val,
+    nav: t === "nav" ? val : "",
+    media: t === "media" ? (spec.action || val) : "",
+    macro: t === "macro" ? val : "",
+    mouse: t === "mouse" ? (spec.button || "click") : "click",
+    window: t === "window" ? (spec.op || "minimize") : "minimize",
+    scene: t === "scene" ? val : "",
+    enter: !!spec.enter,
+    secret: !!spec.secret,
+  };
+}
+
+// 读当前表单（不改服务端）
+function readFormDraft() {
+  return {
+    type: $("#sel-type").value,
+    value: $("#sel-value").value,
+    nav: $("#sel-nav").value,
+    media: $("#sel-media").value,
+    macro: $("#sel-macro").value,
+    mouse: $("#sel-mouse").value,
+    window: $("#sel-window").value,
+    scene: $("#sel-scene").value,
+    enter: !!$("#sel-enter")?.checked,
+    secret: !!$("#sel-secret")?.checked,
+  };
+}
+
+// 草稿 → 提交用的 spec；「未绑定」「插件」返回 null
+function specFromDraft(d, key, gesture) {
+  const t = d.type;
+  if (t === "none" || t === "plugin") return null;
+  const spec = { key, type: t, gesture };
+  const val = (d.value || "").trim();
+  if (t === "folder") spec.name = val || "文件夹";
+  else if (t === "nav") spec.name = d.nav;
+  else if (t === "hotkey" || t === "toggle") spec.keys = val;
+  else if (t === "media") spec.action = d.media;
+  else if (t === "macro") spec.macro = d.macro;
+  else if (t === "url") spec.url = val;
+  else if (t === "text") {
+    spec.text = (d.value || "").replace(/\\n/g, "\n");
+    spec.enter = !!d.enter;
+    spec.secret = !!d.secret;
+  } else if (t === "mouse") {
+    spec.button = d.mouse;
+    spec.pos = val;
+  } else if (t === "close") spec.target = val;
+  else if (t === "window") spec.op = d.window;
+  else if (t === "scene") spec.scene = d.scene;
+  else if (t === "sound") spec.path = val;
+  else spec.path = val;
+  return spec;
+}
+
+// 草稿的简短说明，用在「键 X：长按：…（未保存）」那一行
+function draftLabel(d) {
+  const t = d.type;
+  const val = (d.value || "").trim();
+  if (t === "none") return "未设置";
+  if (t === "nav") return `导航：${d.nav}`;
+  if (t === "scene") return `场景：${d.scene}`;
+  if (t === "folder") return `文件夹：${val || "文件夹"}`;
+  if (t === "hotkey" || t === "toggle") return val;
+  if (t === "text") return val;
+  if (t === "mouse") return `鼠标：${d.mouse}`;
+  if (t === "window") return `窗口：${d.window}`;
+  if (t === "media") return `媒体键：${d.media}`;
+  if (t === "macro") return "宏";
+  if (t === "plugin") return "插件动作";
+  return val ? `打开：${val}` : t;
+}
 
 function gestureView(n, g) {
   if (g === "press") {
@@ -1612,31 +1701,35 @@ function fillSceneSelect(selected) {
 }
 
 function fillActionForm(n) {
+  const draft = formDrafts[editGesture];
   const view = gestureView(n, editGesture);
-  let t = view ? view.type : "none";
+  const d = draft || viewToDraft(view);
+  let t = d.type;
   if (t === "plugin" && editGesture !== "press") t = "none";
-  const val = view?.value || "";
-  const spec = view?.spec || {};
   $("#sel-type").value = t;
-  $("#sel-value").value = ["nav", "media", "macro", "scene", "plugin", "window"].includes(t) ? "" : val;
-  $("#sel-macro").value = t === "macro" ? val : "";
-  if (t === "media" && (spec.action || val)) $("#sel-media").value = spec.action || val;
-  if (t === "mouse") $("#sel-mouse").value = spec.button || "click";
-  if (t === "window") $("#sel-window").value = spec.op || "minimize";
-  $("#sel-enter").checked = !!spec.enter;
-  $("#sel-secret").checked = !!spec.secret;
+  $("#sel-value").value = ["nav", "media", "macro", "scene", "plugin", "window"].includes(t) ? "" : (d.value || "");
+  $("#sel-macro").value = t === "macro" ? (d.macro || "") : "";
+  if (t === "media" && d.media) $("#sel-media").value = d.media;
+  if (t === "mouse" && d.mouse) $("#sel-mouse").value = d.mouse;
+  if (t === "window" && d.window) $("#sel-window").value = d.window;
+  $("#sel-enter").checked = !!d.enter;
+  $("#sel-secret").checked = !!d.secret;
   const nav = $("#sel-nav");
   const jumps = Array.from({ length: (state?.mainPages || [0]).length }, (_, i) => `跳到第 ${i + 1} 页`);
   const opts = [...NAV_PRESETS.slice(0, 4), "返回上级", "返回上一场景", ...jumps, ...NAV_PRESETS.slice(4)];
-  nav.innerHTML = opts.map((p) => `<option value="${p}"${val === p ? " selected" : ""}>${p}</option>`).join("");
-  fillSceneSelect(t === "scene" ? val : "");
-  // 触发方式标签：当前 / 已设置
+  nav.innerHTML = opts.map((p) => `<option value="${p}">${p}</option>`).join("");
+  if (t === "nav" && d.nav) nav.value = d.nav;
+  fillSceneSelect(t === "scene" ? (d.scene || "") : "");
+  // 触发方式标签：当前 / 已设置 / 有未保存草稿
   document.querySelectorAll("#sel-gesture button").forEach((b) => {
     const g = b.dataset.g;
     b.classList.toggle("on", g === editGesture);
     b.classList.toggle("has", !!gestureView(n, g) && g !== "press");
+    b.classList.toggle("dirty", !!formDrafts[g]);
   });
   applyTypeVisibility(t);
+  const dirtyBtn = $("#sel-save-top");
+  if (dirtyBtn) dirtyBtn.classList.toggle("dirty", Object.keys(formDrafts).length > 0);
   return t;
 }
 
@@ -1720,19 +1813,23 @@ function renderEditor() {
   $("#sel-image").textContent = isNav ? "导航键无屏幕" : (img ? "单独图片 / 动图" : "无（标题 / 编号）");
 
   const actType = fillActionForm(n);
+  const curDraft = formDrafts[editGesture];
   if (editGesture !== "press") {
-    $("#sel-action").textContent = `${editGesture === "long" ? "长按" : "双击"}：${gestureView(n, editGesture)?.label || "未设置"}`;
+    const shown = curDraft ? { label: draftLabel(curDraft) } : gestureView(n, editGesture);
+    $("#sel-action").textContent = `${gestureLabel(editGesture)}：${shown?.label || "未设置"}${curDraft ? "（未保存）" : ""}`;
+  } else if (curDraft) {
+    $("#sel-action").textContent = "短按：未保存的改动";
   }
 
-  $("#sel-hint").textContent = editGesture !== "press"
-    ? (state?.keyActionTypes?.[n] === "plugin"
-      ? "这个键绑定的是插件动作，长按 / 双击由插件自己处理，这里的设置不生效。"
-      : `${editGesture === "long" ? "长按（按住 0.5 秒）" : "双击（0.3 秒内按两下）"}时执行。设置后，短按会在松开${editGesture === "double" ? "约 0.3 秒" : ""}后才触发。`)
+  let hint = editGesture !== "press"
+    ? `${gestureLabel(editGesture)}（${editGesture === "long" ? "按住 0.5 秒" : "0.3 秒内按两下"}）时执行。设置后，短按会在松开${editGesture === "double" ? "约 0.3 秒" : ""}后才触发。`
     : actType === "plugin"
     ? "插件动作：按下由插件处理，画面也由插件更新；点「插件设置」配置。改成别的类型即解除绑定。"
     : isNav
       ? "导航键默认：左=上一页，中=主页，右=下一页；也可以改成打开程序、网页或热键。"
       : "拖图片换画面；拖程序 / 快捷方式 / 脚本 / 文件夹绑定动作，按下即打开。";
+  if (Object.keys(formDrafts).length) hint = "有未保存的改动 —— 三种触发方式改完一起点右上角「保存」生效。" + hint;
+  $("#sel-hint").textContent = hint;
 }
 
 /* ------------------------------------------------------------------ 拖放绑定 */
@@ -2411,79 +2508,91 @@ function bindUI() {
     }
   });
 
-  $("#sel-nav").addEventListener("change", async (e) => {
-    if (!selectedKey) return;
-    // 这里必须带上当前页签：原来少传 gesture，选个「下一场景」会被写成短按动作，
-    // 长按/双击页签随即刷新成「未绑定」，看起来就是“改了立刻变回去”。
-    const r = await post("/api/key/action", { key: selectedKey, type: "nav", name: e.target.value, gesture: editGesture });
-    if (!r.ok) toast("没设上，换个导航动作再试", 1800);
-    else if (editGesture !== "press") toast(`已设为${editGesture === "long" ? "长按" : "双击"}：${e.target.value}`, 1400);
-    await refreshState();
+  // 下拉只改表单，不提交；点「保存」时三种触发方式一起写进服务端
+  $("#sel-nav").addEventListener("change", () => {
+    if (selectedKey) formDrafts[editGesture] = readFormDraft();
   });
-
-  $("#sel-type").addEventListener("change", () => applyTypeVisibility($("#sel-type").value));
+  $("#sel-type").addEventListener("change", () => {
+    if (selectedKey) formDrafts[editGesture] = readFormDraft();
+    applyTypeVisibility($("#sel-type").value);
+  });
   $("#sel-secret").addEventListener("change", () => applyTypeVisibility($("#sel-type").value));
   document.querySelectorAll("#sel-gesture button").forEach((b) => {
     b.addEventListener("click", () => {
+      // 切页签前把当前表单存成草稿，换回来时还在（不再依赖服务端）
+      if (selectedKey) formDrafts[editGesture] = readFormDraft();
       editGesture = b.dataset.g;
       renderEditor();
     });
   });
+  // 表单里任何改动都记进草稿：这样服务端推送刷新画面时，正在填的内容不会被冲掉
+  ["#sel-value", "#sel-macro", "#sel-media", "#sel-mouse", "#sel-window", "#sel-scene", "#sel-enter", "#sel-secret", "#sel-nav"].forEach((sel) => {
+    const el = $(sel);
+    if (!el) return;
+    const snap = () => { if (selectedKey) formDrafts[editGesture] = readFormDraft(); };
+    el.addEventListener("input", snap);
+    el.addEventListener("change", snap);
+  });
   $("#sel-pick").addEventListener("click", async () => {
     const r = await post("/api/dialog/pick", { mode: "file" });
-    if (r.ok && r.path) $("#sel-value").value = r.path;
+    if (r.ok && r.path) {
+      $("#sel-value").value = r.path;
+      if (selectedKey) formDrafts[editGesture] = readFormDraft();
+    }
   });
 
   $("#sel-save-top").addEventListener("click", async () => {
     if (!selectedKey) return;
-    const type = $("#sel-type").value;
-    const value = $("#sel-value").value;
-    const before = gestureView(selectedKey, editGesture);
-    if (before?.type === "folder" && type !== "folder"
-      && !(await confirmDialog(`这个键原来是文件夹「${before.value}」，替换后文件夹和里面的按键会一起删除。继续？`))) return;
-    if (type === "none") {
-      await post("/api/key/action/clear", { key: selectedKey, gesture: editGesture });
-      await refreshState();
-      return;
-    }
-    if (type === "plugin") return;
-    const spec = { key: selectedKey, type, gesture: editGesture };
-    if (type === "folder") {
-      if (selectedKey > 15) return toast("导航键没有屏幕，不能做文件夹", 1800);
-      spec.name = value.trim() || "文件夹";
-      const r = await post("/api/key/action", spec);
-      toast(r.ok ? (before?.type === "folder" ? "文件夹已改名" : `已创建文件夹「${spec.name}」，点「打开文件夹编辑」往里放按键`) : "创建失败", 2400);
-      await refreshState();
-      return;
-    }
-    if (type === "nav") spec.name = $("#sel-nav").value;
-    else if (type === "hotkey" || type === "toggle") spec.keys = value.trim();
-    else if (type === "media") spec.action = $("#sel-media").value;
-    else if (type === "macro") spec.macro = $("#sel-macro").value;
-    else if (type === "url") spec.url = value.trim();
-    else if (type === "text") {
-      spec.text = value.replace(/\\n/g, "\n");
-      spec.enter = $("#sel-enter").checked;
-      spec.secret = $("#sel-secret").checked;
-    } else if (type === "mouse") {
-      spec.button = $("#sel-mouse").value;
-      spec.pos = value.trim();
-    } else if (type === "close") spec.target = value.trim();
-    else if (type === "window") spec.op = $("#sel-window").value;
-    else if (type === "scene") spec.scene = $("#sel-scene").value;
-    else if (type === "sound") spec.path = value.trim();
-    else spec.path = value.trim();
+    const n = selectedKey;
+    // 当前页签的内容也进草稿，这样三种触发方式可以一起提交
+    formDrafts[editGesture] = readFormDraft();
+    const order = ["press", "long", "double"];
+    const todo = order.filter((g) => formDrafts[g]);
+    if (!todo.length) return;
 
-    const r = await post("/api/key/action", spec);
-    if (!r.ok) {
-      toast({
-        toggle: "双状态热键要填两个组合键，用 | 隔开",
-        sound: "找不到这个音频文件",
-        text: "要输入的文字不能为空",
-      }[type] || "保存失败：路径不存在或内容为空", 2200);
-    } else {
-      toast(editGesture === "press" ? "已保存" : `已保存${editGesture === "long" ? "长按" : "双击"}动作`, 1000);
+    // 文件夹被替换：先问一次
+    for (const g of todo) {
+      const d = formDrafts[g];
+      const before = gestureView(n, g);
+      if (before?.type === "folder" && d.type !== "folder"
+        && !(await confirmDialog(`按键 ${n} 的${gestureLabel(g)}原来是文件夹「${before.value}」，替换后文件夹和里面的按键会一起删除。继续？`))) return;
+      if (d.type === "folder" && n > 15) return toast("导航键没有屏幕，不能做文件夹", 1800);
     }
+
+    const saved = [];
+    let failed = "";
+    let madeFolder = false;
+    for (const g of todo) {
+      const d = formDrafts[g];
+      if (d.type === "plugin") continue;                 // 插件动作不在这里设置
+      const before = gestureView(n, g);
+      const spec = specFromDraft(d, n, g);
+      if (!spec) {                                       // 「未绑定」= 清掉
+        if (before) {
+          await post("/api/key/action/clear", { key: n, gesture: g });
+          saved.push(gestureLabel(g));
+        }
+        continue;
+      }
+      if (before?.type === "folder" && d.type === "folder" && before.value === spec.name) continue;
+      const r = await post("/api/key/action", spec);
+      if (r.ok) {
+        saved.push(gestureLabel(g));
+        if (d.type === "folder" && before?.type !== "folder") madeFolder = true;
+      } else if (!failed) {
+        failed = {
+          toggle: "双状态热键要填两个组合键，用 | 隔开",
+          sound: "找不到这个音频文件",
+          text: "要输入的文字不能为空",
+        }[d.type] || "路径不存在或内容为空";
+      }
+    }
+
+    if (saved.length) {
+      formDrafts = {};
+      toast(`已保存：${saved.join(" + ")}${madeFolder ? "（文件夹已创建，点「打开文件夹编辑」往里放按键）" : ""}`, madeFolder ? 2600 : 1400);
+    }
+    if (failed) toast("没保存上：" + failed, 2400);
     await refreshState();
   });
 
