@@ -207,6 +207,8 @@ def plugin_kind(manifest: dict, folder: str) -> tuple[str, str]:
         return "node", path
     if low.endswith(".exe"):
         return "exe", path
+    if low.endswith((".cmd", ".bat")):
+        return "cmd", path
     if os.path.isfile(path + ".exe"):
         return "exe", path + ".exe"
     return "unsupported", path
@@ -317,7 +319,7 @@ class PluginHost:
             self.started.add(uid)
         kind = p["kind"]
         try:
-            if kind in ("node", "exe"):
+            if kind in ("node", "exe", "cmd"):
                 self._spawn(uid, p)
             elif kind == "html":
                 with self.lock:
@@ -353,7 +355,9 @@ class PluginHost:
             raise FileNotFoundError(f"找不到入口 {entry}")
         args = ["-port", str(self.server.port), "-pluginUUID", uid,
                 "-registerEvent", "registerPlugin", "-info", self.info_json(uid)]
-        if p["kind"] == "node":
+        if p["kind"] == "cmd":
+            cmd = ["cmd", "/c", entry] + args
+        elif p["kind"] == "node":
             node = self._node_exe()
             if not node:
                 raise FileNotFoundError("找不到 Node.js（官方安装目录 node\\node20.exe）")
@@ -425,7 +429,7 @@ class PluginHost:
                 "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                 "--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required",
                 "--disable-popup-blocking",            # 按键是 WS 事件，没有用户手势，默认会被拦
-                "--mute-audio", "--window-position=-3200,-3200", "--window-size=320,240",
+                "--mute-audio", "--window-position=-3200,-3200",
                 f"--user-data-dir={self._profile_dir()}", url]
         subprocess.Popen(args, creationflags=NO_WINDOW, close_fds=True)
         threading.Thread(target=self._hide_host_window, daemon=True).start()

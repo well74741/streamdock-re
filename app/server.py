@@ -2873,17 +2873,28 @@ class App:
                 log(f"宏步骤失败 {op}: {exc}")
 
     @staticmethod
+    def _startup_points_to_me(ed: str) -> bool:
+        """启动文件夹里的快捷方式确实指向这个版本吗？
+
+        只「看得见文件」不够：早期用源码版跑过时留下的 `.lnk` 指着 `启动….bat`，
+        安装版/免安装版看到它会误以为自启已经开着。所以还要看快捷方式的目标。
+        """
+        lnk = os.path.join(STARTUP_DIR, STARTUP_LNKS[ed])
+        if not os.path.isfile(lnk):
+            return False
+        target = App._lnk_target(lnk).lower()
+        if not target:                       # 读不出目标时按存在算，避免误报成「关」
+            return True
+        if ed == "源码版":
+            return target.endswith(".bat")
+        return target.endswith("m18console.exe")
+
+    @staticmethod
     def autostart_state() -> dict:
         """开机自启现状：本版本有没有开；另一个版本有没有开（只会有一个生效，后启动的只是打开窗口）。"""
         other = "源码版" if EDITION == "安装版" else "安装版"
-        has = lambda ed: os.path.isfile(os.path.join(STARTUP_DIR, STARTUP_LNKS[ed]))  # noqa: E731
-        # 旧版本源码运行时也用过「安装版」那个名字：看快捷方式指向哪儿才算数
-        this_on = has(EDITION) or bool(App._run_value())
-        other_on = has(other)
-        if EDITION == "源码版" and other_on and not this_on:
-            target = App._lnk_target(os.path.join(STARTUP_DIR, STARTUP_LNKS["安装版"]))
-            if target.lower().endswith(".bat"):
-                this_on, other_on = True, False
+        this_on = App._startup_points_to_me(EDITION) or bool(App._run_value())
+        other_on = App._startup_points_to_me(other)
         return {"this": this_on, "other": other if other_on else ""}
 
     # -- 开机自启：启动文件夹被拦时，退而写当前用户的 Run 项 -------------- #

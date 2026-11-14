@@ -61,6 +61,21 @@ function syncPlugins(items, wsPort) {
         fn.call(w, wsPort, it.uuid, "registerPlugin", it.info);
         f.dataset.registered = "1";
         log(`${it.uuid}：网页插件已加载`);
+        try {
+          // 插件靠 window.open 弹便签 / 待办窗口。后台宿主窗口在屏幕外，
+          // 直接弹会被 Edge 并成宿主窗口里的一个标签页（用户看不到）；
+          // 这里改由宿主页开一个真正的弹窗窗口，插件拿到的仍是一个窗口对象。
+          w.open = (url, name, feat) => {
+            let abs = url;
+            try { abs = new URL(url, w.location.href).href; } catch (_) { /* 保持原样 */ }
+            log(`${it.uuid}：打开弹窗 ${abs}`);
+            const wpx = 620, hpx = 700;
+            const left = Math.max(0, Math.round((screen.availWidth - wpx) / 2));
+            const top = Math.max(0, Math.round((screen.availHeight - hpx) / 2));
+            return window.open(abs, "_blank",
+              `popup=1,width=${wpx},height=${hpx},left=${left},top=${top}`);
+          };
+        } catch (e) { log(`${it.uuid}：接管弹窗失败 ${e}`); }
       } catch (e) {
         log(`${it.uuid}：注册出错 ${e}`);
       }
