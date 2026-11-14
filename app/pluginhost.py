@@ -396,7 +396,13 @@ class PluginHost:
         return os.path.join(os.environ.get("LOCALAPPDATA") or self.data_dir, "M18Console", "pluginhost")
 
     def _ensure_browser(self) -> None:
-        """网页插件跑在后台无头 Edge 里（宿主页 /plugin-host.html）。"""
+        """网页插件跑在后台浏览器里（宿主页 /plugin-host.html）。
+
+        用「有窗口」的浏览器而不是 --headless：便签 / 待办这类插件按下键后靠
+        window.open 打开一个弹窗，无头模式里弹窗根本不会显示，用户看到的就是
+        「点了没反应」。窗口被挪到屏幕外并从任务栏隐藏，平时看不见；插件自己
+        弹出的窗口则在正常位置显示（和官方驱动的手感一致）。
+        """
         if self.host_conn and not self.host_conn.closed:
             return
         if time.time() - self._browser_started < 15:
@@ -415,12 +421,36 @@ class PluginHost:
             return
         self._kill_browser()
         url = f"http://127.0.0.1:{self.http_port_fn()}/plugin-host.html?ws={self.server.port}"
-        args = [exe, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+        args = [exe, "--no-first-run", "--no-default-browser-check",
                 "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                 "--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required",
-                "--mute-audio", f"--user-data-dir={self._profile_dir()}", url]
+                "--disable-popup-blocking",            # 按键是 WS 事件，没有用户手势，默认会被拦
+                "--mute-audio", "--window-position=-3200,-3200", "--window-size=320,240",
+                f"--user-data-dir={self._profile_dir()}", url]
         subprocess.Popen(args, creationflags=NO_WINDOW, close_fds=True)
+        threading.Thread(target=self._hide_host_window, daemon=True).start()
         self.log("已启动后台插件浏览器（网页类插件）")
+
+    def _hide_host_window(self) -> None:
+        """把后台浏览器窗口从任务栏和 Alt+Tab 里藏掉（WS_EX_TOOLWINDOW）。
+
+        窗口本身留在屏幕外不关闭——关掉它插件就停了；插件自己打开的弹窗是
+        独立窗口，不受影响，照常显示在桌面上。
+        """
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+        except Exception:  # noqa: BLE001
+            return
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x00000080, 0x00040000
+        for _ in range(80):                      # 最多等 20 秒
+            hwnd = user32.FindWindowW(None, "M18 插件宿主")
+            if hwnd:
+                style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
+                                      (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+                return
+            time.sleep(0.25)
 
     def _push_html_list(self) -> None:
         with self.lock:

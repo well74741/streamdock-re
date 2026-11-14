@@ -2878,13 +2878,43 @@ class App:
         other = "源码版" if EDITION == "安装版" else "安装版"
         has = lambda ed: os.path.isfile(os.path.join(STARTUP_DIR, STARTUP_LNKS[ed]))  # noqa: E731
         # 旧版本源码运行时也用过「安装版」那个名字：看快捷方式指向哪儿才算数
-        this_on = has(EDITION)
+        this_on = has(EDITION) or bool(App._run_value())
         other_on = has(other)
         if EDITION == "源码版" and other_on and not this_on:
             target = App._lnk_target(os.path.join(STARTUP_DIR, STARTUP_LNKS["安装版"]))
             if target.lower().endswith(".bat"):
                 this_on, other_on = True, False
         return {"this": this_on, "other": other if other_on else ""}
+
+    # -- 开机自启：启动文件夹被拦时，退而写当前用户的 Run 项 -------------- #
+    RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    RUN_NAME = "M18Console"
+
+    @staticmethod
+    def _run_value() -> str:
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, App.RUN_KEY) as k:
+                return str(winreg.QueryValueEx(k, App.RUN_NAME)[0])
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _set_run(enabled: bool, cmd: str = "") -> bool:
+        try:
+            import winreg
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, App.RUN_KEY) as k:
+                if enabled:
+                    winreg.SetValueEx(k, App.RUN_NAME, 0, winreg.REG_SZ, cmd)
+                else:
+                    try:
+                        winreg.DeleteValue(k, App.RUN_NAME)
+                    except OSError:
+                        pass
+            return True
+        except OSError as exc:
+            log(f"写注册表自启失败：{exc}")
+            return False
 
     _lnk_cache: dict = {}
 
@@ -2936,6 +2966,22 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"设置开机自启失败：{exc}")
             return False
+        if enabled:
+            ok = os.path.isfile(lnk)
+            if ok:
+                self._set_run(False)          # 启动文件夹成功了，清掉旧的注册表项
+            else:
+                # 「启动」文件夹常被安全软件的勒索防护拦写（火绒等）：
+                # 退而写当前用户的 Run 项，效果一样，且不触发受保护文件夹
+                ok = self._set_run(True, f'"{bat}"')
+                log("启动文件夹写不进去，已改用注册表自启" if ok
+                    else "开机自启没设置成功：启动文件夹和注册表都写不进去")
+            if not ok:
+                self.autostart = self.autostart_state()["this"]
+                self._save_config()
+                return False
+        else:
+            self._set_run(False)
         self.autostart = self.autostart_state()["this"]
         self._save_config()
         log(f"开机自启（{EDITION}）：{'开' if enabled else '关'}")

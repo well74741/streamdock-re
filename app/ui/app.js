@@ -2389,7 +2389,11 @@ function bindUI() {
     const r = await post("/api/autostart", { value: v });
     if (state) state.autostart = r.value;
     setSwitch($("#autostart-btn"), r.value);
-    toast(r.value ? `已设置开机自启（${state?.edition || ""}）` : "已关闭开机自启", 1600);
+    if (r.ok === false) {
+      toast("开机自启没设置成功：启动文件夹和注册表都被拦了，把本程序加入安全软件信任区再试", 4200);
+    } else {
+      toast(r.value ? `已设置开机自启（${state?.edition || ""}）` : "已关闭开机自启", 1600);
+    }
     refreshState();
   });
 
