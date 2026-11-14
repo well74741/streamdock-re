@@ -399,6 +399,35 @@ class PluginHost:
     def _profile_dir(self) -> str:
         return os.path.join(os.environ.get("LOCALAPPDATA") or self.data_dir, "M18Console", "pluginhost")
 
+    def _patch_profile_exit(self) -> None:
+        """把上次「异常关闭」的标记改成正常退出，免得 Edge 每次启动弹「还原页面」。
+
+        宿主浏览器是被 taskkill /F 收掉的，Edge 会记成崩溃；下次启动就在任务栏
+        冒出一个带「还原页面 —— Microsoft Edge 意外关闭」的窗口。这个窗口的标题
+        不是「M18 插件宿主」，按标题隐藏抓不到，所以先把这个提示从根上关掉。
+        """
+        prefs = os.path.join(self._profile_dir(), "Default", "Preferences")
+        try:
+            if not os.path.isfile(prefs):
+                return
+            with open(prefs, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return
+            prof = data.setdefault("profile", {})
+            if not isinstance(prof, dict):
+                prof = data["profile"] = {}
+            if prof.get("exit_type") == "Normal" and prof.get("exited_cleanly") is True:
+                return
+            prof["exit_type"] = "Normal"
+            prof["exited_cleanly"] = True
+            tmp = prefs + ".m18tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False)
+            os.replace(tmp, prefs)
+        except (OSError, ValueError):
+            pass
+
     def _ensure_browser(self) -> None:
         """网页插件跑在后台浏览器里（宿主页 /plugin-host.html）。
 
@@ -424,14 +453,18 @@ class PluginHost:
             self.log("找不到 Edge/Chrome，网页类插件无法运行")
             return
         self._kill_browser()
+        self._patch_profile_exit()
+        self._host_hwnd = 0                       # 宿主窗口句柄，找到标题后记下来
         url = f"http://127.0.0.1:{self.http_port_fn()}/plugin-host.html?ws={self.server.port}"
         args = [exe, "--no-first-run", "--no-default-browser-check",
+                "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",   # 不弹「还原页面」
+                "--noerrdialogs", "--disable-features=InfiniteSessionRestore",
                 "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                 "--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required",
                 "--disable-popup-blocking",            # 按键是 WS 事件，没有用户手势，默认会被拦
                 "--mute-audio", "--window-position=-3200,-3200",
                 f"--user-data-dir={self._profile_dir()}", url]
-        subprocess.Popen(args, creationflags=NO_WINDOW, close_fds=True)
+        self._browser_proc = subprocess.Popen(args, creationflags=NO_WINDOW, close_fds=True)
         self._hide_gen = getattr(self, "_hide_gen", 0) + 1
         threading.Thread(target=self._hide_host_window, args=(self._hide_gen,), daemon=True).start()
         self.log("已启动后台插件浏览器（网页类插件）")
@@ -464,15 +497,39 @@ class PluginHost:
         found = [0]
         screen_w = user32.GetSystemMetrics(0)
         screen_h = user32.GetSystemMetrics(1)
+        bp = getattr(self, "_browser_proc", None)
+        host_pid = bp.pid if bp is not None else 0
+        # 宿主窗口可能没有标题（Edge 的「还原页面」窗口就是空白标题），
+        # 所以刚启动这几秒内也按进程认窗口；过了这段时间就只认标题，
+        # 免得把插件刚打开、标题还没加载出来的弹窗（「无标题 - 用户配置 1 - Edge」）当成宿主藏掉。
+        start_grace = time.time() + 10.0
+        popup_hints = ("便签", "待办", "任务", "Todo", "memo")
+        host_hwnd = [getattr(self, "_host_hwnd", 0)]
 
         def on_enum(hwnd, _lparam):
             try:
                 n = user32.GetWindowTextLengthW(hwnd)
-                if n <= 0:
-                    return True
-                buf = ctypes.create_unicode_buffer(n + 1)
-                user32.GetWindowTextW(hwnd, buf, n + 1)
-                if not buf.value.startswith(prefix):
+                buf = ctypes.create_unicode_buffer(n + 1) if n > 0 else None
+                title = ""
+                if buf is not None:
+                    user32.GetWindowTextW(hwnd, buf, n + 1)
+                    title = buf.value
+                wpid = ctypes.c_ulong(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                cbuf = ctypes.create_unicode_buffer(96)
+                user32.GetClassNameW(hwnd, cbuf, 96)
+                cls = cbuf.value or ""
+                by_title = title.startswith(prefix)
+                if by_title:
+                    host_hwnd[0] = hwnd
+                # 只认浏览器真正的主窗口类（0 号类是隐藏的消息窗口，IME 窗口藏了会影响中文输入）
+                same_pid = (bool(host_pid) and wpid.value == host_pid
+                            and cls.startswith("Chrome_WidgetWin")
+                            and not any(h in title for h in popup_hints))
+                by_pid = same_pid and (hwnd == host_hwnd[0] or (not host_hwnd[0] and time.time() < start_grace))
+                # 「还原页面 —— Edge 意外关闭」那个窗口标题不是宿主名，单独认一下
+                by_restore = "还原页面" in title
+                if not (by_title or by_pid or by_restore):
                     return True
                 style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                 want = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
@@ -482,6 +539,8 @@ class PluginHost:
                     user32.ShowWindow(hwnd, 0)          # SW_HIDE
                     user32.ShowWindow(hwnd, 4)          # SW_SHOWNOACTIVATE
                     found[0] += 1
+                    if not by_title:
+                        self.log(f"收掉了插件的后台窗口：{title or '(无标题)'}")
                 # 浏览器有时会按上次记住的位置把窗口摆回屏幕中间，拽回屏幕外
                 r = RECT()
                 if user32.GetWindowRect(hwnd, ctypes.byref(r)):
@@ -508,6 +567,8 @@ class PluginHost:
                 reported = True
                 self.log("没找到后台插件浏览器窗口，任务栏可能留着它的图标（不影响插件运行）")
             # 开头密集盯（标题随插件加载变化），之后低频复查，防止窗口被挪回屏幕里
+            if host_hwnd[0]:
+                self._host_hwnd = host_hwnd[0]
             time.sleep(0.5 if time.time() - started < 60 else 2.0)
 
     def _push_html_list(self) -> None:
@@ -523,6 +584,19 @@ class PluginHost:
 
     def _kill_browser(self) -> None:
         marker = self._profile_dir().replace("'", "''")
+        try:
+            # 先温和关窗口（CloseMainWindow）：Edge 正常退出才会把 profile 记成「正常关闭」，
+            # 直接 /F 杀掉会被记成崩溃，下次启动就弹「还原页面 —— Microsoft Edge 意外关闭」。
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' OR Name='chrome.exe'\" | "
+                 f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{marker}') }} | "
+                 "ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; "
+                 "if ($p) { $p.CloseMainWindow() | Out-Null } }"],
+                capture_output=True, timeout=15, creationflags=NO_WINDOW)
+            time.sleep(1.5)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
