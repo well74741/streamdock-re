@@ -52,31 +52,47 @@ static class M18Setup
         Log("· " + s);
     }
 
-    static string LogPath()
+    // 日志可能一个位置都写不进去（安全软件整套锁死），所以按顺序试三个地方，写成功哪个用哪个
+    static string g_logPath;
+
+    static string[] LogCandidates()
+    {
+        var list = new List<string>();
+        try { list.Add(Path.Combine(Path.Combine(LocalAppData, "M18Console"), "install.log")); } catch { }
+        try { list.Add(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "install.log")); } catch { }
+        try { list.Add(Path.Combine(Path.GetTempPath(), "M18Console-install.log")); } catch { }
+        return list.ToArray();
+    }
+
+    static bool TryAppend(string p, string text)
     {
         try
         {
-            string dir = Path.Combine(LocalAppData, "M18Console");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "install.log");
+            string dir = Path.GetDirectoryName(p);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            if (File.Exists(p) && new FileInfo(p).Length > 512 * 1024) File.Delete(p);
+            File.AppendAllText(p, text, Encoding.UTF8);
+            return true;
         }
-        catch
-        {
-            try { return Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "install.log"); }
-            catch { return null; }
-        }
+        catch { return false; }
+    }
+
+    // 真写一次才知道能不能写；CreateDirectory 成功不代表能建文件（受控文件夹访问只拦写文件）
+    static string LogPath()
+    {
+        if (!string.IsNullOrEmpty(g_logPath)) return g_logPath;
+        foreach (var p in LogCandidates())
+            if (TryAppend(p, "")) { g_logPath = p; return p; }
+        return null;
     }
 
     static void Log(string msg)
     {
-        try
-        {
-            string p = LogPath();
-            if (p == null) return;
-            if (File.Exists(p) && new FileInfo(p).Length > 512 * 1024) File.Delete(p);
-            File.AppendAllText(p, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + msg + "\r\n", Encoding.UTF8);
-        }
-        catch { }
+        string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + msg + "\r\n";
+        if (!string.IsNullOrEmpty(g_logPath) && TryAppend(g_logPath, line)) return;
+        g_logPath = null;
+        foreach (var p in LogCandidates())
+            if (TryAppend(p, line)) { g_logPath = p; return; }
     }
 
     static string Short(Exception ex, int max)
@@ -279,7 +295,9 @@ static class M18Setup
         string detail = Short(ex, 400);
         string where = "失败步骤：" + g_step;
         string logPath = LogPath();
-        string logLine = logPath == null ? "" : "\n\n详细日志：" + logPath;
+        string logLine = logPath == null
+            ? "\n\n日志：三个位置都写不进去（%LOCALAPPDATA%、程序旁边、%TEMP%），日志功能不可用"
+            : "\n\n详细日志：" + logPath;
         if (!IsAccessDenied(ex))
         {
             return detail + "\n\n" + where + logLine;
