@@ -42,6 +42,103 @@ static class M18Setup
     static string DefaultDir { get { return Path.Combine(LocalAppData, @"Programs\M18 Console"); } }
     static string DataDir { get { return Path.Combine(RoamingAppData, "M18Console"); } }
 
+    // 装不上时最怕"只有一句拒绝访问"：记下当前步骤 + 写日志，出问题能直接看出卡在哪一步、哪个文件
+    static string g_step = "启动";
+    static readonly List<string> g_warnings = new List<string>();
+
+    static void Step(string s)
+    {
+        g_step = s;
+        Log("· " + s);
+    }
+
+    static string LogPath()
+    {
+        try
+        {
+            string dir = Path.Combine(LocalAppData, "M18Console");
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, "install.log");
+        }
+        catch
+        {
+            try { return Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "install.log"); }
+            catch { return null; }
+        }
+    }
+
+    static void Log(string msg)
+    {
+        try
+        {
+            string p = LogPath();
+            if (p == null) return;
+            if (File.Exists(p) && new FileInfo(p).Length > 512 * 1024) File.Delete(p);
+            File.AppendAllText(p, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + msg + "\r\n", Encoding.UTF8);
+        }
+        catch { }
+    }
+
+    static string Short(Exception ex, int max)
+    {
+        string m = ex == null ? "" : ex.GetBaseException().Message.Replace("\r", " ").Replace("\n", " ");
+        return m.Length <= max ? m : m.Substring(0, max) + "…";
+    }
+
+    static void Warn(string msg, Exception ex)
+    {
+        string line = ex == null ? msg : msg + "（" + Short(ex, 160) + "）";
+        g_warnings.Add(line);
+        Log("! " + line);
+        if (ex != null) Log("  " + ex.GetType().Name + ": " + ex.Message);
+    }
+
+    // 装之前先看看这个位置能不能写：不能写就当场说清楚并给出能写的位置，别等解压到一半才报错
+    static bool CanWriteUnder(string dir)
+    {
+        try
+        {
+            dir = Path.GetFullPath(dir.Trim());
+            string probeDir = dir;
+            int guard = 0;
+            while (!Directory.Exists(probeDir) && guard++ < 64)
+            {
+                string parent = Path.GetDirectoryName(probeDir);
+                if (string.IsNullOrEmpty(parent) || string.Equals(parent, probeDir, StringComparison.OrdinalIgnoreCase)) return false;
+                probeDir = parent;
+            }
+            string probe = Path.Combine(probeDir, ".m18-probe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            using (var s = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) s.WriteByte(0);
+            File.Delete(probe);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    static string FirstWritable(IEnumerable<string> candidates)
+    {
+        foreach (var c in candidates)
+        {
+            if (string.IsNullOrEmpty(c)) continue;
+            if (CanWriteUnder(c)) return Path.GetFullPath(c.Trim());
+        }
+        return null;
+    }
+
+    // 真正开始装之前再试写一次：权限问题在这一步就暴露，报错里带的是写不进去的那个目录
+    static void ProbeWritable(string dir)
+    {
+        string probe = Path.Combine(dir, ".m18-write-test");
+        try
+        {
+            File.WriteAllBytes(probe, new byte[] { 0 });
+        }
+        finally
+        {
+            try { if (File.Exists(probe)) File.Delete(probe); } catch { }
+        }
+    }
+
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 
     [STAThread]
@@ -62,6 +159,7 @@ static class M18Setup
                 int i = args.IndexOf("--dir");
                 string target = (i >= 0 && i + 1 < args.Count) ? args[i + 1] : DefaultDir;
                 string exe = Install(target, !args.Contains("--no-shortcut"), payloadPos, payloadLen, null);
+                foreach (var w in Warnings) Console.Error.WriteLine("警告：" + w);
                 if (!args.Contains("--no-launch")) Launch(exe);
                 Console.WriteLine("{\"ok\": true, \"exe\": \"" + exe.Replace("\\", "\\\\") + "\"}");
                 return 0;
@@ -74,6 +172,7 @@ static class M18Setup
         }
         catch (Exception ex)
         {
+            Log("失败：" + g_step + " / " + ex);
             if (silent) { Console.Error.WriteLine("安装失败：" + Explain(ex)); return 2; }
             MessageBox.Show("出错了：" + Explain(ex), APP_NAME, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 2;
@@ -87,6 +186,8 @@ static class M18Setup
         {
             if (e is UnauthorizedAccessException) return true;
             if (e is IOException && (Marshal.GetHRForException(e) & 0xFFFF) == 5) return true;
+            // 快捷方式 / 注册表走 COM，被拦时报的是 0x80070005（E_ACCESSDENIED）
+            if (e is COMException && (uint)((COMException)e).HResult == 0x80070005) return true;
         }
         return false;
     }
@@ -108,18 +209,25 @@ static class M18Setup
 
     public static string Explain(Exception ex)
     {
-        if (!IsAccessDenied(ex)) return ex.Message;
+        string detail = Short(ex, 400);
+        string where = "失败步骤：" + g_step;
+        string logPath = LogPath();
+        string logLine = logPath == null ? "" : "\n\n详细日志：" + logPath;
+        if (!IsAccessDenied(ex))
+        {
+            return detail + "\n\n" + where + logLine;
+        }
         string self = Assembly.GetExecutingAssembly().Location;
         string why = ControlledFolderAccess() == 1
             ? "这台电脑开启了 Windows 安全中心的「受控文件夹访问」（勒索软件防护），它会阻止未签名的程序写文件。"
             : "这台电脑的安全软件（或 Windows 安全中心）阻止了安装程序写文件——换任何文件夹都会被拒绝。";
-        return ex.Message + "\n\n" + why + "\n\n解决办法（任选其一）：\n"
+        return detail + "\n\n" + where + "\n\n" + why + "\n\n解决办法（任选其一）：\n"
             + "1. Windows 安全中心 → 病毒和威胁防护 → 勒索软件防护 → 管理勒索软件防护 →\n"
             + "   「通过受控文件夹访问允许应用」，添加本安装程序：\n   " + self + "\n"
             + "   （装好后对安装目录里的 M18Console.exe 也做一次）\n"
             + "2. 在你装的安全软件（360 / 火绒 / 卡巴斯基等）里把安装程序和 M18Console.exe 加入信任\n"
             + "3. 运行源码里的「诊断.bat」：自动查出是谁拦截，并可一键放行\n"
-            + "4. 这台电脑上改用源码版（双击「启动 M18 控制台.bat」）";
+            + "4. 这台电脑上改用源码版（双击「启动 M18 控制台.bat」）" + logLine;
     }
 
     // ------------------------------------------------------------------ 载荷
@@ -141,17 +249,30 @@ static class M18Setup
     }
 
     // ------------------------------------------------------------------ 安装
+    // 除了「把文件写进安装目录」这一步，其余（快捷方式 / 注册表 / 卸载程序）装不上都只算警告：
+    // 以前任何一处失败都会让整个安装报"失败"，用户以为没装上，其实程序已经在目录里了。
+    public static IList<string> Warnings { get { return g_warnings; } }
+
     public static string Install(string target, bool desktop, long payloadPos, long payloadLen, Action<int, string> progress)
     {
         if (progress == null) progress = delegate { };
+        g_warnings.Clear();
         target = Path.GetFullPath(target.Trim());
+
+        Step("关闭正在运行的控制台");
         progress(3, "正在关闭运行中的控制台…");
         StopRunning();
+
+        Step("创建安装目录：" + target);
+        progress(5, "正在创建安装目录…");
         Directory.CreateDirectory(target);
+        ProbeWritable(target);          // 先行试探，权限问题在这里就报出准确路径
+
         string self = Assembly.GetExecutingAssembly().Location;
         string rootFull = target.TrimEnd('\\') + "\\";
         using (var fs = new FileStream(self, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         {
+            Step("读取安装包内容");
             var buf = new byte[payloadLen];
             fs.Seek(payloadPos, SeekOrigin.Begin);
             int read = 0;
@@ -169,8 +290,19 @@ static class M18Setup
                     i++;
                     string dest = Path.GetFullPath(Path.Combine(target, entry.FullName.Replace('/', '\\')));
                     if (!dest.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (entry.FullName.EndsWith("/")) { Directory.CreateDirectory(dest); continue; }
-                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                    g_step = "解压到：" + dest;
+                    try
+                    {
+                        if (entry.FullName.EndsWith("/")) { Directory.CreateDirectory(dest); continue; }
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                        // 覆盖旧文件前先去掉只读属性，否则会被当成"拒绝访问"
+                        try { if (File.Exists(dest)) File.SetAttributes(dest, FileAttributes.Normal); } catch { }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!(ex is IOException || ex is UnauthorizedAccessException)) throw;
+                        throw new IOException("无法写入 " + dest + "：" + Short(ex, 200), ex);
+                    }
                     for (int attempt = 0; ; attempt++)
                     {
                         try { entry.ExtractToFile(dest, true); break; }
@@ -181,32 +313,58 @@ static class M18Setup
                 }
             }
             // 卸载程序 = 本程序去掉载荷的部分（几十 KB）
+            Step("写入卸载程序");
             progress(82, "正在写入卸载程序…");
             var head = new byte[payloadPos];
             fs.Seek(0, SeekOrigin.Begin);
             int got = 0;
             while (got < head.Length) { int n = fs.Read(head, got, head.Length - got); if (n <= 0) break; got += n; }
-            File.WriteAllBytes(Path.Combine(target, "uninstall.exe"), head);
+            string uninstallPath = Path.Combine(target, "uninstall.exe");
+            try
+            {
+                try { if (File.Exists(uninstallPath)) File.SetAttributes(uninstallPath, FileAttributes.Normal); } catch { }
+                File.WriteAllBytes(uninstallPath, head);
+            }
+            catch (Exception ex)
+            {
+                Warn("卸载程序没写进去（「应用和功能」里不会出现卸载项，可以删安装目录来卸载）", ex);
+            }
         }
         string exe = Path.Combine(target, EXE_NAME);
         string uninstaller = Path.Combine(target, "uninstall.exe");
         progress(88, "正在创建快捷方式…");
-        MakeShortcut(StartMenuLnk(), exe, target);
-        if (desktop) MakeShortcut(DesktopLnk(), exe, target);
-        progress(94, "正在登记卸载信息…");
-        using (var k = Registry.CurrentUser.CreateSubKey(REG_KEY))
+        Step("创建开始菜单快捷方式");
+        try { MakeShortcut(StartMenuLnk(), exe, target); }
+        catch (Exception ex) { Warn("开始菜单快捷方式没建成（可从 " + target + " 里直接运行 M18Console.exe）", ex); }
+        if (desktop)
         {
-            k.SetValue("DisplayName", APP_NAME);
-            k.SetValue("DisplayVersion", VERSION);
-            k.SetValue("Publisher", "M18 Console");
-            k.SetValue("DisplayIcon", "\"" + exe + "\",0");
-            k.SetValue("InstallLocation", target);
-            k.SetValue("UninstallString", "\"" + uninstaller + "\" --uninstall");
-            k.SetValue("QuietUninstallString", "\"" + uninstaller + "\" --uninstall --silent");
-            k.SetValue("NoModify", 1, RegistryValueKind.DWord);
-            k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
-            k.SetValue("EstimatedSize", (int)(DirSize(target) / 1024), RegistryValueKind.DWord);
+            Step("创建桌面快捷方式");
+            try { MakeShortcut(DesktopLnk(), exe, target); }
+            catch (Exception ex) { Warn("桌面快捷方式没建成（可从 " + target + " 里直接运行 M18Console.exe）", ex); }
         }
+        Step("登记卸载信息");
+        progress(94, "正在登记卸载信息…");
+        try
+        {
+            using (var k = Registry.CurrentUser.CreateSubKey(REG_KEY))
+            {
+                k.SetValue("DisplayName", APP_NAME);
+                k.SetValue("DisplayVersion", VERSION);
+                k.SetValue("Publisher", "M18 Console");
+                k.SetValue("DisplayIcon", "\"" + exe + "\",0");
+                k.SetValue("InstallLocation", target);
+                k.SetValue("UninstallString", "\"" + uninstaller + "\" --uninstall");
+                k.SetValue("QuietUninstallString", "\"" + uninstaller + "\" --uninstall --silent");
+                k.SetValue("NoModify", 1, RegistryValueKind.DWord);
+                k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+                k.SetValue("EstimatedSize", (int)(DirSize(target) / 1024), RegistryValueKind.DWord);
+            }
+        }
+        catch (Exception ex)
+        {
+            Warn("卸载信息没登记上（不影响使用，卸载时删安装目录即可）", ex);
+        }
+        Step("完成");
         progress(100, "安装完成");
         return exe;
     }
@@ -383,8 +541,27 @@ static class M18Setup
 
         void Start()
         {
-            installBtn.Enabled = browseBtn.Enabled = dirBox.Enabled = false;
             string target = string.IsNullOrWhiteSpace(dirBox.Text) ? DefaultDir : dirBox.Text;
+            if (!CanWriteUnder(target))
+            {
+                string alt = FirstWritable(new[] { DefaultDir, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console") });
+                string msg = "这个位置写不进去：\n" + target + "\n\n";
+                if (alt != null)
+                {
+                    msg += "要改装到下面这个能写的位置吗？\n" + alt + "\n\n（选「否」可以自己点「浏览…」换一个目录）";
+                    if (MessageBox.Show(this, msg, "安装位置不可写", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                    dirBox.Text = alt;
+                    target = alt;
+                }
+                else
+                {
+                    msg += "这台电脑上常见的位置都写不进去，多半是安全软件 / Windows 的「受控文件夹访问」在拦。\n\n"
+                         + "运行源码里的「诊断.bat」可以查出是谁拦截并放行；日志：" + LogPath();
+                    MessageBox.Show(this, msg, "安装位置不可写", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            installBtn.Enabled = browseBtn.Enabled = dirBox.Enabled = false;
             bool desktop = deskBox.Checked, run = runBox.Checked;
             var th = new Thread(() =>
             {
@@ -395,7 +572,8 @@ static class M18Setup
                     BeginInvoke((Action)(() =>
                     {
                         if (run) Launch(exe);
-                        MessageBox.Show(this, APP_NAME + " 已安装。\n开始菜单" + (desktop ? "和桌面" : "") + "上有快捷方式。", "安装完成",
+                        string extra = Warnings.Count == 0 ? "" : "\n\n有 " + Warnings.Count + " 项没做成（不影响使用）：\n· " + string.Join("\n· ", new List<string>(Warnings).ToArray());
+                        MessageBox.Show(this, APP_NAME + " 已安装。\n装在：" + exe + extra, "安装完成",
                                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                         Close();
                     }));
@@ -404,7 +582,22 @@ static class M18Setup
                 {
                     BeginInvoke((Action)(() =>
                     {
-                        MessageBox.Show(this, "安装失败：" + Explain(ex), "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        string detail = "安装失败：" + Explain(ex);
+                        // 装在别处被拒 → 主动提议换到默认位置重来，省得用户自己猜
+                        bool elsewhere = !string.Equals(Path.GetFullPath(target.Trim()), Path.GetFullPath(DefaultDir), StringComparison.OrdinalIgnoreCase);
+                        if (IsAccessDenied(ex) && elsewhere && CanWriteUnder(DefaultDir))
+                        {
+                            if (MessageBox.Show(this, detail + "\n\n要不要改装到默认位置重试？\n" + DefaultDir, "安装失败",
+                                                MessageBoxButtons.YesNo, MessageBoxIcon.Error) == DialogResult.Yes)
+                            {
+                                dirBox.Text = DefaultDir;
+                                installBtn.Enabled = browseBtn.Enabled = dirBox.Enabled = true;
+                                status.Text = "";
+                                Start();
+                                return;
+                            }
+                        }
+                        MessageBox.Show(this, detail, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         installBtn.Enabled = browseBtn.Enabled = dirBox.Enabled = true;
                         status.Text = "";
                     }));
