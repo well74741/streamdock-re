@@ -1506,6 +1506,44 @@ html, body { overflow: hidden; height: 100%; }
 }
 .album-thumb:hover .album-del { display: block; }
 
+/* 相册场景：编辑区里的图片集（复用待机相册那套样式） */
+#album-editor { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; }
+#album-editor .thumb-col { width: auto; gap: 8px; }
+#album-editor .thumb-actions { flex-direction: row; gap: 8px; }
+#album-editor .thumb-actions .seg { width: auto; flex: 1 1 0; font-size: 12px; padding: 6px 10px; }
+#album-editor .editor-info { gap: 8px; }
+#album-editor .kv-line > span:first-child { width: 64px; }
+#album-editor .album-view { width: 100%; max-width: none; }
+#as-strip { max-height: 116px; flex-wrap: wrap; overflow-y: auto; }
+#as-strip .album-thumb { width: 62px; height: 37px; }
+#album-editor .hint-line { margin: 4px 0 0; }
+#album-editor .seg-group.compact { flex-wrap: wrap; }
+
+/* 场景列表：长按拖动排序 */
+.scene-row.dragging {
+  background: rgba(47, 111, 224, .18);
+  box-shadow: 0 6px 18px rgba(12, 20, 32, .28);
+  border-radius: 8px;
+  opacity: .96;
+  cursor: grabbing;
+}
+.scene-row.album-scene b em {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  background: rgba(47, 111, 224, .16); color: #2f6fe0; font-size: 10.5px; font-weight: 600;
+}
+
+/* 新建场景对话框 */
+.scene-new-title { margin: 0 0 12px; font-size: 15px; font-weight: 650; color: #16202e; }
+.scene-new-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.scene-new-row > span:first-child { flex: 0 0 44px; color: #4c586b; font-size: 13px; }
+.scene-new-row input {
+  flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid #a7b2c2;
+  background: #eef2f8; color: #16202e; font-size: 13px;
+}
+.scene-new-row input:focus { outline: none; border-color: #2f6fe0; box-shadow: 0 0 0 3px rgba(47,111,224,.18); }
+.scene-new-row .seg-group { flex: 1; }
+.confirm-body .small { font-size: 12px; margin: 0; }
+
 /* 相册播放中：键盘预览铺相册画面 */
 .ring-board.album-on .cell { background-image: var(--album) !important; background-size: 500% 300%; background-position: var(--album-pos); }
 .ring-board.album-on .cell > * { visibility: hidden; }

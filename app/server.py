@@ -914,6 +914,10 @@ class App:
         self.standby_source = "wallpaper"         # 待机时显示：wallpaper 壁纸 / album 相册幻灯片
         self._album_last = 0.0
         self._album_lock = threading.Lock()
+        # 相册场景（可以有多个）：播放时用场景自己的图片和设置，待机相册不受影响
+        self.album_scene_name = ""                # 正在播放的相册场景名（空 = 没在放相册场景）
+        self._album_scene: dict = {}               # {"items": [...], "index": 0, "slideshow": …, …}
+        self._album_return = None                  # 进相册前的场景名，退出时回到这里
         self.screen_brightness = 100
         self.wallpaper_enabled = True
         self.wallpaper_flip = False
@@ -2357,11 +2361,12 @@ class App:
             return None
         return self._fit_canvas(src, w, h)
 
-    def _fit_canvas(self, src: Image.Image, w: int, h: int, zoom_offset: bool = True) -> Image.Image:
+    def _fit_canvas(self, src: Image.Image, w: int, h: int, zoom_offset: bool = True,
+                    fit: str | None = None) -> Image.Image:
         """壁纸和相册共用的铺放：填充 / 完整 / 拉伸 + 缩放（壁纸还有拖动位移）+ 待机亮度。"""
         zoom = max(0.2, min(4.0, float(self.wallpaper_zoom)))
         tw, th = max(1, int(w * zoom)), max(1, int(h * zoom))
-        fit = self.wallpaper_fit
+        fit = fit or self.wallpaper_fit
         if fit == "fill":
             scaled = src.resize((tw, th), Image.Resampling.LANCZOS)
         elif fit == "contain":
@@ -2490,22 +2495,133 @@ class App:
     def album_active(self) -> bool:
         return self.in_standby and self.preview_mode == "album"
 
-    def album_state(self, active: bool | None = None) -> dict:
-        return {"items": list(self.album_items), "index": self.album_index,
-                "active": self.album_active() if active is None else active,
-                "slideshow": self.album_slideshow, "interval": self.album_interval,
-                "transition": self.album_transition, "fit": self.album_fit,
-                "source": self.standby_source}
+    # 相册数据源：在放相册场景时用场景自己的，否则用待机相册（全局设置）
+    def _alb_items(self) -> list:
+        if self.album_scene_name:
+            return self._album_scene.get("items") or []
+        return self.album_items
 
-    def _album_file(self, index: int) -> str | None:
-        if not self.album_items:
+    def _alb_index(self) -> int:
+        if self.album_scene_name:
+            return int(self._album_scene.get("index") or 0)
+        return self.album_index
+
+    def _alb_slideshow(self) -> bool:
+        if self.album_scene_name:
+            return bool(self._album_scene.get("slideshow", True))
+        return self.album_slideshow
+
+    def _alb_interval(self) -> float:
+        if self.album_scene_name:
+            return float(self._album_scene.get("interval") or 8)
+        return self.album_interval
+
+    def _alb_transition(self) -> str:
+        if self.album_scene_name:
+            tr = str(self._album_scene.get("transition") or "fade")
+            return tr if tr in ALBUM_TRANSITIONS else "fade"
+        return self.album_transition
+
+    def _alb_fit(self) -> str:
+        if self.album_scene_name:
+            return "contain" if self._album_scene.get("fit") == "contain" else "cover"
+        return self.album_fit
+
+    def _alb_set_index(self, index: int) -> None:
+        n = len(self._alb_items())
+        if n <= 0:
+            return
+        index = int(index) % n
+        if self.album_scene_name:
+            self._album_scene["index"] = index
+        else:
+            self.album_index = index
+
+    # -- 相册场景：一个场景 = 一组图片 + 过渡设置，存在场景文件里 --------------- #
+    def _album_scene_data(self, name: str) -> dict | None:
+        """读相册场景的 album 段；不是相册场景返回 None。"""
+        if not name or name in (self.ALBUM_SCENE, self.custom_scene_name):
             return None
-        name = os.path.basename(self.album_items[index % len(self.album_items)])
+        data = self._scene_file_data(self._scene_path(name))
+        if not data or data.get("sceneType") != "album":
+            return None
+        alb = data.get("album")
+        return alb if isinstance(alb, dict) else {}
+
+    def is_album_scene(self, name: str) -> bool:
+        return self._album_scene_data(name) is not None
+
+    def _album_scene_items(self, name: str) -> list:
+        alb = self._album_scene_data(name) or {}
+        return [str(n) for n in (alb.get("items") or []) if str(n)]
+
+    def _album_scene_write(self, name: str, alb: dict) -> bool:
+        """把 album 段写回场景文件（顺手补齐 pages，方便导出 / 复制）。"""
+        path = self._scene_path(name)
+        data = self._scene_file_data(path) or {}
+        if not isinstance(data.get("pages"), list):
+            data["pages"] = [{"name": "相册", "images": {}, "actions": {}}]
+            data.setdefault("page", 0)
+        data["sceneType"] = "album"
+        data["album"] = alb
+        try:
+            os.makedirs(SCENE_DIR, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError as exc:
+            log(f"保存相册场景失败：{exc}")
+            return False
+        return True
+
+    def _album_scene_edit(self, name: str, fn) -> bool:
+        """改相册场景的 album 段：fn(alb) 返回 False 表示没改动。"""
+        alb = self._album_scene_data(name)
+        if alb is None:
+            log(f"「{name}」不是相册场景，改不了图片")
+            return False
+        alb = dict(alb)
+        if not fn(alb):
+            return False
+        alb["items"] = [str(n) for n in (alb.get("items") or []) if str(n)]
+        if not self._album_scene_write(name, alb):
+            return False
+        if self.album_scene_name == name:      # 正在放这个场景，内存里也同步
+            alb["index"] = int(alb.get("index") or 0)
+            self._album_scene = alb
+        self.broadcast({"type": "album", **self.album_state()})
+        return True
+
+    def _album_file_for(self, items: list, index: int) -> str | None:
+        if not items:
+            return None
+        name = os.path.basename(items[index % len(items)])
         path = os.path.join(UPLOAD_DIR, name)
         return path if os.path.isfile(path) else None
 
-    def album_add(self, files: list) -> bool:
-        added = 0
+    def album_state(self, active: bool | None = None, scene: str = "") -> dict:
+        if scene:
+            alb = self._album_scene_data(scene) or {}
+            items = [str(n) for n in (alb.get("items") or []) if str(n)]
+            return {"items": items, "index": int(alb.get("index") or 0), "active": False,
+                    "slideshow": bool(alb.get("slideshow", True)),
+                    "interval": max(2, min(600, int(alb.get("interval") or 8))),
+                    "transition": str(alb.get("transition") or "fade"),
+                    "fit": "contain" if alb.get("fit") == "contain" else "cover",
+                    "source": "album-scene", "scene": scene}
+        return {"items": list(self._alb_items()), "index": self._alb_index(),
+                "active": self.album_active() if active is None else active,
+                "slideshow": self._alb_slideshow(), "interval": int(self._alb_interval()),
+                "transition": self._alb_transition(), "fit": self._alb_fit(),
+                "source": self.standby_source, "scene": self.album_scene_name}
+
+    def _album_file(self, index: int) -> str | None:
+        return self._album_file_for(self._alb_items(), index)
+
+    def _album_copy_in(self, files: list) -> list:
+        """把拖进来的图片收进上传目录，返回文件名列表（相册场景和待机相册共用）。"""
+        names = []
         for f in files[:200]:
             p = asset_path(f)
             if not p or not _inside(p, UPLOAD_DIR) or not os.path.isfile(p):
@@ -2517,27 +2633,61 @@ class App:
                 continue
             name = os.path.relpath(p, UPLOAD_DIR).replace("\\", "/")
             if "/" in name:              # 拖进来的是文件夹里的图：复制一份到上传目录根下
-                dst = os.path.join(UPLOAD_DIR, f"album_{int(time.time() * 1000)}_{added}{os.path.splitext(p)[1]}")
+                dst = os.path.join(UPLOAD_DIR, f"album_{int(time.time() * 1000)}_{len(names)}{os.path.splitext(p)[1]}")
                 shutil.copyfile(p, dst)
                 name = os.path.basename(dst)
-            self.album_items.append(name)
-            added += 1
-        if added:
-            self._save_config()
-        return bool(added)
+            names.append(name)
+        return names
 
-    def album_remove(self, index: int) -> bool:
+    def album_add(self, files: list, scene: str = "") -> bool:
+        names = self._album_copy_in(files)
+        if not names:
+            return False
+        if scene:
+            def add(alb: dict) -> bool:
+                alb["items"] = list(alb.get("items") or []) + names
+                return True
+            return self._album_scene_edit(scene, add)
+        self.album_items.extend(names)
+        self._save_config()
+        return True
+
+    def album_remove(self, index: int, scene: str = "") -> bool:
+        if scene:
+            def drop(alb: dict) -> bool:
+                items = list(alb.get("items") or [])
+                if not (0 <= index < len(items)):
+                    return False
+                items.pop(index)
+                alb["items"] = items
+                if int(alb.get("index") or 0) >= len(items):
+                    alb["index"] = 0
+                return True
+            ok = self._album_scene_edit(scene, drop)
+            if ok and not self._album_scene_items(scene) and self.album_scene_name == scene:
+                threading.Thread(target=self.album_stop, daemon=True).start()
+            return ok
         if not (0 <= index < len(self.album_items)):
             return False
         self.album_items.pop(index)
         if self.album_index >= len(self.album_items):
             self.album_index = 0
-        if not self.album_items and self.album_active():
+        if not self.album_items and self.album_active() and not self.album_scene_name:
             threading.Thread(target=self.album_stop, daemon=True).start()
         self._save_config()
         return True
 
-    def album_move(self, src: int, dst: int) -> bool:
+    def album_move(self, src: int, dst: int, scene: str = "") -> bool:
+        if scene:
+            def move(alb: dict) -> bool:
+                items = list(alb.get("items") or [])
+                n = len(items)
+                if not (0 <= src < n and 0 <= dst < n) or src == dst:
+                    return False
+                items.insert(dst, items.pop(src))
+                alb["items"] = items
+                return True
+            return self._album_scene_edit(scene, move)
         n = len(self.album_items)
         if not (0 <= src < n and 0 <= dst < n) or src == dst:
             return False
@@ -2545,7 +2695,23 @@ class App:
         self._save_config()
         return True
 
-    def album_settings(self, body: dict) -> None:
+    def album_settings(self, body: dict, scene: str = "") -> None:
+        if scene:
+            def change(alb: dict) -> bool:
+                if "slideshow" in body:
+                    alb["slideshow"] = bool(body["slideshow"])
+                if "interval" in body:
+                    alb["interval"] = max(2, min(600, int(body["interval"])))
+                if body.get("transition") in ALBUM_TRANSITIONS:
+                    alb["transition"] = body["transition"]
+                if body.get("fit") in ("cover", "contain"):
+                    alb["fit"] = body["fit"]
+                return True
+            if self._album_scene_edit(scene, change):
+                self._album_last = time.time()
+                if self.album_active() and self.album_scene_name == scene:
+                    threading.Thread(target=self._push_album, daemon=True).start()
+            return
         if body.get("source") in ("wallpaper", "album"):
             self.standby_source = body["source"]
             self._save_config()
@@ -2558,24 +2724,29 @@ class App:
             self.album_transition = body["transition"]
         if body.get("fit") in ("cover", "contain"):
             self.album_fit = body["fit"]
-            if self.album_active():
+            if self.album_active() and not self.album_scene_name:
                 threading.Thread(target=self._push_album, daemon=True).start()
         self._save_soon(0.5)
 
     def _album_canvas(self, index: int) -> Image.Image | None:
         """相册图片铺满整版（含键间缝隙补偿和旋转），按内容缓存。"""
-        path = self._album_file(index)
+        return self._album_canvas_generic({"fit": self._alb_fit()}, self._alb_items(), index)
+
+    def _album_canvas_generic(self, alb: dict, items: list, index: int) -> Image.Image | None:
+        """按指定的图片列表 + 填充方式铺整版；相册场景和待机相册共用。"""
+        path = self._album_file_for(items, index)
         w, h = self._canvas_size()
         if not path:
             return Image.new("RGB", (w, h), (0, 0, 0))
-        key = (path, os.path.getmtime(path), w, h, self.wallpaper_fit, self.wallpaper_zoom, self.standby_brightness)
+        fit = "contain" if alb.get("fit") == "contain" else "cover"
+        key = (path, os.path.getmtime(path), w, h, fit, self.standby_brightness)
         cache = getattr(self, "_album_cache", {})
         if key in cache:
             return cache[key]
         try:
             with Image.open(path) as im:
                 src = self._flat_rgb(im)
-            img = self._fit_canvas(src, w, h, zoom_offset=False)
+            img = self._fit_canvas(src, w, h, zoom_offset=False, fit=fit)
         except Exception as exc:  # noqa: BLE001
             log(f"相册图片读取失败 {path}: {exc}")
             return Image.new("RGB", (w, h), (0, 0, 0))
@@ -2610,10 +2781,10 @@ class App:
         if not self._album_can_push():
             return False
         with self._album_lock:
-            cur = self._album_canvas(self.album_index)
+            cur = self._album_canvas(self._alb_index())
             if cur is None:
                 return False
-            mode = self.album_transition if prev is not None and prev.size == cur.size else "none"
+            mode = self._alb_transition() if prev is not None and prev.size == cur.size else "none"
             self._pushing = True
             try:
                 if mode in ("fade", "slide"):
@@ -2661,10 +2832,11 @@ class App:
         return True
 
     def album_play(self, index: int | None = None) -> bool:
-        if not self.album_items:
+        items = self._alb_items()
+        if not items:
             return False
         if index is not None:
-            self.album_index = index % len(self.album_items)
+            self._alb_set_index(index)
         self._gif_stop_all()
         self.preview_mode = "album"
         self.in_standby = True
@@ -2675,18 +2847,44 @@ class App:
             pass
         threading.Thread(target=self._push_album, daemon=True).start()
         self.broadcast({"type": "album", **self.album_state()})
-        self.broadcast({"type": "scene", "name": self.ALBUM_SCENE, "ok": True, "quiet": True})
-        log(f"相册开始播放（{len(self.album_items)} 张）")
+        self.broadcast({"type": "scene", "name": self.current_scene(), "ok": True, "quiet": True})
+        log(f"相册开始播放（{len(items)} 张）")
         return True
 
-    def album_goto(self, delta: int = 1, index=None) -> bool:
-        if not self.album_items:
+    def _play_album_scene(self, name: str) -> bool:
+        """切到一个相册场景：用这个场景自己的图片和过渡设置播放。"""
+        alb = self._album_scene_data(name)
+        if alb is None:
             return False
-        prev = self._album_canvas(self.album_index) if self.album_active() else None
+        items = [str(n) for n in (alb.get("items") or []) if str(n)]
+        if not items:
+            log(f"相册场景「{name}」里还没有图片，先在编辑区加几张")
+            return False
+        if not self.album_active():
+            self._album_return = self.active_scene or self.custom_scene_name
+        self.album_scene_name = name
+        self._album_scene = {
+            "items": items,
+            "index": int(alb.get("index") or 0) % len(items),
+            "slideshow": bool(alb.get("slideshow", True)),
+            "interval": max(2, min(600, int(alb.get("interval") or 8))),
+            "transition": str(alb.get("transition") or "fade") if str(alb.get("transition") or "") in ALBUM_TRANSITIONS else "fade",
+            "fit": "contain" if alb.get("fit") == "contain" else "cover",
+        }
+        ok = self.album_play()
+        if ok:
+            log(f"已切换到相册场景：{name}（{len(items)} 张）")
+        return ok
+
+    def album_goto(self, delta: int = 1, index=None) -> bool:
+        items = self._alb_items()
+        if not items:
+            return False
+        prev = self._album_canvas(self._alb_index()) if self.album_active() else None
         if index is not None:
-            self.album_index = int(index) % len(self.album_items)
+            self._alb_set_index(int(index))
         else:
-            self.album_index = (self.album_index + delta) % len(self.album_items)
+            self._alb_set_index(self._alb_index() + delta)
         self._album_last = time.time()
         if self.album_active():
             threading.Thread(target=self._push_album, args=(prev,), daemon=True).start()
@@ -2696,13 +2894,16 @@ class App:
     def album_stop(self) -> None:
         if self.preview_mode != "album":
             return
+        scene_name = self.album_scene_name
         self.preview_mode = "wallpaper"
         self.in_standby = False
+        self.album_scene_name = ""
+        self._album_scene = {}
         self._last_activity = time.time()
-        self.broadcast({"type": "album", **self.album_state()})
         back = getattr(self, "_album_return", None)
         self._album_return = None
-        log("相册已退出" + (f"，回到「{back}」" if back else ""))
+        self.broadcast({"type": "album", **self.album_state()})
+        log(("相册场景已退出" if scene_name else "相册已退出") + (f"，回到「{back}」" if back else ""))
         if back and back != (self.active_scene or self.custom_scene_name) and self.apply_scene(back):
             self.broadcast({"type": "scene", "name": back, "ok": True})
             return
@@ -2713,15 +2914,22 @@ class App:
         while True:
             time.sleep(0.25)
             try:
-                if (self.album_active() and self.album_slideshow and len(self.album_items) > 1
-                        and time.time() - self._album_last >= self.album_interval):
+                items = self._alb_items()
+                if (self.album_active() and self._alb_slideshow() and len(items) > 1
+                        and time.time() - self._album_last >= self._alb_interval()):
                     self.album_goto(1)
             except Exception as exc:  # noqa: BLE001
                 log(f"幻灯片出错：{exc}")
                 time.sleep(2)
 
-    def album_thumb(self, index: int) -> bytes | None:
-        path = self._album_file(index) if 0 <= index < len(self.album_items) else None
+    def _album_path_for(self, scene: str, index: int) -> str | None:
+        if scene:
+            items = self._album_scene_items(scene)
+            return self._album_file_for(items, index)
+        return self._album_file(index) if 0 <= index < len(self._alb_items()) else None
+
+    def album_thumb(self, index: int, scene: str = "") -> bytes | None:
+        path = self._album_path_for(scene, index)
         if not path:
             return None
         try:
@@ -2733,18 +2941,32 @@ class App:
         except Exception:  # noqa: BLE001
             return None
 
-    def album_preview_jpg(self) -> bytes | None:
+    def album_preview_jpg(self, scene: str = "") -> bytes | None:
         """相册卡片里的大预览：当前图片按整版画布（观看方向）渲染。"""
-        if not self.album_items:
-            return None
-        canvas = self._album_canvas(self.album_index)
+        if scene:
+            alb = self._album_scene_data(scene) or {}
+            items = self._album_scene_items(scene)
+            if not items:
+                return None
+            canvas = self._album_canvas_generic(alb, items, int(alb.get("index") or 0))
+        else:
+            if not self.album_items:
+                return None
+            canvas = self._album_canvas(self.album_index)
         buf = io.BytesIO()
         canvas.save(buf, "JPEG", quality=85)
         return buf.getvalue()
 
-    def album_tiles_png(self) -> bytes | None:
+    def album_tiles_png(self, scene: str = "") -> bytes | None:
         """相册当前图切成 15 块拼成精灵图（和设备上一致），给界面键盘预览叠在上面。"""
-        canvas = self._album_canvas(self.album_index)
+        if scene:
+            alb = self._album_scene_data(scene) or {}
+            items = self._album_scene_items(scene)
+            if not items:
+                return None
+            canvas = self._album_canvas_generic(alb, items, int(alb.get("index") or 0))
+        else:
+            canvas = self._album_canvas(self.album_index)
         if canvas is None:
             return None
         sprite = Image.new("RGB", (GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE), (0, 0, 0))
@@ -2825,11 +3047,19 @@ class App:
             self.add_ripple(key)
             self._dirty = True
         if self.album_active():
-            # 相册播放中：◀ ▶ 导航键切换照片，其他键退出相册（这一下不触发按键动作）
+            # 相册播放中：相册场景里点任意屏幕键都是「下一个场景」，导航键是 上页/主场景/下页；
+            # 内置相册（没有场景文件）保留原来的翻照片行为。
             self._last_activity = time.time()
             if state == 1:
                 self._wake_swallow.add(key)
-                if key in (16, 18) and len(self.album_items) > 1:
+                if self.album_scene_name:
+                    if key == 16:
+                        threading.Thread(target=self.prev_scene, daemon=True).start()
+                    elif key == 17:
+                        threading.Thread(target=self.album_stop, daemon=True).start()
+                    else:
+                        threading.Thread(target=self.next_scene, daemon=True).start()
+                elif key in (16, 18) and len(self._alb_items()) > 1:
                     threading.Thread(target=self.album_goto, args=(-1 if key == 16 else 1,),
                                      daemon=True).start()
                 else:
@@ -3107,14 +3337,44 @@ class App:
     def scene_muted(self, name: str) -> bool:
         return bool(self._scene_flags().get(self._canonical_scene(name), {}).get("muted"))
 
+    def _scene_order_path(self) -> str:
+        return os.path.join(SCENE_DIR, ".scene-order.json")
+
+    def _scene_order(self) -> list:
+        """用户拖出来的场景顺序（名字列表），文件不存在就是空。"""
+        try:
+            with open(self._scene_order_path(), encoding="utf-8") as fh:
+                data = json.load(fh)
+            return [str(n) for n in data] if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def set_scene_order(self, names: list) -> bool:
+        exist = [it["name"] for it in self.list_scenes()]
+        order = []
+        for n in names or []:
+            n = str(n)
+            if n in exist and n not in order:
+                order.append(n)
+        order += [n for n in exist if n not in order]
+        try:
+            os.makedirs(SCENE_DIR, exist_ok=True)
+            with open(self._scene_order_path(), "w", encoding="utf-8") as fh:
+                json.dump(order, fh, ensure_ascii=False, indent=1)
+        except OSError:
+            return False
+        self._links_cache = None
+        log("场景顺序已保存：" + " / ".join(order))
+        return True
+
     def list_scenes(self) -> list:
         official_names = self.official_scene_names()
         flags = self._scene_flags()
         cur = self.current_scene()
-        items = [{"name": self.custom_scene_name, "custom": True,
+        items = [{"name": self.custom_scene_name, "custom": True, "sceneType": "normal",
                   "active": cur == self.custom_scene_name},
-                 {"name": self.ALBUM_SCENE, "album": True, "count": len(self.album_items),
-                  "active": cur == self.ALBUM_SCENE}]
+                 {"name": self.ALBUM_SCENE, "album": True, "builtin": True, "sceneType": "album",
+                  "count": len(self.album_items), "active": cur == self.ALBUM_SCENE}]
         try:
             files = sorted(os.listdir(SCENE_DIR))
         except OSError:
@@ -3125,24 +3385,39 @@ class App:
             name = os.path.splitext(f)[0]
             if name == self.ALBUM_SCENE:
                 continue
-            apps = []
+            path = os.path.join(SCENE_DIR, f)
+            data = {}
             try:
-                with open(os.path.join(SCENE_DIR, f), encoding="utf-8-sig") as fh:
-                    apps = json.load(fh).get("apps") or []
+                with open(path, encoding="utf-8-sig") as fh:
+                    loaded = json.load(fh)
+                data = loaded if isinstance(loaded, dict) else {}
             except (OSError, ValueError, AttributeError):
-                pass
-            items.append({"name": name, "custom": False,
+                data = {}
+            alb = data.get("album") if data.get("sceneType") == "album" else None
+            if isinstance(alb, dict):
+                items.append({"name": name, "custom": False, "album": True, "albumScene": True,
+                              "sceneType": "album", "official": name in official_names,
+                              "count": len([n for n in (alb.get("items") or []) if n]),
+                              "active": cur == name})
+                continue
+            items.append({"name": name, "custom": False, "sceneType": "normal",
                           "official": name in official_names,
-                          "apps": apps,
+                          "apps": data.get("apps") or [],
                           "active": cur == name})
         for it in items:
             it["muted"] = bool(flags.get(it["name"], {}).get("muted"))
+            if it["sceneType"] == "album":
+                it["empty"] = int(it.get("count") or 0) == 0
+        order = self._scene_order()
+        if order:
+            rank = {n: i for i, n in enumerate(order)}
+            items.sort(key=lambda it: rank.get(it["name"], len(order)))
         return items
 
     def current_scene(self) -> str:
-        """当前在用的场景名；相册播放中就是「相册」。"""
+        """当前在用的场景名；相册播放中就是正在播的那个相册场景（内置相册没有名字）。"""
         if self.album_active():
-            return self.ALBUM_SCENE
+            return self.album_scene_name or self.ALBUM_SCENE
         return self.active_scene or self.custom_scene_name
 
     @staticmethod
@@ -3168,6 +3443,35 @@ class App:
         # 新建只是保存一份，不切换当前场景
         log(f"已保存场景：{name}")
         return True
+
+    def create_scene(self, name: str, kind: str = "normal") -> dict:
+        """新建场景：普通场景（把当前画面存一份）或相册场景（空的图片集，编辑区里再加图）。"""
+        name = (name or "").strip()[:40]
+        if not name:
+            return {"ok": False, "reason": "场景名不能为空"}
+        if name == self.ALBUM_SCENE:
+            return {"ok": False, "reason": f"「{self.ALBUM_SCENE}」是内置相册，换个名字"}
+        name = self._canonical_scene(name)
+        if name == self.custom_scene_name or os.path.isfile(self._scene_path(name)):
+            return {"ok": False, "reason": f"「{name}」已经有一个同名场景了"}
+        try:
+            os.makedirs(SCENE_DIR, exist_ok=True)
+            if kind == "album":
+                data = {"sceneType": "album",
+                        "album": {"items": [], "index": 0, "slideshow": True, "interval": 8,
+                                  "transition": "fade", "fit": "cover"},
+                        "pages": [{"name": name, "images": {}, "actions": {}}],
+                        "page": 0}
+                with open(self._scene_path(name), "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False, indent=2)
+            else:
+                with open(self._scene_path(name), "w", encoding="utf-8") as fh:
+                    json.dump(self._fresh_contexts(self.export_config()), fh, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            log(f"新建场景失败：{exc}")
+            return {"ok": False, "reason": f"新建失败：{exc}"}
+        log(f"已新建{'相册' if kind == 'album' else '普通'}场景：{name}")
+        return {"ok": True, "name": name, "kind": "album" if kind == "album" else "normal"}
 
     def rename_scene(self, old: str, new: str) -> bool:
         new = (new or "").strip()[:40]
@@ -3379,9 +3683,12 @@ class App:
 
     @staticmethod
     def _scene_has_content(data) -> bool:
-        """场景里到底有没有内容：至少一个键有图片，或者有非导航动作。"""
+        """场景里到底有没有内容：相册场景看有没有图片，普通场景看图片和非导航动作。"""
         if not isinstance(data, dict):
             return False
+        if data.get("sceneType") == "album":
+            alb = data.get("album") or {}
+            return any(str(n) for n in (alb.get("items") or [])) if isinstance(alb, dict) else False
         for page in data.get("pages") or []:
             if not isinstance(page, dict):
                 continue
@@ -3408,6 +3715,10 @@ class App:
         target = (os.path.join(SCENE_DIR, "__custom__.json")
                   if name == self.custom_scene_name else self._scene_path(name))
         data = self._scene_file_data(target)
+        if data is not None and data.get("sceneType") == "album":
+            if not self._album_scene_items(name):
+                return f"相册场景「{name}」里还没有图片，先在编辑区里拖几张图进去"
+            return ""
         if data is not None and not self._scene_has_content(data):
             if name == self.custom_scene_name:
                 return "「自定义」场景还是空的：先在界面上摆好按键，改动会自动存进「自定义」"
@@ -3422,10 +3733,20 @@ class App:
             if not self.album_active():
                 self._album_return = self.active_scene or self.custom_scene_name
             return self.album_play()
+        name = self._canonical_scene(name)
+        if not name:
+            return False
+        if self.is_album_scene(name):
+            if self._play_album_scene(name):
+                return True
+            log(f"相册场景「{name}」里还没有图片，切不过去")
+            return False
         if self.album_active():
             self.preview_mode = "wallpaper"            # 退出相册，下面会整屏重画按键
             self.in_standby = False
-        name = self._canonical_scene(name)
+            self.album_scene_name = ""
+            self._album_scene = {}
+            self._album_return = None
         if not self._auto_applying:
             self._auto_scene = None
         # 切走之前先把「自定义」里正在改的内容存一下，免得切回来少东西
@@ -3916,22 +4237,33 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"自动同步官方场景失败：{exc}")
 
-    def next_scene(self) -> bool:
-        """官方「场景切换」键：按场景列表顺序切到下一个。"""
+    def _scene_usable(self, it: dict) -> bool:
+        """这个场景现在切得过去吗：停用的跳过，空相册 / 空场景也跳过。"""
+        if it.get("muted"):
+            return False
+        if it.get("sceneType") == "album":
+            if it.get("builtin"):
+                return bool(self.album_items)
+            return bool(self._album_scene_items(it["name"]))
+        path = (os.path.join(SCENE_DIR, "__custom__.json")
+                if it.get("custom") else self._scene_path(it["name"]))
+        data = self._scene_file_data(path)
+        return data is None or self._scene_has_content(data)
+
+    def _step_scene(self, step: int) -> bool:
         items = self.list_scenes()
         names = [it["name"] for it in items]
         cur = self.current_scene()
-        usable = {it["name"] for it in items
-                  if not it.get("muted") and not (it.get("album") and not self.album_items)}
+        usable = {it["name"] for it in items if self._scene_usable(it)}
         idx = names.index(cur) if cur in names else -1
         target = None
-        for step in range(1, len(names) + 1):
-            cand = names[(idx + step) % len(names)]
+        for hop in range(1, len(names) + 1):
+            cand = names[(idx + step * hop) % len(names)]
             if cand in usable and cand != cur:
                 target = cand
                 break
         if not target:
-            log("没有其他可切换的场景（其余都已停用）")
+            log("没有可切换的场景（其他场景都停用了或是空的）")
             return False
         if cur != target:
             self._scene_history.append(cur)
@@ -3939,6 +4271,21 @@ class App:
         ok = self.apply_scene(target)
         self.broadcast({"type": "scene", "name": target, "ok": ok})
         return ok
+
+    def next_scene(self) -> bool:
+        """官方「场景切换」键：按场景列表顺序切到下一个。"""
+        return self._step_scene(1)
+
+    def prev_scene(self) -> bool:
+        """往前切一个场景（相册场景的「上一页」导航键用）。"""
+        return self._step_scene(-1)
+
+    def main_scene(self) -> bool:
+        """「主场景」键：退出相册，回到进相册之前的那个场景。"""
+        if self.album_active():
+            self.album_stop()
+            return True
+        return False
 
     def swap_keys(self, a: int, b: int) -> bool:
         if a == b or not (1 <= a <= KEY_COUNT) or not (1 <= b <= KEY_COUNT):
@@ -6050,13 +6397,16 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         elif path in ("/api/album/tiles.png", "/api/album/preview.jpg") or (
                 path.startswith("/api/album/thumb/") and path.endswith(".jpg")):
+            # 相册场景的图片走 ?scene=场景名；不传就是「待机画面」里那本相册
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            scene = (q.get("scene") or [""])[0]
             if path.endswith("tiles.png"):
-                data, ctype = APP.album_tiles_png(), "image/png"
+                data, ctype = APP.album_tiles_png(scene), "image/png"
             elif path.endswith("preview.jpg"):
-                data, ctype = APP.album_preview_jpg(), "image/jpeg"
+                data, ctype = APP.album_preview_jpg(scene), "image/jpeg"
             else:
                 try:
-                    data = APP.album_thumb(int(path.rsplit("/", 1)[1][:-4]))
+                    data = APP.album_thumb(int(path.rsplit("/", 1)[1][:-4]), scene)
                 except ValueError:
                     data = None
                 ctype = "image/jpeg"
@@ -6330,6 +6680,13 @@ class Handler(BaseHTTPRequestHandler):
                             "items": APP.list_scenes()})
             elif body.get("duplicate"):
                 self._json({"ok": APP.duplicate_scene(str(body["duplicate"])),
+                            "items": APP.list_scenes()})
+            elif "create" in body:
+                r = APP.create_scene(str(body.get("create") or body.get("name") or ""),
+                                     str(body.get("kind") or "normal"))
+                self._json({**r, "items": APP.list_scenes()})
+            elif body.get("reorder"):
+                self._json({"ok": APP.set_scene_order(body.get("reorder") or []),
                             "items": APP.list_scenes()})
             elif body.get("save"):
                 self._json({"ok": APP.save_scene(str(body.get("name") or body.get("save") or "")),
@@ -6629,17 +6986,23 @@ class Handler(BaseHTTPRequestHandler):
             APP.reset_lighting()
             self._json(APP.snapshot())
         elif path == "/api/album":
-            self._json(APP.album_state())
+            self._json(APP.album_state(scene=str(body.get("scene") or "")))
         elif path == "/api/album/add":
-            self._json({"ok": APP.album_add([str(f) for f in (body.get("files") or [])]), **APP.album_state()})
+            sc = str(body.get("scene") or "")
+            self._json({"ok": APP.album_add([str(f) for f in (body.get("files") or [])], sc),
+                        **APP.album_state(scene=sc)})
         elif path == "/api/album/remove":
-            self._json({"ok": APP.album_remove(int(body.get("index", -1))), **APP.album_state()})
+            sc = str(body.get("scene") or "")
+            self._json({"ok": APP.album_remove(int(body.get("index", -1)), sc),
+                        **APP.album_state(scene=sc)})
         elif path == "/api/album/move":
-            self._json({"ok": APP.album_move(int(body.get("from", -1)), int(body.get("to", -1))),
-                        **APP.album_state()})
+            sc = str(body.get("scene") or "")
+            self._json({"ok": APP.album_move(int(body.get("from", -1)), int(body.get("to", -1)), sc),
+                        **APP.album_state(scene=sc)})
         elif path == "/api/album/settings":
-            APP.album_settings(body)
-            self._json(APP.album_state())
+            sc = str(body.get("scene") or "")
+            APP.album_settings(body, sc)
+            self._json(APP.album_state(scene=sc))
         elif path == "/api/album/play":
             idx = body.get("index")
             self._json({"ok": APP.album_play(None if idx is None else int(idx)), **APP.album_state()})

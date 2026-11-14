@@ -1,11 +1,11 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261114f" />
+  <link rel="stylesheet" href="style.css?v=20261115b" />
 </head>
 <body>
 <div class="app">
@@ -140,7 +140,7 @@
                 <button class="seg small" id="sel-clear-top">清除</button>
               </span>
             </div>
-            <div class="editor-body">
+            <div class="editor-body" id="editor-body">
               <div class="thumb-col">
                 <div class="thumb" id="sel-thumb"><span>拖入图片 / 程序 / 文件夹</span></div>
                 <div class="thumb-actions">
@@ -260,6 +260,46 @@
                   <button class="seg small" id="sel-open-folder" hidden>打开文件夹编辑</button>
                 </div>
                 <p class="hint-line" id="sel-hint">先点一下上面的按键。</p>
+              </div>
+            </div>
+            <!-- 相册场景：编辑区换成图片集（和「待机画面 → 相册」一样的操作） -->
+            <div class="editor-body" id="album-editor" hidden>
+              <div class="thumb-col">
+                <div class="album-view" id="as-view" title="拖入图片，或点击选择">
+                  <img id="as-preview" alt="" hidden />
+                  <div class="album-empty" id="as-empty">拖入图片，或点击选择<br><span>整页 15 个键拼成一张大图</span></div>
+                  <span class="album-live" id="as-live" hidden>播放中</span>
+                </div>
+                <div class="thumb-actions">
+                  <button class="seg small" id="as-add">添加图片</button>
+                  <button class="seg small" id="as-play">▶ 播放</button>
+                </div>
+              </div>
+              <div class="editor-info">
+                <div class="kv-line"><span>相册场景</span><b id="as-name">—</b></div>
+                <div class="kv-line"><span>图片</span><b id="as-count">0 张</b></div>
+                <div class="album-strip" id="as-strip"></div>
+                <div class="set-row">
+                  <span>幻灯片自动切换</span>
+                  <button class="switch on" id="as-slideshow" role="switch" aria-checked="true"><span></span></button>
+                </div>
+                <div class="slider-row tight">
+                  <span>时长</span>
+                  <input id="as-interval" type="range" min="2" max="60" step="1" value="8" />
+                  <b id="as-interval-val">8 秒</b>
+                </div>
+                <div class="kv-line">
+                  <span>过渡</span>
+                  <span class="seg-group compact" id="as-transition">
+                    <button class="seg" data-tr="none">无</button>
+                    <button class="seg on" data-tr="fade">淡入</button>
+                    <button class="seg" data-tr="slide">滑动</button>
+                    <button class="seg" data-tr="wipe">擦除</button>
+                    <button class="seg" data-tr="mosaic">马赛克</button>
+                  </span>
+                </div>
+                <p class="hint-line">这个场景在 Dock 上就是整屏相册：点任意屏幕键切到下一个场景，◀ 回上一个场景，中间键回主场景。</p>
+                <input id="as-file" type="file" accept="image/*" multiple hidden />
               </div>
             </div>
             <input type="file" id="key-file" accept="image/*,.gif" hidden />
@@ -530,6 +570,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261116b"></script>
+<script src="app.js?v=20261117a"></script>
 </body>
 </html>
