@@ -42,6 +42,33 @@ static class M18Setup
     static string DefaultDir { get { return Path.Combine(LocalAppData, @"Programs\M18 Console"); } }
     static string DataDir { get { return Path.Combine(RoamingAppData, "M18Console"); } }
 
+    // 有些电脑（尤其是开了「受控文件夹访问」的）不许未签名程序写 C:\Users\…，
+    // 但同一块盘的其他位置照样能写——所以安装包放哪块盘，就把那块盘的根目录也当候选。
+    static string DriveDir()
+    {
+        try
+        {
+            string exe = Assembly.GetExecutingAssembly().Location;
+            string root = Path.GetPathRoot(exe);
+            if (string.IsNullOrEmpty(root)) return null;
+            string cand = Path.Combine(root, "M18 Console");
+            return string.Equals(Path.GetFullPath(cand), Path.GetFullPath(DefaultDir), StringComparison.OrdinalIgnoreCase) ? null : cand;
+        }
+        catch { return null; }
+    }
+
+    static List<string> InstallCandidates()
+    {
+        var list = new List<string>();
+        string envDir = Environment.GetEnvironmentVariable("M18_INSTALL_DIR");
+        if (!string.IsNullOrEmpty(envDir)) list.Add(envDir);
+        list.Add(DefaultDir);
+        try { list.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console")); } catch { }
+        string dd = DriveDir();
+        if (!string.IsNullOrEmpty(dd)) list.Add(dd);
+        return list;
+    }
+
     // 装不上时最怕"只有一句拒绝访问"：记下当前步骤 + 写日志，出问题能直接看出卡在哪一步、哪个文件
     static string g_step = "启动";
     static readonly List<string> g_warnings = new List<string>();
@@ -229,11 +256,7 @@ static class M18Setup
                 string target = (i >= 0 && i + 1 < args.Count) ? args[i + 1] : DefaultDir;
                 if (!CanWriteUnder(target))
                 {
-                    var cand = new List<string>();
-                    string envDir = Environment.GetEnvironmentVariable("M18_INSTALL_DIR");
-                    if (!string.IsNullOrEmpty(envDir)) cand.Add(envDir);
-                    cand.Add(DefaultDir);
-                    cand.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console"));
+                    var cand = InstallCandidates();
                     string alt = FirstWritable(cand);
                     if (alt != null && !string.Equals(Path.GetFullPath(alt), Path.GetFullPath(target.Trim()), StringComparison.OrdinalIgnoreCase))
                     {
@@ -632,11 +655,9 @@ static class M18Setup
             {
                 var report = new List<string>();
                 report.Add("× " + target + "  —— " + why);
-                string alt = FirstWritable(new[] {
-                    DefaultDir,
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console"),
-                    Path.Combine(LocalAppData, "M18Console")
-                }, report);
+                var cand = InstallCandidates();
+                if (!cand.Contains(target)) cand.Insert(0, target);
+                string alt = FirstWritable(cand, report);
                 string list = "· " + string.Join("\n· ", report.ToArray());
                 if (alt != null)
                 {

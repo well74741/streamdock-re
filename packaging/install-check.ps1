@@ -42,7 +42,8 @@ try {
   Title "各目录能不能写（安装程序自己的探测）"
   $targets = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\M18 Console'),
-    (Join-Path $env:USERPROFILE 'M18 Console')
+    (Join-Path $env:USERPROFILE 'M18 Console'),
+    (Join-Path (Split-Path -Qualifier $fi.FullName) 'M18 Console')
   )
   foreach ($t in $targets) {
     $p = Start-Process -FilePath $fi.FullName -ArgumentList @('--probe', "`"$t`"") -Wait -PassThru -NoNewWindow `
@@ -53,17 +54,29 @@ try {
   }
 
   # ------------------------------------------------------------ 真装一次
-  Title "静默安装到默认位置（不需要管理员权限）"
-  $dest = Join-Path $env:LOCALAPPDATA 'Programs\M18 Console'
-  $p = Start-Process -FilePath $fi.FullName -ArgumentList @('--silent', '--no-launch', '--no-shortcut', '--dir', "`"$dest`"") `
-        -Wait -PassThru -NoNewWindow -RedirectStandardError "$env:TEMP\m18-inst.err" -RedirectStandardOutput "$env:TEMP\m18-inst.out"
-  $errText = [System.Text.Encoding]::GetEncoding(936).GetString([System.IO.File]::ReadAllBytes("$env:TEMP\m18-inst.err")).Trim()
-  $outText = [System.Text.Encoding]::GetEncoding(936).GetString([System.IO.File]::ReadAllBytes("$env:TEMP\m18-inst.out")).Trim()
-  Write-Host ("  退出码：{0}" -f $p.ExitCode) -ForegroundColor $(if ($p.ExitCode -eq 0) { 'Green' } else { 'Red' })
-  if ($outText) { Write-Host ("  输出：{0}" -f $outText) }
-  if ($errText) { Write-Host $errText -ForegroundColor $(if ($p.ExitCode -eq 0) { 'Yellow' } else { 'Red' }) }
-  if (Test-Path (Join-Path $dest 'M18Console.exe')) {
-    Write-Host ("  已装好：{0}" -f (Join-Path $dest 'M18Console.exe')) -ForegroundColor Green
+  Title "挨个位置试装（不需要管理员权限）"
+  $cands = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\M18 Console'),
+    (Join-Path (Split-Path -Qualifier $fi.FullName) 'M18 Console'),
+    (Join-Path $env:USERPROFILE 'M18 Console')
+  )
+  $installed = $null
+  foreach ($dest in $cands) {
+    $p = Start-Process -FilePath $fi.FullName -ArgumentList @('--silent', '--no-launch', '--no-shortcut', '--dir', "`"$dest`"") `
+          -Wait -PassThru -NoNewWindow -RedirectStandardError "$env:TEMP\m18-inst.err" -RedirectStandardOutput "$env:TEMP\m18-inst.out"
+    $errText = [System.Text.Encoding]::GetEncoding(936).GetString([System.IO.File]::ReadAllBytes("$env:TEMP\m18-inst.err")).Trim()
+    $brief = (@($errText -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First 3 | ForEach-Object { $_.Trim() }) -join ' / '
+    if ($p.ExitCode -eq 0 -and (Test-Path (Join-Path $dest 'M18Console.exe'))) {
+      Write-Host ("  √ 装好了：{0}" -f $dest) -ForegroundColor Green
+      if ($brief) { Write-Host ("    警告：" + $brief) -ForegroundColor Yellow }
+      $installed = $dest
+      break
+    }
+    Write-Host ("  × {0} —— 退出码 {1}：{2}" -f $dest, $p.ExitCode, $brief) -ForegroundColor Yellow
+  }
+  if (-not $installed) {
+    Write-Host "  三个位置都装不进去：这台电脑是按「程序」拦写文件的（未签名程序不给写），" -ForegroundColor Red
+    Write-Host "  要么按下面日志里的办法放行，要么改用免安装版 zip。" -ForegroundColor Red
   }
 
   # ------------------------------------------------------------ 日志
