@@ -2858,17 +2858,20 @@ class App:
             self._wake_swallow.discard(key)
             return
         act = self.key_actions.get(key)
-        if isinstance(act, dict) and act.get("type") == "plugin":
-            self._plugin_key(key, act, state)
-            return
         g = self.key_gestures.get(key) or {}
         if not (g.get("long") or g.get("double")):
+            # 插件动作要收按下 / 松开两个事件，所以先走插件通道
+            if isinstance(act, dict) and act.get("type") == "plugin":
+                self._plugin_key(key, act, state)
+                return
             # 只有短按：按下立即执行，零延迟
             if state == 1:
                 if self.repaint_on_press:
                     self._maybe_repaint()
                 threading.Thread(target=self._run_action, args=(key,), daemon=True).start()
             return
+        # 设了长按 / 双击：一律交给手势判定。以前这里先判断插件就 return，
+        # 结果「插件键 + 长按/双击」永远收不到手势，设了也没反应。
         self._gesture(key, state, g)
 
     def _maybe_repaint(self) -> None:
@@ -4039,6 +4042,13 @@ class App:
         if not act:
             return
         kind = act.get("type") or "launch"
+
+        if kind == "plugin":
+            # 插件动作被设成短按 / 长按 / 双击时，这里补一对按下+松开，插件照常收到 keyDown / keyUp
+            self._plugin_key(key, act, 1)
+            self._plugin_key(key, act, 0)
+            log(f"按键 {key} → 插件 {act.get('plugin')}")
+            return
 
         if kind == "folder":
             ok = self.open_folder(str(act.get("page") or ""))
