@@ -3394,6 +3394,20 @@ class App:
             return None
         return data if isinstance(data, dict) else None
 
+    def scene_hint(self, name: str) -> str:
+        """场景切不了时给界面看的原因；返回空串表示可以切。"""
+        if name == self.ALBUM_SCENE:
+            return "" if self.album_items else "相册是空的，先在右侧「待机画面 → 相册」里加几张图片"
+        name = self._canonical_scene(name)
+        target = (os.path.join(SCENE_DIR, "__custom__.json")
+                  if name == self.custom_scene_name else self._scene_path(name))
+        data = self._scene_file_data(target)
+        if data is not None and not self._scene_has_content(data):
+            if name == self.custom_scene_name:
+                return "「自定义」场景还是空的：先在界面上摆好按键，改动会自动存进「自定义」"
+            return f"场景「{name}」里没有任何图片和动作，先给它加内容再切换"
+        return ""
+
     def apply_scene(self, name: str) -> bool:
         if name == self.ALBUM_SCENE:
             if not self.album_items:
@@ -6117,7 +6131,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": APP.set_scene_muted(str(body["name"]), bool(body["mute"])),
                             "items": APP.list_scenes()})
             elif body.get("apply"):
-                self._json({"ok": APP.apply_scene(str(body.get("apply"))),
+                want = str(body.get("apply"))
+                ok = APP.apply_scene(want)
+                self._json({"ok": ok,
+                            "reason": "" if ok else (APP.scene_hint(want) or "切换失败"),
                             "items": APP.list_scenes()})
             elif body.get("delete"):
                 self._json({"ok": APP.delete_scene(str(body.get("delete"))),

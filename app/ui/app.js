@@ -2644,7 +2644,7 @@ function bindUI() {
         const r = await post("/api/scenes", { apply: name });
         if (!r.ok) {
           row.classList.remove("switching");
-          toast("切换失败", 1600);
+          toast(r.reason || "切换失败", 2800);
           return;
         }
         toast(`已切换到「${name}」`, 1200);
