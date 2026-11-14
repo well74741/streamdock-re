@@ -57,15 +57,39 @@ static class M18Setup
         catch { return null; }
     }
 
+    // 最保险的候选：安装包所在文件夹旁边。用户是从这里双击的，说明这个位置一定能写。
+    static string ExeNearDir()
+    {
+        try
+        {
+            string exe = Assembly.GetExecutingAssembly().Location;
+            string dir = Path.GetDirectoryName(exe);
+            if (string.IsNullOrEmpty(dir)) return null;
+            return Path.Combine(dir, "M18 Console");
+        }
+        catch { return null; }
+    }
+
     static List<string> InstallCandidates()
     {
         var list = new List<string>();
-        string envDir = Environment.GetEnvironmentVariable("M18_INSTALL_DIR");
-        if (!string.IsNullOrEmpty(envDir)) list.Add(envDir);
-        list.Add(DefaultDir);
-        try { list.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console")); } catch { }
-        string dd = DriveDir();
-        if (!string.IsNullOrEmpty(dd)) list.Add(dd);
+        Action<string> add = delegate(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                string full = Path.GetFullPath(path);
+                foreach (string other in list)
+                    if (string.Equals(Path.GetFullPath(other), full, StringComparison.OrdinalIgnoreCase)) return;
+                list.Add(path);
+            }
+            catch { }
+        };
+        add(Environment.GetEnvironmentVariable("M18_INSTALL_DIR"));
+        add(DefaultDir);
+        add(ExeNearDir());
+        try { add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "M18 Console")); } catch { }
+        add(DriveDir());
         return list;
     }
 
@@ -621,7 +645,11 @@ static class M18Setup
             var sub = new Label { Text = "版本 " + VERSION + " · 自研 Stream Dock M18 驱动控制台", ForeColor = Color.DimGray, AutoSize = true, Location = new Point(22, 52) };
             var dirLabel = new Label { Text = "安装位置：", AutoSize = true, Location = new Point(22, 92) };
             dirBox.SetBounds(100, 88, 350, 26);
-            dirBox.Text = InstalledDir() ?? DefaultDir;
+            // 已经装过就沿用原来的位置；否则先挑一个「真的能写」的位置预填，
+            // 这样双击安装包一路点「安装」就行，不必先撞一次「访问被拒绝」。
+            string prefill = InstalledDir();
+            if (string.IsNullOrEmpty(prefill)) prefill = FirstWritable(InstallCandidates());
+            dirBox.Text = string.IsNullOrEmpty(prefill) ? DefaultDir : prefill;
             browseBtn.Text = "浏览…";
             browseBtn.SetBounds(458, 86, 80, 28);
             browseBtn.Click += delegate

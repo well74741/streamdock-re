@@ -1,4 +1,4 @@
-﻿# 安装包自查：确认「你双击的是哪个安装包」「是新版还是旧版」「哪些目录能写」「装得进去吗」
+# 安装包自查：确认「你双击的是哪个安装包」「是新版还是旧版」「哪些目录能写」「装得进去吗」
 # 由「安装诊断.bat」调用；也可以把安装包拖到 bat 上
 param([string]$Setup)
 
@@ -57,6 +57,7 @@ try {
   Title "挨个位置试装（不需要管理员权限）"
   $cands = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\M18 Console'),
+    (Join-Path (Split-Path $fi.FullName -Parent) 'M18 Console'),
     (Join-Path (Split-Path -Qualifier $fi.FullName) 'M18 Console'),
     (Join-Path $env:USERPROFILE 'M18 Console')
   )
