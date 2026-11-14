@@ -1501,7 +1501,7 @@ function choiceDialog(message, choices) {
     box.className = "modal confirm-modal";
     box.innerHTML = `<div class="modal-card confirm-card">
       <div class="confirm-body">${message}</div>
-      <div class="confirm-actions choice-actions">
+      <div class="confirm-actions choice-actions${choices.length > 2 ? " choice-vertical" : ""}">
         ${choices.map((c) => `<button class="seg${c.primary ? " on" : ""}" data-v="${c.value}">${c.label}</button>`).join("")}
         <button class="seg" data-v="">取消</button>
       </div>
@@ -2766,26 +2766,49 @@ function bindUI() {
     showThumbMenu(e.clientX, e.clientY);
   });
   $("#official-sync").addEventListener("click", async () => {
-    const mode = await choiceDialog(
-      "从官方 Stream Dock 驱动重新抓取：<br>· 图标包、插件：总是重新读取<br>· 场景：选择处理方式",
-      [{ value: "new", label: "只添加新场景（保留已改动）", primary: true },
-       { value: "all", label: "全部重新导入（覆盖已导入的官方场景）" }]);
-    if (!mode) return;
-    if (mode === "all" && !(await confirmDialog("已导入的官方场景里你改过的按键会被覆盖，继续？"))) return;
-    const withPlugins = await confirmDialog(
-      "同时把官方插件（含 Node 运行环境，约 500 MB）复制到本地？<br>"
-      + "<span class='muted'>复制后即使卸载官方 Stream Dock 软件，插件也能继续使用。图标包总是会备份。</span>");
+    // 先问同步哪一块：全部 / 场景 / 图标 / 插件
+    const what = await choiceDialog(
+      "从官方 Stream Dock 驱动同步什么？<br><span class='muted'>官方软件里的场景、图标包和插件，可以只挑一部分。</span>",
+      [{ value: "all", label: "全部同步", primary: true },
+       { value: "scenes", label: "只同步场景" },
+       { value: "icons", label: "只同步图标包" },
+       { value: "plugins", label: "只同步插件" }]);
+    if (!what) return;
+
+    let mode = "new";
+    if (what === "all" || what === "scenes") {
+      mode = await choiceDialog("官方场景怎么处理？", [
+        { value: "new", label: "只添加新场景（保留已导入的改动）", primary: true },
+        { value: "all", label: "全部重新导入（覆盖已导入的官方场景）" }]);
+      if (!mode) return;
+      if (mode === "all" && !(await confirmDialog("已导入的官方场景里你改过的按键会被覆盖，继续？"))) return;
+    }
+
+    let withPlugins = false;
+    if (what === "all" || what === "plugins") {
+      withPlugins = await confirmDialog(
+        "把官方插件（含 Node 运行环境，约 500 MB）复制到本地？<br>"
+        + "<span class='muted'>复制后即使卸载官方 Stream Dock 软件，插件也能继续使用。</span>");
+      if (!withPlugins && what === "plugins") return;        // 只同步插件 = 复制插件，拒绝就什么都不做
+    }
+
+    const wantScenes = what === "all" || what === "scenes";
+    const wantIcons = what === "all" || what === "icons";
     toast(withPlugins ? "正在同步并备份插件，可能要一两分钟…" : "正在同步官方资源…", 2500);
-    const r = await post("/api/official/sync", { mode, plugins: withPlugins });
+    const r = await post("/api/official/sync", {
+      mode, scenes: wantScenes, icons: wantIcons, plugins: withPlugins,
+    });
     iconPacks = null;
     pluginItems = null;
     await loadIcons(true);
     await loadPlugins(true);
     await window.m18ReloadScenes?.();
     await refreshState();
-    const n = (r.scenes || []).length;
-    toast(`同步完成：${mode === "all" ? "重导" : "新增"}场景 ${n} 个 · 图标包 ${r.packs ?? "-"} 个（${r.icons ?? "-"} 个图标）`
-      + `${withPlugins ? ` · 已备份插件 ${r.plugins ?? 0} 个` : ""}`, 4200);
+    const parts = [];
+    if (wantScenes) parts.push(`场景 ${(r.scenes || []).length} 个（${mode === "all" ? "重导" : "新增"}）`);
+    if (wantIcons) parts.push(`图标包 ${r.packs ?? 0} 个（${r.icons ?? 0} 个图标）`);
+    if (withPlugins) parts.push(`备份插件 ${r.mirroredPlugins ?? 0} 个`);
+    toast("同步完成：" + (parts.join(" · ") || "没有变化"), 4200);
   });
   let searchTimer = null;
   $("#icon-search").addEventListener("input", () => {

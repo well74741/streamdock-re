@@ -3752,26 +3752,38 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"备份图标包失败：{exc}")
 
-    def sync_official(self, mode: str = "new", include_plugins: bool = False) -> dict:
-        """「同步官方」按钮：重新读取图标包 / 插件；场景按 mode 只加新的（new）或全部覆盖重导（all）。"""
-        self._catalog(refresh=True)
-        if self.plugin_host:
+    def sync_official(self, mode: str = "new", include_plugins: bool = False,
+                      include_scenes: bool = True, include_icons: bool = True) -> dict:
+        """「同步官方」按钮。
+
+        可以只挑一部分同步：include_scenes / include_icons / include_plugins。
+        场景按 mode 只加新的（new）或全部覆盖重导（all）。
+        """
+        if include_scenes or include_icons or include_plugins:
+            self._catalog(refresh=True)
+        if self.plugin_host and (include_scenes or include_icons or include_plugins):
             plugins = {}
             for uid, p in self._catalog()["plugins"].items():
                 man = official._plugin_manifest(p["folder"])
                 if man:
                     plugins[uid] = {"folder": p["folder"], "manifest": man}
             self.plugin_host.register_plugins(plugins)
-        result = self.sync_official_scenes(only_new=(mode != "all"))
-        result["iconsMirrored"] = self.mirror_icons()
+        result = {"scenes": []}
+        if include_scenes:
+            result = self.sync_official_scenes(only_new=(mode != "all"))
+        if include_icons:
+            result["iconsMirrored"] = self.mirror_icons()
+        mirrored_plugins = 0
         if include_plugins:
-            result.update(self.mirror_plugins())
+            mirrored = self.mirror_plugins()
+            mirrored_plugins = mirrored.get("plugins", 0)
+            result["node"] = mirrored.get("node", False)
         active = self.active_scene
         if mode == "all" and active and active in [r["name"] for r in result["scenes"]]:
             self.apply_scene(active)          # 当前场景被重导了，重新载入
         cat = self._catalog()
         result.update({"packs": len(cat["packs"]), "icons": sum(len(p["files"]) for p in cat["packs"].values()),
-                       "plugins": len(cat["plugins"])})
+                       "plugins": len(cat["plugins"]), "mirroredPlugins": mirrored_plugins})
         return result
 
     def sync_official_scenes(self, only_new: bool = False) -> dict:
@@ -6363,9 +6375,13 @@ class Handler(BaseHTTPRequestHandler):
             p = APP._catalog()["plugins"].get(str(body.get("plugin") or ""))
             self._json({"ok": bool(p) and APP.reveal_in_explorer(p["folder"])})
         elif path == "/api/official/sync":
-            self._json({"ok": True, **APP.sync_official(str(body.get("mode") or "new"),
-                                                        bool(body.get("plugins"))),
-                        "items": APP.list_scenes()})
+            # scenes / icons / plugins 三个开关，缺省都按「要」处理，保持老调用兼容
+            self._json({"ok": True, **APP.sync_official(
+                str(body.get("mode") or "new"),
+                bool(body.get("plugins", False)),
+                bool(body.get("scenes", True)),
+                bool(body.get("icons", True)),
+            ), "items": APP.list_scenes()})
         elif path == "/api/apps/recent":
             self._json({"ok": True, "items": list(APP.recent_apps)})
         elif path == "/api/custom-plugins":
