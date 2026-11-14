@@ -739,6 +739,16 @@ async function deletePlugin(pid, pname) {
   }
 }
 
+async function revealIcon(packId, fname) {
+  const r = await post("/api/iconpacks/reveal", fname ? { pack: packId, file: fname } : { pack: packId });
+  if (!r.ok) toast("没找到这个图标：可能已经被删掉了", 2400);
+}
+
+async function revealPlugin(pid) {
+  const r = await post("/api/plugins/reveal", { plugin: pid });
+  if (!r.ok) toast("没找到这个插件：可能已经被删掉了", 2400);
+}
+
 function bindLibMenus() {
   $("#icon-groups")?.addEventListener("contextmenu", (e) => {
     const det = e.target.closest("details.icon-group");
@@ -757,12 +767,15 @@ function bindLibMenus() {
       if (fname) {
         items.push({ label: `删除这个图标（${fname.replace(/\.[^.]+$/, "")}）`, danger: true,
                      onPick: () => deleteIconFile(pid, fname) });
+        items.push({ label: "打开所在文件夹", onPick: () => revealIcon(pid, fname) });
       }
       items.push({ label: `删除整个图标包（${packName}）`, danger: true,
                    onPick: () => deleteIconPack(pid, packName) });
+      if (!fname) items.push({ label: "打开所在文件夹", onPick: () => revealIcon(pid) });
     } else {
       items.push({ label: `删除整个图标包（${packName}）`, danger: true,
                    onPick: () => deleteIconPack(packId, packName) });
+      items.push({ label: "打开所在文件夹", onPick: () => revealIcon(packId) });
     }
     showLibMenu(e.clientX, e.clientY, items);
   });
@@ -780,9 +793,10 @@ function bindLibMenus() {
       const aname = act.querySelector("span")?.textContent?.trim() || act.dataset.uuid;
       items.push({ label: `删除这个动作（${aname}）`, danger: true,
                    onPick: () => deletePluginAction(pid, act.dataset.uuid, aname) });
+      items.push({ label: "打开所在文件夹", onPick: () => revealPlugin(pid) });
     }
     items.push({ label: `删除整个插件（${pname}）`, danger: true, onPick: () => deletePlugin(pid, pname) });
-    items.push({ label: "在资源管理器里打开", onPick: () => post("/api/plugins/reveal", { plugin: pid }) });
+    if (!act) items.push({ label: "打开所在文件夹", onPick: () => revealPlugin(pid) });
     showLibMenu(e.clientX, e.clientY, items);
   });
 }

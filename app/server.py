@@ -4010,6 +4010,10 @@ class App:
                 st["long_timer"].start()
             return
         st["released"] = True
+        down = st.get("down")
+        if down:
+            held = (time.time() - down) * 1000
+            log(f"按键 {key} 松开，按住 {held:.0f}ms（长按阈值 {self.LONG_PRESS_SEC * 1000:.0f}ms）")
         if st.get("long_timer"):
             st["long_timer"].cancel()
         if st.get("long_fired"):
@@ -4536,6 +4540,19 @@ class App:
         self._catalog_cache = None
         log(f"已删除图标包：{folder}")
         return True, f"已删除图标包「{pack['name']}」"
+
+    def reveal_icon_pack(self, pack_id: str, fname: str = "") -> bool:
+        """在资源管理器里打开图标包；给了文件名就选中那个图标。"""
+        target = self.icon_pack_file(pack_id, fname) if fname else ""
+        if not target:
+            if pack_id == "local":
+                target = ICON_DIR if os.path.isdir(ICON_DIR) else os.path.dirname(ICON_DIR)
+            else:
+                pack = self._catalog()["packs"].get(pack_id)
+                if not pack:
+                    return False
+                target = pack["folder"]
+        return self.reveal_in_explorer(target)
 
     def _drop_plugin_bindings(self, plugin_id: str) -> int:
         """把绑在已删插件上的按键清空，返回清掉的个数。"""
@@ -6308,6 +6325,8 @@ class Handler(BaseHTTPRequestHandler):
             fname = str(body.get("file") or "")
             ok, msg = APP.delete_icon(pack, fname) if fname else APP.delete_icon_pack(pack)
             self._json({"ok": ok, "message": msg, "packs": APP.icon_packs()})
+        elif path == "/api/iconpacks/reveal":
+            self._json({"ok": APP.reveal_icon_pack(str(body.get("pack") or ""), str(body.get("file") or ""))})
         elif path == "/api/plugins/delete":
             ok, msg = APP.delete_plugin(str(body.get("plugin") or ""))
             self._json({"ok": ok, "message": msg, "plugins": APP.plugin_catalog()})

@@ -432,10 +432,11 @@ class PluginHost:
                 "--mute-audio", "--window-position=-3200,-3200",
                 f"--user-data-dir={self._profile_dir()}", url]
         subprocess.Popen(args, creationflags=NO_WINDOW, close_fds=True)
-        threading.Thread(target=self._hide_host_window, daemon=True).start()
+        self._hide_gen = getattr(self, "_hide_gen", 0) + 1
+        threading.Thread(target=self._hide_host_window, args=(self._hide_gen,), daemon=True).start()
         self.log("已启动后台插件浏览器（网页类插件）")
 
-    def _hide_host_window(self) -> None:
+    def _hide_host_window(self, gen: int = 0) -> None:
         """把后台浏览器窗口从任务栏和 Alt+Tab 里藏掉（WS_EX_TOOLWINDOW）。
 
         窗口本身留在屏幕外不关闭——关掉它插件就停了；插件自己打开的弹窗是
@@ -452,9 +453,17 @@ class PluginHost:
         except Exception:  # noqa: BLE001
             return
         GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x00000080, 0x00040000
+        SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE = 0x0001, 0x0004, 0x0010
         prefix = "M18 插件宿主"
         WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
         found = [0]
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
 
         def on_enum(hwnd, _lparam):
             try:
@@ -473,19 +482,33 @@ class PluginHost:
                     user32.ShowWindow(hwnd, 0)          # SW_HIDE
                     user32.ShowWindow(hwnd, 4)          # SW_SHOWNOACTIVATE
                     found[0] += 1
+                # 浏览器有时会按上次记住的位置把窗口摆回屏幕中间，拽回屏幕外
+                r = RECT()
+                if user32.GetWindowRect(hwnd, ctypes.byref(r)):
+                    on_screen = (r.right > 0 and r.left < screen_w and r.bottom > 0 and r.top < screen_h)
+                    if on_screen:
+                        user32.SetWindowPos(hwnd, 0, -3200, -3200, 0, 0,
+                                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+                        self.log("后台插件浏览器窗口跑到屏幕里了，已挪回屏幕外")
             except Exception:  # noqa: BLE001
                 pass
             return True
 
         proc = WNDENUMPROC(on_enum)
-        for _ in range(120):                 # 最多盯 60 秒：标题会随插件加载变化
+        started = time.time()
+        reported = False
+        while True:
+            if gen and getattr(self, "_hide_gen", gen) != gen:
+                return                                   # 浏览器被重启了，这个线程让位给新的
             try:
                 user32.EnumWindows(proc, 0)
             except Exception:  # noqa: BLE001
                 return
-            time.sleep(0.5)
-        if found[0] == 0:
-            self.log("没找到后台插件浏览器窗口，任务栏可能留着它的图标（不影响插件运行）")
+            if not reported and found[0] == 0 and time.time() - started > 60:
+                reported = True
+                self.log("没找到后台插件浏览器窗口，任务栏可能留着它的图标（不影响插件运行）")
+            # 开头密集盯（标题随插件加载变化），之后低频复查，防止窗口被挪回屏幕里
+            time.sleep(0.5 if time.time() - started < 60 else 2.0)
 
     def _push_html_list(self) -> None:
         with self.lock:
