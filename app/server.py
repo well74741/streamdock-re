@@ -1631,9 +1631,9 @@ class App:
         return dev
 
     def _panel_write(self, fn) -> bool:
-        """开关屏指令优先走主连接：另开一条句柄会把按键上报抢走（关屏后按键就“失灵”了）。"""
+        """发一条“开关屏”之类的指令：优先走主连接，别再另开一条（另开的句柄会抢按键上报）。"""
         dev = self.device
-        if dev is not None and dev.connected:
+        if dev is not None and getattr(dev, "connected", False) and hasattr(dev, "write"):
             try:
                 return bool(dev.write(fn))
             except Exception:  # noqa: BLE001
@@ -1647,10 +1647,35 @@ class App:
             return False
 
     def sleep_panel(self) -> bool:
-        return self._panel_write(lambda tr: tr.sleep())
+        """息屏：只把背光调到 0，不让设备硬件睡下去。
+
+        设备一进硬件 sleep 就不再上报按键，按什么键都醒不过来（三个导航键也一样）。
+        背光 0 在观感上就是黑屏，但按键通道还活着，按一下就能唤醒。
+        """
+        dev = self.device
+        if dev is None or not getattr(dev, "connected", False):
+            return False
+        try:
+            self._gif_stop_all()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            return bool(dev.set_screen_brightness(0))
+        except Exception:  # noqa: BLE001
+            return False
 
     def wake_panel(self) -> bool:
-        return self._panel_write(lambda tr: tr.wakeup_screen())
+        dev = self.device
+        if dev is None or not getattr(dev, "connected", False):
+            return False
+        try:
+            dev.wakeup()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            return bool(dev.set_screen_brightness(self.screen_brightness))
+        except Exception:  # noqa: BLE001
+            return False
 
     CONSOLE_LIGHT_MODES = ("solid", "rainbow", "breathe", "chase", "gradient", "ripple")
 
@@ -3387,6 +3412,10 @@ class App:
         """息屏状态下按了键：点亮屏幕并把按键画面补回去。"""
         try:
             self.wake_panel()
+            try:
+                self.device.resubscribe_input()   # 顺便把按键通道重新订一次，防止它悄悄断掉
+            except Exception:  # noqa: BLE001
+                pass
             time.sleep(0.12)
             self.apply_keys()
         except Exception as exc:  # noqa: BLE001
