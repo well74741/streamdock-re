@@ -2503,8 +2503,80 @@ class App:
                 except Exception:  # noqa: BLE001
                     pass
             log("休眠恢复：按键通道已重新订阅，画面和动图已重推")
+            if not (getattr(dev, "firmware", "") or "").strip():
+                log("设备上报的固件号是空的：这块屏可能处于异常状态（画面卡住时用设备页的「拔插设备」）")
+                self.broadcast({"type": "notice",
+                                "text": "设备状态看起来不太对：屏幕要是卡住不动，到设备页点「拔插设备（软件）」。",
+                                "ms": 6500})
         except Exception as exc:  # noqa: BLE001
             log(f"休眠恢复处理失败：{exc}")
+
+    def device_instance_id(self) -> str:
+        """找 Dock 的 USB 复合设备实例 ID（软件拔插要用）。"""
+        try:
+            out = subprocess.run(["pnputil", "/enum-devices", "/connected"],
+                                 capture_output=True, timeout=15,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            # pnputil 的输出会跟着系统语言变，所以不认「Instance ID:」这个标签，
+            # 直接在文本里找 USB\VID_6603&PID_1012\<序列号> 这串（标签是本地化的时候也稳）
+            text = out.stdout.decode("mbcs", "ignore") + out.stderr.decode("mbcs", "ignore")
+            import re as _re
+            m = _re.search(r"USB\\VID_6603&PID_1012\\[^\\\s\"',]+", text, _re.IGNORECASE)
+            if m:
+                return m.group(0)
+            log(f"软件拔插：枚举设备时没看到 VID_6603（输出 {len(text)} 字节）")
+        except Exception as exc:  # noqa: BLE001
+            log(f"软件拔插：枚举设备失败：{exc}")
+        return ""
+
+    def usb_reset(self) -> dict:
+        """软件拔插：让 Windows 重新枚举这块设备，等于把 USB 线拔了再插。
+
+        设备固件偶尔会卡在「命令收得到、画面不刷新」的状态（睡醒后最常见），
+        这种情况普通命令救不回来，只有重新枚举能好。
+        """
+        import ctypes  # 局部导入：只有这条救援路径用得到
+
+        inst = self.device_instance_id()
+        if not inst:
+            log("软件拔插：没找到 Dock 的 USB 实例 ID（设备可能已经掉了）")
+            return {"ok": False, "error": "没找到设备的 USB 实例 ID"}
+        try:
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:  # noqa: BLE001
+            is_admin = False
+        log(f"软件拔插：{inst}（管理员={is_admin}）")
+        cmd = ["pnputil", "/restart-device", inst]
+        try:
+            out = subprocess.run(cmd, capture_output=True, timeout=40)
+            text = (out.stdout + out.stderr).decode("utf-8", "ignore").strip()
+        except Exception as exc:  # noqa: BLE001
+            log(f"软件拔插失败：{exc}")
+            return {"ok": False, "error": f"执行失败：{exc}"}
+        if out.returncode != 0:
+            log(f"软件拔插：pnputil 返回 {out.returncode}：{text[:300]}")
+            low = text.lower()
+            if "denied" in low or "拒绝" in text or "privilege" in low or "权限" in text:
+                # 不是管理员：弹一次 UAC，用户点「是」之后由系统重启设备
+                log("软件拔插：权限不够，弹一次 UAC 让用户确认")
+                try:
+                    subprocess.run(["powershell", "-NoProfile", "-Command",
+                                    "Start-Process pnputil -ArgumentList "
+                                    f"'-restart-device' '{inst}' -Verb RunAs -Wait"],
+                                   capture_output=True, timeout=90)
+                except Exception as exc:  # noqa: BLE001
+                    log(f"软件拔插：提权也没成功：{exc}")
+                    return {"ok": False, "error": f"需要管理员权限才能拔插设备：{exc}"}
+                text = "已通过管理员权限重启设备"
+            else:
+                return {"ok": False, "error": text or "重启设备失败"}
+        log(f"软件拔插：{inst} 已重启，等设备重新枚举")
+        # 等它重新接上（热插拔线程会自动接管并重画）
+        for _ in range(24):
+            time.sleep(0.5)
+            if self.device.connected:
+                break
+        return {"ok": True, "instance": inst, "message": text, "connected": self.device.connected}
 
     def hard_recover(self, hard: bool = False) -> dict:
         """画面卡住（推过去的图不刷新，但灯效、按键都正常）时的重手恢复。
@@ -7950,6 +8022,18 @@ class Handler(BaseHTTPRequestHandler):
             hard = bool(body.get("hard"))
             threading.Thread(target=APP.hard_recover, args=(hard,), daemon=True).start()
             self._json({"ok": True, "hard": hard})
+        elif path == "/api/device/usb-reset":
+            # 软件拔插：设备固件卡住（画面不刷）时，只有重新枚举能救回来
+            def _reset_job() -> None:
+                r = APP.usb_reset()
+                if r.get("ok"):
+                    APP.broadcast({"type": "notice", "text": "设备已重新枚举，控制台正在接管…", "ms": 4000})
+                else:
+                    APP.broadcast({"type": "notice",
+                                   "text": f"拔插设备没成功：{r.get('error', '')}（也可以手动拔一次 USB 线）",
+                                   "ms": 7000})
+            threading.Thread(target=_reset_job, daemon=True).start()
+            self._json({"ok": True, "resetting": True})
         elif path == "/api/device/wake-panel":
             ok = APP.wake_panel()
             self._json({"ok": ok})

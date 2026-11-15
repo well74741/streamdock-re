@@ -4108,6 +4108,14 @@ function bindUI() {
     toast(r?.ok === false ? (r.error || "设备没连上") : "已清屏重推，看看屏幕刷新没有", 2600);
   });
 
+  /* 还不行就软件拔插：让 Windows 重新枚举设备（相当于拔了 USB 再插） */
+  $("#usb-reset").addEventListener("click", async () => {
+    if (!(await confirmDialog("让系统重新枚举这块 Dock？<br><small>相当于把 USB 线拔下来再插回去：屏幕会黑一下、约 3 秒，之后控制台会自动接管。不是管理员时会弹一次权限确认。</small>"))) return;
+    await post("/api/device/usb-reset");
+    toast("正在重新枚举设备…", 2200);
+    setTimeout(() => refreshState(), 7000);
+  });
+
   /* 动图错位时的手动对齐：整组重新加载后一起开始 */
   $("#gif-resync").addEventListener("click", async () => {
     const r = await post("/api/device/gif-resync");
@@ -4623,6 +4631,8 @@ function connectEvents() {
         setSwitch($("#sleep-btn"), !msg.screenOff);
       }
       refreshState();
+    } else if (msg.type === "notice") {
+      toast(msg.text || "", msg.ms || 4000);
     } else if (msg.type === "library") {
       libraryItems = msg.items || [];
       renderLibrary();
