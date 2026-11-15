@@ -1721,6 +1721,7 @@ function ensureKeyMenu() {
       toast(r.ok ? "已粘贴" : "剪贴板是空的", 1400);
       if (r.ok) await refreshState();
     } else if (act === "del") {
+      dropPendingForKey(key);
       await post("/api/key/clear-all", { key });
       toast("已清除该按键", 1200);
       await refreshState();
@@ -2175,6 +2176,13 @@ function clearPendingIcon() {
   document.querySelector(`.ring-board .cell[data-key="${k}"]`)?.classList.remove("pending-icon");
   refreshCells();
   renderEditor();
+}
+
+/* 清掉某个键上还没保存的预览（清除 / 删除按键时用；不传 key 就全清） */
+function dropPendingForKey(key) {
+  if (!pendingIcon) return;
+  if (key && pendingIcon.key !== key) return;
+  clearPendingIcon();
 }
 
 function setPendingIcon(key, gesture, info) {
@@ -3364,6 +3372,7 @@ function bindUI() {
 
   $("#thumb-clear").addEventListener("click", async () => {
     if (!selectedKey || selectedKey > 15) return;
+    dropPendingForKey(selectedKey);   // 还没保存的预览也要一起清掉，不然图还留在格子上
     await post("/api/key/clear", { key: selectedKey });
     toast("已清除该按键的图片", 1200);
     await refreshState();
@@ -3374,9 +3383,17 @@ function bindUI() {
     if (!f || !selectedKey) return;
     try {
       const up = await upload(f);
-      const r = await post("/api/key/image", { key: selectedKey, file: up.file });
-      if (!r.ok) toast("图片设置失败");
-      await refreshState();
+      if (!up?.ok) {
+        toast(up?.error || "上传失败", 2200);
+        return;
+      }
+      // 和其它拖放一样：先显示在键上，点「保存」才写入
+      setPendingIcon(selectedKey, editGesture, {
+        kind: "image",
+        name: up.file,
+        src: `/api/asset?p=${encodeURIComponent(up.file)}&v=${Date.now()}`,
+        label: "图片",
+      });
     } catch (err) {
       toast("图片设置失败：" + err.message);
     }
@@ -4068,6 +4085,7 @@ function bindUI() {
   $("#sel-clear-top").addEventListener("click", async () => {
     if (!selectedKey) return;
     if (!(await confirmDialog(`清除按键 ${selectedKey} 的图片、动作和样式？`))) return;
+    dropPendingForKey(selectedKey);       // 预览中的图也一起清，不然格子上还留着
     await post("/api/key/clear", { key: selectedKey });
     await post("/api/key/action/clear", { key: selectedKey });
     await post("/api/key/action/clear", { key: selectedKey, gesture: "long" });
