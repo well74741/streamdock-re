@@ -961,6 +961,8 @@ class App:
         self.in_standby = False
         self.selected_key = 0
         self.screen_off = False
+        self._blanked = False          # 已经刷成黑屏（息屏）了，别重复刷
+        self._black_frame: bytes | None = None
         self.yielded = False
         self._light_back = ""          # 灯光开关：关灯前用的效果，再按一次开回来
         self.clipboard = None
@@ -1068,14 +1070,13 @@ class App:
             self._dirty = True
             # 唤醒一次：设备醒着才会开始上报按键
             self.device.wakeup()
-            # WS SDK 的 wakeup() 是空实现，真正叫醒屏要用 Python SDK 的 wakeup_screen。
+            # WS SDK 的 wakeup() 是空实现，真正叫醒屏要靠背光命令。
             # 只在接管时发一次，别周期性发（连发会让设备进入「画面不刷新」的状态）。
             if self.wake_panel():
                 self._last_wake = time.time()
             time.sleep(0.5)
             self.apply_keys()
             self.broadcast({"type": "status", "connected": True})
-            threading.Thread(target=self._panel_device, daemon=True).start()
         except Exception as exc:  # noqa: BLE001
             log(f"重新接管失败：{exc}")
 
@@ -1323,12 +1324,10 @@ class App:
         if not self.device.connected or self.writes_paused or self.quiet or self.lighting_only or self.yielded:
             return False
         if self.screen_off:
-            self._gif_stop_all()
-            try:
-                self.device.set_screen_brightness(0)
-            except Exception:  # noqa: BLE001
-                pass
+            if not getattr(self, "_blanked", False):
+                self.blank_screen()     # 息屏：15 个键刷黑 + 背光 0
             return False
+        self._blanked = False
         self._gif_stop_all()
         # 先发亮度命令唤醒面板，否则设备睡过去后写进去的图不会显示
         try:
@@ -1607,17 +1606,8 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
 
-    def blank_screen(self) -> None:
-        """把所有键清成空白，确保息屏时屏幕上没有任何内容。"""
-        self._gif_stop_all()
-        try:
-            self.device.clear_keys()
-            self.device.refresh()
-        except Exception:  # noqa: BLE001
-            pass
-
     def _panel_device(self):
-        """常驻一条 transport 句柄专门发开关屏指令，避免每次开关都重新枚举（很慢）。"""
+        """常驻一条 transport 句柄（备用）。发开关屏指令已经改走主连接，别再另开一条抢按键上报。"""
         dev = getattr(self, "_panel_dev", None)
         if dev is not None and dev.connected:
             return dev
@@ -1631,7 +1621,7 @@ class App:
         return dev
 
     def _panel_write(self, fn) -> bool:
-        """发一条“开关屏”之类的指令：优先走主连接，别再另开一条（另开的句柄会抢按键上报）。"""
+        """发一条 transport 指令（备用）：优先走主连接，别另开句柄抢按键上报。"""
         dev = self.device
         if dev is not None and getattr(dev, "connected", False) and hasattr(dev, "write"):
             try:
@@ -1646,11 +1636,20 @@ class App:
         except Exception:  # noqa: BLE001
             return False
 
-    def sleep_panel(self) -> bool:
-        """息屏：只把背光调到 0，不让设备硬件睡下去。
+    def _black_jpeg(self) -> bytes:
+        """一张全黑的 64×64，用来把 15 个键刷成黑屏。"""
+        if self._black_frame is None:
+            img = Image.new("RGB", (KEY_SIZE, KEY_SIZE), (0, 0, 0))
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=72)
+            self._black_frame = buf.getvalue()
+        return self._black_frame
 
-        设备一进硬件 sleep 就不再上报按键，按什么键都醒不过来（三个导航键也一样）。
-        背光 0 在观感上就是黑屏，但按键通道还活着，按一下就能唤醒。
+    def blank_screen(self) -> bool:
+        """息屏：15 个键全刷成黑 + 背光 0 + 停掉动图。
+
+        不用 transport 的硬件 sleep —— 设备一睡就不再上报按键，三个导航键按下去也叫不醒。
+        刷黑在观感上就是关机，按键通道还活着，按一下就回按键画面。
         """
         dev = self.device
         if dev is None or not getattr(dev, "connected", False):
@@ -1659,15 +1658,34 @@ class App:
             self._gif_stop_all()
         except Exception:  # noqa: BLE001
             pass
+        ok = True
         try:
-            return bool(dev.set_screen_brightness(0))
+            black = self._black_jpeg()
+            for key in range(1, KEY_COUNT + 1):
+                if not dev.send_image(key, black):
+                    ok = False
+            dev.refresh()
+            self._frame_hash = None
         except Exception:  # noqa: BLE001
-            return False
+            ok = False
+        try:
+            dev.set_screen_brightness(0)
+        except Exception:  # noqa: BLE001
+            pass
+        self._blanked = ok
+        if ok:
+            log("已刷黑屏：15 个键全黑、背光 0（按键通道还在，按任意键唤醒）")
+        return ok
+
+    def sleep_panel(self) -> bool:
+        """息屏（导航键「屏幕开关」的关屏动作）。"""
+        return self.blank_screen()
 
     def wake_panel(self) -> bool:
         dev = self.device
         if dev is None or not getattr(dev, "connected", False):
             return False
+        self._blanked = False
         try:
             dev.wakeup()
         except Exception:  # noqa: BLE001
@@ -1719,11 +1737,12 @@ class App:
         """按键唤醒：先叫醒设备，再整屏重画。"""
         # 打开第二个句柄会有扰动，只有确实很久没画过、而且最近没叫醒过才用
         now = time.time()
-        if now - self._last_paint > 600 and now - self._last_wake > 60:
+        if not self.screen_off and now - self._last_paint > 600 and now - self._last_wake > 60:
             if self.wake_panel():
                 self._last_wake = now
         try:
-            self.device.set_screen_brightness(self.screen_brightness)
+            if not self.screen_off:      # 息屏时别把背光调回去，否则黑屏会泛白
+                self.device.set_screen_brightness(self.screen_brightness)
         except Exception:  # noqa: BLE001
             pass
         time.sleep(0.1)
@@ -3091,7 +3110,8 @@ class App:
         self.in_standby = True
         self._album_last = time.time()
         try:
-            self.device.set_screen_brightness(self.screen_brightness)
+            if not self.screen_off:
+                self.device.set_screen_brightness(self.screen_brightness)
         except Exception:  # noqa: BLE001
             pass
         threading.Thread(target=self._push_album, daemon=True).start()
@@ -3610,7 +3630,8 @@ class App:
             self._suspend_snapshot = False
         self._dirty = True
         if self.device.connected and not self.yielded:
-            self.device.set_screen_brightness(self.screen_brightness)
+            if not self.screen_off:
+                self.device.set_screen_brightness(self.screen_brightness)
             self.apply_keys()
         return True
 
@@ -7188,16 +7209,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/device/sleep":
             APP.screen_off = True
             try:
-                APP.device.set_screen_brightness(0)
-                APP.blank_screen()          # 立刻把 15 个键清空，壁纸/按键都不留
+                APP.blank_screen()          # 15 个键刷成黑 + 背光 0，按键通道保持可用
             except Exception:  # noqa: BLE001
                 pass
-
-            def _sleep_bg():
-                APP.sleep_panel()           # 后台发真正的关屏指令
-                log("已息屏（关屏指令已发送）")
-
-            threading.Thread(target=_sleep_bg, daemon=True).start()
+            log("已息屏（按键还醒着，按任意键可唤醒）")
             self._json({"ok": True, "screenOff": True})
         elif path == "/api/device/mute":
             APP.input_muted = bool(body.get("value"))
