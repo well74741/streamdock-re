@@ -7358,6 +7358,7 @@ def open_window(url: str) -> bool:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-background-mode",
+            "--disable-features=msEdgeSuperDragAndDrop,msEdgeSidebarV2,msEdgeCollections,msEdgeWebWidgets,Translate",
             "--window-size=1360,880",
         ]
         if profile:

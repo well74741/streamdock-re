@@ -150,26 +150,37 @@ function toast(msg, ms = 2200) {
 /* ------------------------------------------------------------------ 浏览器硬化 */
 function hardenBrowser() {
   const noDefault = (e) => { e.preventDefault(); return false; };
+  const isEl = (t) => t instanceof Element;
   const noMouseButton = (e) => { if (e.button !== 0) e.preventDefault(); };
 
   document.addEventListener("contextmenu", (e) => {
-    if (e.target.closest(".ring-board .cell, .ring-btn, .key-menu, #sel-thumb, .lib-menu")) return;
+    if (isEl(e.target) && e.target.closest(".ring-board .cell, .ring-btn, .key-menu, #sel-thumb, .lib-menu")) return;
     e.preventDefault();
   }, { capture: true });
   document.addEventListener("selectstart", noDefault, { capture: true });
   document.addEventListener("dragstart", (e) => {
-    // 只允许显式标记 draggable 的元素拖动（图标库瓦片）
-    if (!e.target.closest("[draggable='true']")) e.preventDefault();
+    // 右键按住时不启动任何原生拖动；其余只允许显式标记 draggable 的元素（图标库瓦片）
+    if (rightHeld || (e.buttons & 2)) { e.preventDefault(); return; }
+    if (!(isEl(e.target) && e.target.closest("[draggable='true']"))) e.preventDefault();
+  }, { capture: true });
+  document.addEventListener("drag", (e) => {
+    if (rightHeld || (e.buttons & 2)) e.preventDefault();
   }, { capture: true });
   document.addEventListener("auxclick", noDefault, { capture: true });
   ["pointerdown", "pointerup", "mousedown", "mouseup"].forEach((type) => {
     document.addEventListener(type, noMouseButton, { capture: true });
   });
-  // 右键按住拖动：不给浏览器留任何「拖动 / 选区 / 自动滚动」的机会
+  // 右键按住拖动：不给浏览器留任何「拖动 / 选区 / 自动滚动 / 拖放搜索」的机会
   let rightHeld = false;
   document.addEventListener("pointerdown", (e) => {
     if (e.button !== 2) return;
     rightHeld = true;
+    e.preventDefault();
+    document.body.classList.add("no-select");
+  }, { capture: true });
+  document.addEventListener("mousedown", (e) => {
+    if (e.button !== 2) return;
+    e.preventDefault();
     document.body.classList.add("no-select");
   }, { capture: true });
   const releaseRight = (e) => {
@@ -672,6 +683,32 @@ function openCropTool() {
   let fit = "cover";
   let gap = 27;
   let busy = false;
+
+  // 右侧 15 张的尺寸跟控制台预览区一致（同 cell 边长、同缝隙）
+  const boardEl = document.querySelector(".ring-board");
+  let cell = 70;
+  let cellGap = 8;
+  if (boardEl) {
+    const cs = getComputedStyle(boardEl);
+    const first = parseFloat((cs.gridTemplateColumns || "").split(/\s+/)[0]);
+    const g0 = parseFloat(cs.columnGap);
+    if (Number.isFinite(first) && first > 4) cell = Math.round(first);
+    if (Number.isFinite(g0) && g0 >= 0) cellGap = Math.round(g0);
+  }
+  const room = Math.max(300, Math.min(620, window.innerWidth * 0.42));
+  const want = 5 * cell + 4 * cellGap;
+  if (want > room) {
+    const k = room / want;
+    cell = Math.max(24, Math.floor(cell * k));
+    cellGap = Math.max(0, Math.round(cellGap * k));
+  }
+  const gridH = 3 * cell + 2 * cellGap;
+  grid.style.gridTemplateColumns = `repeat(5, ${cell}px)`;
+  grid.style.gridTemplateRows = `repeat(3, ${cell}px)`;
+  grid.style.columnGap = `${cellGap}px`;
+  grid.style.rowGap = `${cellGap}px`;
+  grid.style.width = `${5 * cell + 4 * cellGap}px`;
+  drop.style.height = `${gridH}px`;
 
   const cancelToken = () => {
     const old = token;

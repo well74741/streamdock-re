@@ -1634,13 +1634,14 @@ html, body { overflow: hidden; height: 100%; }
 .scene-row:hover .scene-mute, .scene-mute:not(.on) { opacity: 1; }
 
 /* ===== 裁图工具弹窗 ===== */
-.crop-card { width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+.crop-card { width: min(1180px, 96vw); max-height: 92vh; display: flex; flex-direction: column; }
+.confirm-modal .crop-card { width: auto; max-width: 96vw; }
 .crop-head { padding: 18px 20px 4px; }
 .crop-head h2 { margin: 0 0 4px; font-size: 15px; }
 .crop-head p { margin: 0; font-size: 12px; color: #46536a; line-height: 1.55; }
 .crop-body {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
-  gap: 16px; padding: 10px 20px 6px; overflow: auto;
+  display: grid; grid-template-columns: minmax(0, 520px) auto;
+  gap: 28px; padding: 10px 22px 6px; overflow: auto; align-items: start;
 }
 .crop-left { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .crop-drop {
@@ -1652,7 +1653,7 @@ html, body { overflow: hidden; height: 100%; }
 .crop-drop img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .crop-empty { text-align: center; font-size: 12.5px; color: #55637a; line-height: 1.7; }
 .crop-empty span { font-size: 11px; color: #6a7689; }
-.crop-card .as-fit-row, .crop-card .as-gap-row { margin: 0; }
+.crop-card .as-fit-row, .crop-card .as-gap-row { margin: 0; max-width: 430px; }
 .crop-card .kv-line > span:first-child,
 .crop-card .slider-row > span:first-child { width: auto; flex: 0 0 auto; }
 .crop-card #crop-fit { flex: 1 1 auto; display: flex; gap: 6px; min-width: 0; }
@@ -1660,7 +1661,7 @@ html, body { overflow: hidden; height: 100%; }
 .crop-card .slider-row { grid-template-columns: auto 1fr 46px; gap: 10px; }
 .crop-name { margin: 2px 0 0; font-size: 11.5px; color: #5a687f; }
 .crop-name b { color: #16202e; }
-.crop-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-content: start; }
+.crop-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-content: start; justify-content: center; }
 .crop-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; background: #0f131c; }
 .crop-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .crop-cell span { position: absolute; right: 4px; bottom: 2px; font-size: 10px; color: #fff; opacity: .55; }
