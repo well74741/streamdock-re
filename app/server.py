@@ -2636,6 +2636,10 @@ class App:
                 "slideshow": self._alb_slideshow(), "interval": int(self._alb_interval()),
                 "transition": self._alb_transition(), "fit": self._alb_fit(),
                 "gap": self._alb_gap_eff(), "gapOwn": self._alb_gap() is not None,
+                "standby": {"items": len(self.album_items),
+                            "index": int(self.album_index),
+                            "slideshow": bool(self.album_slideshow),
+                            "interval": max(2, min(600, int(self.album_interval)))},
                 "source": self.standby_source, "scene": self.album_scene_name}
 
     def _album_file(self, index: int) -> str | None:

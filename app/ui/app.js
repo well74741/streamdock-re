@@ -3273,8 +3273,20 @@ let albumSig = "";
 
 function renderAlbum(a) {
   if (a && a.scene) {
-    // 相册场景播放中：只更新「按键编辑」里的图片区和键盘预览，待机相册的卡片不动
+    // 相册场景播放中：只更新「按键编辑」里的图片区和键盘预览，待机相册的卡片只同步数字
     if (a.scene === activeAlbumScene()) renderAlbumEditor(a, a.scene);
+    if (a.standby) {
+      $("#album-count").textContent = String(a.standby.items);
+      $("#album-interval").value = a.standby.interval;
+      $("#album-interval-val").textContent = `${a.standby.interval} 秒`;
+      setSwitch($("#album-slideshow"), a.standby.slideshow);
+      const sp = $("#album-preview");
+      if (a.standby.items && sp) {
+        sp.src = `/api/album/preview.jpg?v=${Date.now()}`;
+        sp.hidden = false;
+        $("#album-empty").hidden = true;
+      }
+    }
     const board = document.querySelector(".ring-board");
     if (board) {
       board.classList.add("album-on");

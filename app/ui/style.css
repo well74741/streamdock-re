@@ -1526,21 +1526,33 @@ html, body { overflow: hidden; height: 100%; }
 #album-editor .as-gap-row { margin: 0; }
 #album-editor .as-gap-row > span { width: 64px; flex: 0 0 auto; color: #46536a; font-size: 12.5px; }
 
-/* 过渡的 5 个按钮在窄卡片里一行放不下：独占一行、放不下就换行 */
-#album-editor .kv-line.tr-row { flex-wrap: wrap; row-gap: 6px; }
-#album-editor .kv-line.tr-row > span:first-child { width: auto; }
+/* 过渡的 5 个按钮：跟标签同一行，按钮做窄一点刚好放得下（不要再折成两行） */
+#album-editor .kv-line.tr-row { flex-wrap: nowrap; }
+#album-editor .kv-line.tr-row > span:first-child { width: 64px; flex: 0 0 64px; }
 #album-editor .kv-line.tr-row #as-transition {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 #album-editor .kv-line.tr-row #as-transition .seg {
-  flex: 1 1 56px;
+  flex: 1 1 0;
   min-width: 0;
-  padding: 6px 4px;
+  padding: 5px 0;
+  font-size: 10px;
+  line-height: 1.4;
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 窗口更窄时再次压缩：标签让出宽度、字号再小一点，仍然保持一行 */
+@media (max-width: 1300px) {
+  #album-editor .kv-line.tr-row > span:first-child { width: auto; flex: 0 0 auto; }
+  #album-editor .kv-line.tr-row #as-transition { gap: 3px; }
+  #album-editor .kv-line.tr-row #as-transition .seg { font-size: 9.5px; padding: 5px 0; }
 }
 
 /* 场景列表：长按拖动排序 */
