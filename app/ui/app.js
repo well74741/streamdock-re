@@ -2115,8 +2115,11 @@ function renderEditor() {
   if (pageRow) pageRow.classList.toggle("album-scene", !!activeAlbumScene());
   const saveTop = $("#sel-save-top");
   const clearTop = $("#sel-clear-top");
+  const resetTop = $("#sel-reset-top");
   if (saveTop) saveTop.hidden = !!albScene;
   if (clearTop) clearTop.hidden = !!albScene;
+  // 「还原」只给三个导航键：一键回到 上一页 / 主页 / 下一页，且只保留短按
+  if (resetTop) resetTop.hidden = !!albScene || !(n === 16 || n === 17 || n === 18);
   if (albScene) {
     bindAlbumSceneEditor();
     if (albumSceneLoaded !== albScene) {
@@ -3539,6 +3542,18 @@ function bindUI() {
     const v = Number(e.target.value);
     $("#standby-sec-val").textContent = `${v} 秒`;
     pushStandby(v);
+  });
+
+  $("#sel-reset-top").addEventListener("click", async () => {
+    if (!selectedKey) return;
+    const names = { 16: "上一页", 17: "主页", 18: "下一页" };
+    const name = names[selectedKey];
+    if (!name) return;
+    if (!(await confirmDialog(`把按键 ${selectedKey} 还原成默认的「${name}」？<br><small>长按 / 双击都会清掉，只保留短按。</small>`))) return;
+    await post("/api/key/reset-nav", { key: selectedKey });
+    formDrafts = {};
+    await refreshState();
+    renderEditor();
   });
 
   // 切到控制台窗口不会唤醒待机（只有设备按键或显式操作才会）

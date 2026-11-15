@@ -232,17 +232,17 @@ body {
   border-color: #7fb0ff;
   box-shadow: 0 0 16px -2px rgba(79, 140, 255, .9);
 }
-/* 相册场景：三个导航键上标出 ◀ 主页 ▶，和下面的说明文字对得上 */
-body.album-scene .ring-btn[data-key="16"],
-body.album-scene .ring-btn[data-key="17"],
-body.album-scene .ring-btn[data-key="18"] {
+/* 三个导航键默认就画成 ◀ 主页 ▶（和下面的说明文字对得上），功能可以自己改成别的 */
+.ring-btn[data-key="16"],
+.ring-btn[data-key="17"],
+.ring-btn[data-key="18"] {
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 13px; line-height: 1; color: #14457f; font-weight: 700;
   border-color: #8ba3c2;
 }
-body.album-scene .ring-btn[data-key="16"]::before { content: "◀"; }
-body.album-scene .ring-btn[data-key="17"]::before { content: "⌂"; font-size: 15px; }
-body.album-scene .ring-btn[data-key="18"]::before { content: "▶"; }
+.ring-btn[data-key="16"]::before { content: "◀"; }
+.ring-btn[data-key="17"]::before { content: "⌂"; font-size: 15px; }
+.ring-btn[data-key="18"]::before { content: "▶"; }
 .dot {
   position: absolute;
   width: 34px; height: 24px;

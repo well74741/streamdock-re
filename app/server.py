@@ -1995,9 +1995,9 @@ class App:
             self.go_home()
 
     def go_home(self) -> bool:
-        """「主页」键：回到当前场景的第一页；相册场景里先退出相册，再回第一页。"""
+        """「主页」键：回到当前场景的第一页；相册场景里是回到第一张图片。"""
         if self.album_active():
-            self.album_stop()
+            return self.album_goto(index=0)
         mains = self._main_pages()
         target = mains[0] if mains else 0
         if self.page == target:
@@ -2817,7 +2817,7 @@ class App:
                 self.key_gestures[key] = one
 
     def _album_nav_step(self, key: int) -> None:
-        """相册场景里导航键的短按：◀ 上一张 / ⌂ 退出相册并回第一页 / ▶ 下一张。"""
+        """相册场景里导航键的短按：◀ 上一张 / ⌂ 第一张 / ▶ 下一张。"""
         if key == 16:
             self.album_goto(-1)
         elif key == 18:
@@ -4964,6 +4964,24 @@ class App:
         if not raw or not os.path.exists(path):
             return None
         return {"type": "launch", "path": path}
+
+    def reset_nav_key(self, key: int) -> bool:
+        """把 16/17/18 还原成默认：只保留短按（上一页 / 主页 / 下一页）。"""
+        if key not in self.ALBUM_NAV:
+            return False
+        spec = {"type": "nav", "name": self.ALBUM_NAV[key]}
+        self.key_gestures.pop(key, None)
+        self.key_actions[key] = dict(spec)
+        if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
+            self._album_nav_write(self.album_scene_name, key, spec, "")
+            for g in ("long", "double"):
+                self._album_nav_write(self.album_scene_name, key, None, g)
+        self._save_config()
+        if self.device.connected and not self.in_standby:
+            self.device.send_image(key, self._render_key(key))
+            self.device.refresh()
+        log(f"按键 {key} 已还原默认：{spec['name']}")
+        return True
 
     def set_key_action(self, key: int, spec: dict) -> bool:
         if not (1 <= key <= KEY_COUNT + 3):
@@ -7551,6 +7569,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok})
         elif path == "/api/key/action/clear":
             self._json({"ok": APP.clear_key_action(int(body.get("key", 0)), str(body.get("gesture") or ""))})
+        elif path == "/api/key/reset-nav":
+            self._json({"ok": APP.reset_nav_key(int(body.get("key", 0)))})
         elif path == "/api/device/wake":
             APP.screen_off = False
             APP._anim_pause_until = time.time() + 1.0
