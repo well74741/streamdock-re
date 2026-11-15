@@ -131,6 +131,8 @@ CONFIG_BAK_DIR = os.path.join(DATA_DIR, "config-backups")
 ICON_DIR = os.path.join(DATA_DIR, "assets", "icons")
 MY_ICON_DIR = os.path.join(DATA_DIR, "assets", "myicons")   # 「我的图标」：裁图工具存进来的图标包
 CROP_CACHE = os.path.join(DATA_DIR, "cache", "crop")        # 裁图工具预览用的临时目录
+LIBRARY_DIR = os.path.join(DATA_DIR, "assets", "library")   # 图标库的「相册」分类：收进来的图片
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 _STILL_CACHE: dict = {}                                     # 动图缩略图首帧缓存：(路径, mtime) -> PNG 字节
 SCENE_DIR = os.path.join(DATA_DIR, "scenes")
 def _find_sd_root() -> str:
@@ -195,7 +197,7 @@ CODE_TO_KEY = {
 }
 
 MODES = ["off", "solid", "rainbow", "breathe", "chase", "gradient", "ripple", "custom"]
-DEFAULT_LIGHTING = {"mode": "chase", "color": "#00aaff", "speed": 1.0, "brightness": 100}
+DEFAULT_LIGHTING = {"mode": "chase", "color": "#00aaff", "speed": 2.0, "brightness": 100}
 CONSOLE_LABELS = {"screen": "屏幕开关", "mute": "屏蔽按键开关",
                   "light": "灯光开关", "lightfx": "灯光效果切换"}
 STANDBY_MIN, STANDBY_MAX = 3, 300          # 待机等待秒数
@@ -998,6 +1000,7 @@ class App:
             self._save_config()
         self._bind_page()
         self._ensure_custom_snapshot()
+        self._library_seed_existing()
         for page in self.pages:
             for k, name in ((16, "上一页"), (17, "主页"), (18, "下一页")):
                 page["actions"].setdefault(k, {"type": "nav", "name": name})
@@ -1716,6 +1719,7 @@ class App:
             pass
         self._blanked = ok
         if ok:
+            self.broadcast({"type": "status", "screenOff": True})
             log("已刷黑屏：15 个键全黑、背光 0（按键通道还在，按任意键唤醒）")
         return ok
 
@@ -2358,6 +2362,7 @@ class App:
         if not os.path.isfile(path):
             return False
         self.wallpaper_file = path
+        self.library_collect([path])     # 换壁纸时，这张图也收进图标库的「相册」
         self._save_config()
         return self.apply_wallpaper()
 
@@ -2959,10 +2964,95 @@ class App:
             names.append(name)
         return names
 
+    # -- 图标库的「相册」分类 -------------------------------------------- #
+    def library_items(self) -> list:
+        """「相册」分类里的图片（按时间倒序，最新收进来的排最前）。"""
+        out = []
+        try:
+            os.makedirs(LIBRARY_DIR, exist_ok=True)
+            for fn in os.listdir(LIBRARY_DIR):
+                if not fn.lower().endswith(IMAGE_EXTS):
+                    continue
+                fp = os.path.join(LIBRARY_DIR, fn)
+                try:
+                    st = os.stat(fp)
+                except OSError:
+                    continue
+                out.append({"name": fn, "size": st.st_size, "mtime": int(st.st_mtime)})
+        except Exception:  # noqa: BLE001
+            return out
+        out.sort(key=lambda it: (-it["mtime"], it["name"]))
+        return out
+
+    def library_path(self, name: str) -> str | None:
+        safe = os.path.basename(name or "")
+        if not safe:
+            return None
+        fp = os.path.join(LIBRARY_DIR, safe)
+        return fp if os.path.isfile(fp) else None
+
+    def library_collect(self, paths) -> int:
+        """把图片收进「相册」分类：复制一份到 LIBRARY_DIR，重名自动加序号。"""
+        n = 0
+        try:
+            os.makedirs(LIBRARY_DIR, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            return 0
+        for src in paths or []:
+            try:
+                if not src or not os.path.isfile(src):
+                    continue
+                if not src.lower().endswith(IMAGE_EXTS):
+                    continue
+                if os.path.normpath(os.path.dirname(os.path.abspath(src))) == os.path.normpath(LIBRARY_DIR):
+                    continue                # 已经在相册里了
+                base = os.path.basename(src)
+                stem, ext = os.path.splitext(base)
+                dst = os.path.join(LIBRARY_DIR, base)
+                try:
+                    if os.path.isfile(dst) and os.path.getsize(dst) == os.path.getsize(src):
+                        continue            # 同一个文件已经收过了
+                except OSError:
+                    pass
+                i = 2
+                while os.path.exists(dst):
+                    dst = os.path.join(LIBRARY_DIR, f"{stem} {i}{ext}")
+                    i += 1
+                shutil.copy2(src, dst)
+                n += 1
+            except Exception:  # noqa: BLE001
+                continue
+        if n:
+            self.broadcast({"type": "library", "items": self.library_items()})
+            log(f"相册收进 {n} 张图片")
+        return n
+
+    def library_add(self, files) -> dict:
+        paths = []
+        for f in (files or [])[:200]:
+            p = asset_path(f)
+            if p and os.path.isfile(p):
+                paths.append(p)
+        n = self.library_collect(paths)
+        return {"ok": bool(n), "added": n, "items": self.library_items()}
+
+    def library_remove(self, name: str) -> bool:
+        fp = self.library_path(name)
+        if not fp:
+            return False
+        try:
+            os.remove(fp)
+        except OSError:
+            return False
+        self.broadcast({"type": "library", "items": self.library_items()})
+        return True
+
     def album_add(self, files: list, scene: str = "") -> bool:
         names = self._album_copy_in(files)
         if not names:
             return False
+        # 加到待机相册 / 相册场景的图，也顺手收进图标库的「相册」里
+        self.library_collect([os.path.join(UPLOAD_DIR, n) for n in names])
         if scene:
             def add(alb: dict) -> bool:
                 alb["items"] = list(alb.get("items") or []) + names
@@ -3488,6 +3578,18 @@ class App:
         # 设了长按 / 双击：一律交给手势判定。以前这里先判断插件就 return，
         # 结果「插件键 + 长按/双击」永远收不到手势，设了也没反应。
         self._gesture(key, state, g)
+
+    def wake_from_console(self, why: str = "") -> bool:
+        """息屏时只要在控制台里做了任何操作，就把屏幕点亮并补回画面。"""
+        if not self.screen_off:
+            return False
+        self.screen_off = False
+        self._last_activity = time.time()
+        self._blanked = False
+        self.broadcast({"type": "status", "screenOff": False})
+        log(f"控制台操作（{why or 'api'}）→ 屏幕已唤醒")
+        threading.Thread(target=self._wake_screen_now, daemon=True).start()
+        return True
 
     def _wake_screen_now(self) -> None:
         """息屏状态下按了键：点亮屏幕并把按键画面补回去。"""
@@ -4462,6 +4564,13 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"备份图标包失败：{exc}")
 
+    def official_ready(self) -> bool:
+        """官方 Stream Dock 驱动装没装：没装时「同步官方」没有东西可以同步。"""
+        root = SD_ROOT or ""
+        if not root or not os.path.isdir(root):
+            return False
+        return os.path.basename(os.path.normpath(root)).lower() != "m18-no-official"
+
     def sync_official(self, mode: str = "new", include_plugins: bool = False,
                       include_scenes: bool = True, include_icons: bool = True) -> dict:
         """「同步官方」按钮。
@@ -4591,6 +4700,29 @@ class App:
                 log(f"已载入默认场景：{' / '.join(names)}")
         except Exception as exc:  # noqa: BLE001
             log(f"载入默认场景失败：{exc}")
+
+    def _library_seed_existing(self) -> None:
+        """「相册」分类还是空的时候，把当前壁纸和待机幻灯片里的图先收进去。"""
+        try:
+            if self.library_items():
+                return
+            paths = []
+            wp = self.wallpaper_file
+            if wp:
+                p = wp if os.path.isabs(wp) else data_path(wp)
+                if p and os.path.isfile(p):
+                    paths.append(p)
+            items = list(self.album_items or [])
+            for idx in range(min(len(items), 60)):
+                p = self._album_file_for(items, idx)
+                if p:
+                    paths.append(p)
+            if paths:
+                n = self.library_collect(paths)
+                if n:
+                    log(f"相册分类已收进 {n} 张（当前壁纸和待机幻灯片）")
+        except Exception as exc:  # noqa: BLE001
+            log(f"收集现有图片失败：{exc}")
 
     def _migrate_official_plugins(self) -> None:
         """已同步过的官方场景里，插件控件（时钟 / 天气等）当时没接上：一次性补上插件动作。
@@ -5655,13 +5787,15 @@ class App:
         if name.startswith("pack:"):
             pack_id, _, fname = name[5:].partition("/")
             src = self.icon_pack_file(pack_id, fname)
+        elif name.startswith("lib:"):
+            src = self.library_path(name[4:])
         elif name.startswith("plugin:"):
             plugin_id, _, idx = name[7:].rpartition("/")
             try:
                 src = self.plugin_icon_path(plugin_id, int(idx))
             except ValueError:
                 src = None
-        if name.startswith(("pack:", "plugin:")):
+        if name.startswith(("pack:", "plugin:", "lib:")):
             img = official.read_image(src) if src else None
             if not img or not (1 <= key <= KEY_COUNT):
                 return False
@@ -6858,9 +6992,11 @@ __CODE__
                 "autostart": self.autostart,
                 "autostartOther": self.autostart_state()["other"],
                 "edition": EDITION,
+                "officialReady": self.official_ready(),
                 "dataDir": DATA_DIR,
                 "inStandby": self.in_standby,
                 "album": self.album_state(),
+                "library": self.library_items(),
                 "inputStats": dict(self.device.stats),
                 "lastResponse": getattr(self.device, "last_response", None),
                 "rotation": self.rotation,
@@ -7177,6 +7313,16 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) == 5 else None
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             self._image_file(fp, still=bool(query.get("still")))
+        elif path == "/api/library":
+            self._json({"ok": True, "items": APP.library_items()})
+        elif path.startswith("/api/library/"):
+            # 图标库「相册」里的图片：/api/library/文件名
+            safe = urllib.parse.unquote(path[len("/api/library/"):])
+            fp = APP.library_path(safe)
+            if not fp:
+                self.send_error(404)
+                return
+            self._image_file(fp)
         elif path.startswith("/api/plugin-icon/"):
             parts = path.split("/")
             try:
@@ -7301,6 +7447,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = self.path.split("?")[0]
         body = self._body()
+        # 息屏状态下，任何控制台操作都先把屏幕点亮（睡眠接口本身除外）
+        if APP.screen_off and path not in ("/api/device/sleep", "/api/quit", "/api/state"):
+            APP.wake_from_console(path)
         if path == "/api/lighting":
             APP.set_lighting(body)
             self._json(APP.snapshot())
@@ -7398,8 +7547,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": APP.import_config(body.get("config") or {})})
         elif path == "/api/scenes":
             if body.get("syncOfficial"):
-                result = APP.sync_official_scenes()
-                self._json({"ok": True, **result, "items": APP.list_scenes()})
+                if not APP.official_ready():
+                    self._json({"ok": False, "items": APP.list_scenes(),
+                                "reason": "没有检测到官方 Stream Dock 驱动，场景同步不了；"
+                                          "自带的「相册1」「音乐控制台」和内置插件照常可用。"})
+                else:
+                    result = APP.sync_official_scenes()
+                    self._json({"ok": True, **result, "items": APP.list_scenes()})
             elif "apps" in body and body.get("link"):
                 apps = body.get("apps")
                 if isinstance(apps, str):
@@ -7481,12 +7635,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": bool(p) and APP.reveal_in_explorer(p["folder"])})
         elif path == "/api/official/sync":
             # scenes / icons / plugins 三个开关，缺省都按「要」处理，保持老调用兼容
-            self._json({"ok": True, **APP.sync_official(
-                str(body.get("mode") or "new"),
-                bool(body.get("plugins", False)),
-                bool(body.get("scenes", True)),
-                bool(body.get("icons", True)),
-            ), "items": APP.list_scenes()})
+            if not APP.official_ready():
+                self._json({"ok": False, "items": APP.list_scenes(),
+                            "reason": "没有检测到官方 Stream Dock 驱动：这台电脑没装，或者装在了别的位置。"
+                                      "控制台自带的图标包和 28 个内置插件不受影响，不用同步也能用。"})
+            else:
+                self._json({"ok": True, **APP.sync_official(
+                    str(body.get("mode") or "new"),
+                    bool(body.get("plugins", False)),
+                    bool(body.get("scenes", True)),
+                    bool(body.get("icons", True)),
+                ), "items": APP.list_scenes()})
         elif path == "/api/apps/recent":
             self._json({"ok": True, "items": list(APP.recent_apps)})
         elif path == "/api/custom-plugins":
@@ -7774,6 +7933,22 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/album/reveal":
             sc = str(body.get("scene") or "")
             fp = APP._album_path_for(sc, int(body.get("index", -1)))
+            ok = False
+            if fp:
+                try:
+                    subprocess.Popen(["explorer", f"/select,{os.path.normpath(fp)}"])
+                    ok = True
+                    log(f"打开图片位置：{fp}")
+                except Exception as exc:  # noqa: BLE001
+                    log(f"打开图片位置失败：{exc}")
+            self._json({"ok": ok, "path": fp or ""})
+        elif path == "/api/library/add":
+            self._json(APP.library_add(body.get("files") or []))
+        elif path == "/api/library/remove":
+            ok = APP.library_remove(str(body.get("name") or ""))
+            self._json({"ok": ok, "items": APP.library_items()})
+        elif path == "/api/library/reveal":
+            fp = APP.library_path(str(body.get("name") or ""))
             ok = False
             if fp:
                 try:

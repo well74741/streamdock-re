@@ -651,6 +651,127 @@ async function loadIcons(refresh = false) {
       saveSideState();
     });
   });
+  renderLibrary(box);
+}
+
+/* ---------------------------------------------------- 图标库「相册」分类 */
+let libraryItems = null;
+
+function libraryTile(it) {
+  const name = escHtml(it.name);
+  return `<span class="lib-cell" title="${name}" data-file="${name}">`
+    + `<img loading="lazy" draggable="false" data-name="lib:${name}"`
+    + ` src="/api/library/${encodeURIComponent(it.name)}?v=${it.mtime || 0}" alt="" /></span>`;
+}
+
+function renderLibrary(box) {
+  if (!box) return;
+  box.querySelector(".lib-sec-album")?.remove();
+  box.querySelector("#lib-album")?.remove();
+  const items = libraryItems || [];
+  const html = `<div class="lib-sec lib-sec-album"><span>相册</span><em>${items.length}</em>`
+    + `<button class="seg small" id="lib-add" title="把图片加进相册">＋ 添加</button></div>`
+    + `<div class="lib-album" id="lib-album">`
+    + (items.length
+      ? items.map(libraryTile).join("")
+      : `<div class="side-empty small">空的：点「＋ 添加」，或者在壁纸/幻灯片里选过的图会自动收进来。</div>`)
+    + `</div>`;
+  box.insertAdjacentHTML("beforeend", html);
+  bindLibrary(box);
+}
+
+async function loadLibrary() {
+  try {
+    libraryItems = (await (await fetch("/api/library", { cache: "no-store" })).json()).items || [];
+  } catch (_) {
+    libraryItems = [];
+  }
+  renderLibrary($("#icon-groups"));
+}
+
+function bindLibrary(box) {
+  if (!box || box.dataset.libBound) return;
+  box.dataset.libBound = "1";
+  box.addEventListener("click", async (e) => {
+    const add = e.target.closest("#lib-add");
+    if (!add) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.addEventListener("change", async () => {
+      const files = [...(input.files || [])];
+      if (!files.length) return;
+      const rels = [];
+      for (const f of files) {
+        try {
+          const r = await upload(f);
+          if (r && r.file) rels.push(r.file);
+        } catch (_) { /* 掉一张不算错 */ }
+      }
+      if (rels.length) {
+        const r = await post("/api/library/add", { files: rels });
+        toast(`已收进相册 ${r.added || 0} 张`, 1600);
+        libraryItems = r.items || [];
+        renderLibrary($("#icon-groups"));
+      }
+    });
+    input.click();
+  });
+}
+
+/* 相册瓦片的右键菜单：设为壁纸 / 加到幻灯片 / 打开位置 / 删除 */
+function bindLibraryMenu() {
+  document.addEventListener("contextmenu", (e) => {
+    const cell = e.target.closest?.(".lib-album .lib-cell");
+    if (!cell) return;
+    e.preventDefault();
+    const file = cell.dataset.file;
+    closeImageMenu();
+    const menu = document.createElement("div");
+    menu.className = "img-menu";
+    menu.innerHTML = `<button data-act="wall">设为壁纸</button>`
+      + `<button data-act="album">加到待机幻灯片</button>`
+      + `<button data-act="reveal">打开图片位置</button>`
+      + `<button data-act="remove">从相册删除</button>`;
+    document.body.appendChild(menu);
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.min(e.clientX, innerWidth - w - 8) + "px";
+    menu.style.top = Math.min(e.clientY, innerHeight - h - 8) + "px";
+    window.__imgMenu = menu;
+    menu.addEventListener("click", async (ev) => {
+      const act = ev.target.closest("button")?.dataset.act;
+      menu.remove();
+      window.__imgMenu = null;
+      if (!act) return;
+      if (act === "wall") {
+        const r = await post("/api/wallpaper/file", { file: `assets/library/${file}` });
+        toast(r.ok ? "已设为壁纸" : "设壁纸失败", 1600);
+        await refreshState();
+      } else if (act === "album") {
+        const r = await post("/api/album/add", { files: [`assets/library/${file}`] });
+        toast(r.ok ? "已加到幻灯片" : "加不进去（可能不是图片）", 1800);
+        await refreshState();
+      } else if (act === "reveal") {
+        await post("/api/library/reveal", { name: file });
+      } else if (act === "remove") {
+        if (!(await confirmDialog(`从相册里删掉「${escHtml(file)}」？<br><small>只删相册里的这份，原来的文件不动。</small>`))) return;
+        const r = await post("/api/library/remove", { name: file });
+        libraryItems = r.items || [];
+        renderLibrary($("#icon-groups"));
+        toast("已从相册删除", 1400);
+      }
+    });
+    const close = (ev) => {
+      if (menu.contains(ev.target)) return;
+      menu.remove();
+      window.__imgMenu = null;
+      document.removeEventListener("pointerdown", close, true);
+    };
+    document.addEventListener("pointerdown", close, true);
+  });
 }
 
 /* --------------------------------------------------------------- 裁图工具 */
@@ -3338,6 +3459,11 @@ function bindUI() {
     showThumbMenu(e.clientX, e.clientY);
   });
   $("#official-sync").addEventListener("click", async () => {
+    if (state && state.officialReady === false) {
+      toast("这台电脑没装官方 Stream Dock 驱动（或装在别的位置），没有官方资源可同步。"
+        + "自带的图标包、28 个内置插件和默认场景照常能用。", 5200);
+      return;
+    }
     // 先问同步哪一块：全部 / 场景 / 图标 / 插件
     const what = await choiceDialog(
       "从官方 Stream Dock 驱动同步什么？<br><span class='muted'>官方软件里的场景、图标包和插件，可以只挑一部分。</span>",
@@ -3370,6 +3496,10 @@ function bindUI() {
     const r = await post("/api/official/sync", {
       mode, scenes: wantScenes, icons: wantIcons, plugins: withPlugins,
     });
+    if (r.ok === false) {
+      toast(r.reason || "同步失败：没有找到官方驱动", 5200);
+      return;
+    }
     iconPacks = null;
     pluginItems = null;
     await loadIcons(true);
@@ -3390,6 +3520,8 @@ function bindUI() {
   bindSidebar();
   bindCustomLab();
   loadIcons();
+  loadLibrary();
+  bindLibraryMenu();
   loadPlugins();
 
   let sceneMenuEl = null;
@@ -4266,7 +4398,15 @@ function connectEvents() {
       refreshState();
       window.m18ReloadScenes?.();
     } else if (msg.type === "status") {
+      // 息屏 / 唤醒：先把屏幕开关立刻改对，再整体刷新
+      if (typeof msg.screenOff === "boolean") {
+        if (state) state.screenOff = msg.screenOff;
+        setSwitch($("#sleep-btn"), !msg.screenOff);
+      }
       refreshState();
+    } else if (msg.type === "library") {
+      libraryItems = msg.items || [];
+      renderLibrary($("#icon-groups"));
     } else if (msg.type === "lighting") {
       if (state) state.lighting = { ...(state.lighting || {}), ...(msg.lighting || {}) };
       applyLighting(msg.lighting);
