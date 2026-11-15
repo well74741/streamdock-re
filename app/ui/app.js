@@ -1,4 +1,4 @@
-const $ = (sel, root = document) => root.querySelector(sel);
+﻿const $ = (sel, root = document) => root.querySelector(sel);
 
 const MODE_NAMES = {
   solid: "常亮", rainbow: "彩虹", breathe: "呼吸",
@@ -3057,18 +3057,23 @@ function bindUI() {
       row.addEventListener("click", async () => {
         if (Date.now() - sceneDragEndedAt < 450) return;        // 刚拖过排序
         if (row.querySelector(".scene-rename")) return;      // 正在改名
-        if (row.dataset.album === "1" && !row.classList.contains("active")) {
+        if (row.dataset.album === "1") {
+          // 相册场景：先选中并把编辑区换成图片编辑区（空相册也能直接拖图进去），再看要不要播。
+          selectedScene = name;
+          renderEditor();
+          if (row.classList.contains("active")) {
+            toast(`相册场景「${name}」正在播放`, 2000);
+            return;
+          }
           const r = await post("/api/scenes", { apply: name });
           if (!r.ok) {
-            if (row.dataset.albumScene === "1") return toast(r.reason || "相册场景切不过去", 2600);
-            window.m18ShowStandbyTab?.("album");
-            document.querySelector("#standby-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
-            return toast("相册是空的，先在右侧「待机画面 → 相册」里加几张图片", 2400);
+            // 切换失败也保持编辑区打开，让用户能往里加图片
+            renderScenes(r.items || []);
+            return toast(r.reason || "相册场景切不过去", 2600);
           }
-          selectedScene = name;
           renderScenes(r.items || []);
           renderEditor();
-          toast(row.dataset.albumScene === "1" ? `相册场景「${name}」正在播放` : "相册播放中：◀ ▶ 翻照片，按其他键回到原场景", 2200);
+          toast(`相册场景「${name}」正在播放`, 2200);
           await refreshState();
           return;
         }
@@ -3357,10 +3362,10 @@ function bindAlbum() {
   document.querySelectorAll("#standby-source [data-src]").forEach((b) => b.addEventListener("click", async () => {
     if (b.dataset.src === "album" && !(albumState?.items || []).length) {
       showTab("album");
-      return toast("相册还是空的，先添加几张图片", 1800);
+      return toast("幻灯片还是空的，先添加几张图片", 1800);
     }
     renderAlbum(await post("/api/album/settings", { source: b.dataset.src }));
-    toast(b.dataset.src === "album" ? "闲置后播放相册幻灯片" : "闲置后显示壁纸", 1400);
+    toast(b.dataset.src === "album" ? "闲置后播放幻灯片" : "闲置后显示壁纸", 1400);
   }));
   $("#album-file").addEventListener("change", (e) => {
     const files = e.target.files;
@@ -3368,7 +3373,7 @@ function bindAlbum() {
     e.target.value = "";
   });
   const card = $("#album-card");
-  // 拖到「相册」页签上也能直接加图
+  // 拖到「幻灯片」页签上也能直接加图
   const tabBtn = document.querySelector('#standby-tabs [data-tab="album"]');
   tabBtn.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); showTab("album"); } });
   card.addEventListener("dragover", (e) => {
@@ -3438,7 +3443,7 @@ function bindAlbum() {
 
 }
 
-/* ===== 相册场景：编辑区里的图片集（和「待机画面 → 相册」同一套操作） ===== */
+/* ===== 相册场景：编辑区里的图片集（和「待机画面 → 幻灯片」同一套操作） ===== */
 let albumSceneState = null;
 let albumSceneSig = "";
 let albumSceneLoaded = "";

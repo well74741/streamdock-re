@@ -187,6 +187,7 @@ MODES = ["off", "solid", "rainbow", "breathe", "chase", "gradient", "ripple", "c
 DEFAULT_LIGHTING = {"mode": "chase", "color": "#00aaff", "speed": 1.0, "brightness": 100}
 STANDBY_MIN, STANDBY_MAX = 3, 300          # 待机等待秒数
 ALBUM_TRANSITIONS = ("none", "fade", "slide", "wipe", "mosaic")
+LEGACY_ALBUM_NAMES = ("相册", "幻灯片")      # 旧配置里可能把待机相册记成当前场景，读进来要纠正
 
 
 def _led_geometry():
@@ -1965,6 +1966,8 @@ class App:
             self.standby_brightness = max(0, min(100, int(cfg.get("standbyBrightness", 60))))
             self.custom_scene_name = str(cfg.get("customScene") or "自定义")[:40]
             self.active_scene = str(cfg.get("activeScene") or "")
+            if self.active_scene in LEGACY_ALBUM_NAMES:   # 旧版把待机相册当成场景用
+                self.active_scene = self.custom_scene_name
             self.wallpaper_enabled = bool(cfg.get("wallpaperEnabled", self.wallpaper_enabled))
             self.keep_awake = bool(cfg.get("keepAwake", True))
             self.close_to_tray = bool(cfg.get("closeToTray", True))
@@ -2540,7 +2543,7 @@ class App:
     # -- 相册场景：一个场景 = 一组图片 + 过渡设置，存在场景文件里 --------------- #
     def _album_scene_data(self, name: str) -> dict | None:
         """读相册场景的 album 段；不是相册场景返回 None。"""
-        if not name or name in (self.ALBUM_SCENE, self.custom_scene_name):
+        if not name or name == self.custom_scene_name:
             return None
         data = self._scene_file_data(self._scene_path(name))
         if not data or data.get("sceneType") != "album":
@@ -2835,6 +2838,9 @@ class App:
         items = self._alb_items()
         if not items:
             return False
+        if not self.album_scene_name:
+            # 待机幻灯片（不是相册场景）：按任意键就回到当前场景
+            self._album_return = None
         if index is not None:
             self._alb_set_index(index)
         self._gif_stop_all()
@@ -2903,7 +2909,7 @@ class App:
         back = getattr(self, "_album_return", None)
         self._album_return = None
         self.broadcast({"type": "album", **self.album_state()})
-        log(("相册场景已退出" if scene_name else "相册已退出") + (f"，回到「{back}」" if back else ""))
+        log(("相册场景已退出" if scene_name else "幻灯片已退出") + (f"，回到「{back}」" if back else ""))
         if back and back != (self.active_scene or self.custom_scene_name) and self.apply_scene(back):
             self.broadcast({"type": "scene", "name": back, "ok": True})
             return
@@ -3047,8 +3053,8 @@ class App:
             self.add_ripple(key)
             self._dirty = True
         if self.album_active():
-            # 相册播放中：相册场景里点任意屏幕键都是「下一个场景」，导航键是 上页/主场景/下页；
-            # 内置相册（没有场景文件）保留原来的翻照片行为。
+            # 相册场景播放中：点任意屏幕键都是「下一个场景」，导航键是 上页/主场景/下页；
+            # 幻灯片（待机相册）只是待机画面，播放时 ◀ ▶ 翻照片、按其他键回到当前场景。
             self._last_activity = time.time()
             if state == 1:
                 self._wake_swallow.add(key)
@@ -3062,11 +3068,8 @@ class App:
                 elif key in (16, 18) and len(self._alb_items()) > 1:
                     threading.Thread(target=self.album_goto, args=(-1 if key == 16 else 1,),
                                      daemon=True).start()
-                elif key in (16, 18):
-                    threading.Thread(target=self.album_stop, daemon=True).start()
                 else:
-                    # 内置相册也能一直往后切场景（以前是按一下退回原场景，就再也切不动了）
-                    threading.Thread(target=self.next_scene, daemon=True).start()
+                    threading.Thread(target=self.album_stop, daemon=True).start()
             elif key in self._wake_swallow:
                 self._wake_swallow.discard(key)
             return
@@ -3306,7 +3309,7 @@ class App:
         safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in (name or ""))[:40]
         return os.path.join(SCENE_DIR, safe.strip() + ".json")
 
-    ALBUM_SCENE = "相册"
+    ALBUM_SCENE = "幻灯片"        # 待机幻灯片的显示名（它只是待机画面，不再占场景列表）
 
     def _scene_flags(self) -> dict:
         """场景的界面属性（停用等），存在场景目录的 .scene-flags.json 里；自定义 / 相册场景也能设。"""
@@ -3375,9 +3378,7 @@ class App:
         flags = self._scene_flags()
         cur = self.current_scene()
         items = [{"name": self.custom_scene_name, "custom": True, "sceneType": "normal",
-                  "active": cur == self.custom_scene_name},
-                 {"name": self.ALBUM_SCENE, "album": True, "builtin": True, "sceneType": "album",
-                  "count": len(self.album_items), "active": cur == self.ALBUM_SCENE}]
+                  "active": cur == self.custom_scene_name}]
         try:
             files = sorted(os.listdir(SCENE_DIR))
         except OSError:
@@ -3386,8 +3387,6 @@ class App:
             if not f.lower().endswith(".json") or f.startswith(("__", ".")):
                 continue
             name = os.path.splitext(f)[0]
-            if name == self.ALBUM_SCENE:
-                continue
             path = os.path.join(SCENE_DIR, f)
             data = {}
             try:
@@ -3418,9 +3417,9 @@ class App:
         return items
 
     def current_scene(self) -> str:
-        """当前在用的场景名；相册播放中就是正在播的那个相册场景（内置相册没有名字）。"""
-        if self.album_active():
-            return self.album_scene_name or self.ALBUM_SCENE
+        """当前在用的场景名；播放相册场景时就是那个相册场景（幻灯片只是待机画面，不算场景）。"""
+        if self.album_active() and self.album_scene_name:
+            return self.album_scene_name
         return self.active_scene or self.custom_scene_name
 
     @staticmethod
@@ -3434,7 +3433,7 @@ class App:
 
     def save_scene(self, name: str) -> bool:
         name = (name or "").strip()[:40]
-        if not name or name == self.ALBUM_SCENE:
+        if not name:
             return False
         try:
             os.makedirs(SCENE_DIR, exist_ok=True)
@@ -3452,8 +3451,6 @@ class App:
         name = (name or "").strip()[:40]
         if not name:
             return {"ok": False, "reason": "场景名不能为空"}
-        if name == self.ALBUM_SCENE:
-            return {"ok": False, "reason": f"「{self.ALBUM_SCENE}」是内置相册，换个名字"}
         name = self._canonical_scene(name)
         if name == self.custom_scene_name or os.path.isfile(self._scene_path(name)):
             return {"ok": False, "reason": f"「{name}」已经有一个同名场景了"}
@@ -3478,7 +3475,7 @@ class App:
 
     def rename_scene(self, old: str, new: str) -> bool:
         new = (new or "").strip()[:40]
-        if not new or old in (self.custom_scene_name, self.ALBUM_SCENE) or new == self.ALBUM_SCENE:
+        if not new or old == self.custom_scene_name:
             return False
         src = self._scene_path(old)
         if not os.path.isfile(src):
@@ -3493,8 +3490,6 @@ class App:
         return True
 
     def duplicate_scene(self, name: str) -> bool:
-        if name == self.ALBUM_SCENE:
-            return False
         src = self._scene_path(name)
         if not os.path.isfile(src):
             return False
@@ -3712,9 +3707,11 @@ class App:
 
     def scene_hint(self, name: str) -> str:
         """场景切不了时给界面看的原因；返回空串表示可以切。"""
-        if name == self.ALBUM_SCENE:
-            return "" if self.album_items else "相册是空的，先在右侧「待机画面 → 相册」里加几张图片"
         name = self._canonical_scene(name)
+        if name not in {it["name"] for it in self.list_scenes()}:
+            if name in LEGACY_ALBUM_NAMES:
+                return "「幻灯片」是待机画面，在右侧「待机画面 → 幻灯片」里设置，不占场景列表"
+            return f"没有叫「{name}」的场景"
         target = (os.path.join(SCENE_DIR, "__custom__.json")
                   if name == self.custom_scene_name else self._scene_path(name))
         data = self._scene_file_data(target)
@@ -3729,13 +3726,6 @@ class App:
         return ""
 
     def apply_scene(self, name: str) -> bool:
-        if name == self.ALBUM_SCENE:
-            if not self.album_items:
-                log("相册是空的，先在「待机画面 → 相册」里加图片")
-                return False
-            if not self.album_active():
-                self._album_return = self.active_scene or self.custom_scene_name
-            return self.album_play()
         name = self._canonical_scene(name)
         if not name:
             return False
@@ -3782,7 +3772,7 @@ class App:
             self._applying_scene = False
 
     def delete_scene(self, name: str) -> bool:
-        if name in (self.custom_scene_name, self.ALBUM_SCENE):
+        if name == self.custom_scene_name:
             return False
         path = self._scene_path(name)
         if not os.path.isfile(path):
@@ -4245,8 +4235,6 @@ class App:
         if it.get("muted"):
             return False
         if it.get("sceneType") == "album":
-            if it.get("builtin"):
-                return bool(self.album_items)
             return bool(self._album_scene_items(it["name"]))
         path = (os.path.join(SCENE_DIR, "__custom__.json")
                 if it.get("custom") else self._scene_path(it["name"]))

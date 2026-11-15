@@ -262,7 +262,7 @@
                 <p class="hint-line" id="sel-hint">先点一下上面的按键。</p>
               </div>
             </div>
-            <!-- 相册场景：编辑区换成图片集（和「待机画面 → 相册」一样的操作） -->
+            <!-- 相册场景：编辑区换成图片集（和「待机画面 → 幻灯片」一样的操作） -->
             <div class="editor-body" id="album-editor" hidden>
               <div class="thumb-col">
                 <div class="album-view" id="as-view" title="拖入图片，或点击选择">
@@ -398,7 +398,7 @@
             </div>
           </div>
 
-          <!-- 待机画面：壁纸 / 相册 -->
+          <!-- 待机画面：壁纸 / 幻灯片（都只是待机显示，不是场景） -->
           <div class="card compact set-card" id="standby-card">
             <div class="card-head">
               <h2>待机画面</h2>
@@ -407,7 +407,7 @@
             </div>
             <div class="seg-group tabs" id="standby-tabs">
               <button class="seg on" data-tab="wallpaper">壁纸</button>
-              <button class="seg" data-tab="album">相册 <em id="album-count">0</em></button>
+              <button class="seg" data-tab="album">幻灯片 <em id="album-count">0</em></button>
             </div>
 
             <!-- 壁纸 -->
@@ -423,7 +423,7 @@
               </div>
             </div>
 
-            <!-- 相册 -->
+            <!-- 幻灯片 -->
             <div class="sb-pane" data-pane="album" id="album-card" hidden>
               <div class="album-view" id="album-view" title="拖入图片，或点击选择">
                 <img id="album-preview" alt="" hidden />
@@ -456,7 +456,7 @@
             </div>
 
             <!-- 两边共用 -->
-            <div class="set-sub">铺放（壁纸和相册共用）</div>
+            <div class="set-sub">铺放（壁纸和幻灯片共用）</div>
             <div class="seg-group" id="fit-group">
               <button class="seg fit-btn" data-fit="cover">填充</button>
               <button class="seg fit-btn" data-fit="contain">完整</button>
@@ -482,7 +482,7 @@
               <span>闲置后显示</span>
               <div class="seg-group compact" id="standby-source">
                 <button class="seg on" data-src="wallpaper">壁纸</button>
-                <button class="seg" data-src="album">相册幻灯片</button>
+                <button class="seg" data-src="album">幻灯片</button>
               </div>
             </div>
             <div class="slider-row tight">
@@ -494,7 +494,7 @@
               <button class="seg" id="wake-btn">唤醒按键</button>
               <button class="seg" id="wp-reset">重置参数</button>
             </div>
-            <p class="hint-line">相册在左侧场景列表里也有一项「相册」，在 Dock 上用「下一场景」键就能切过去；播放时 ◀ ▶ 翻照片，按其他键回到原来的场景。</p>
+            <p class="hint-line">幻灯片和壁纸一样只是待机显示，不占场景列表；播放时 ◀ ▶ 翻照片，按其他键回到当前场景。</p>
           </div>
 
           <!-- 更多设置 -->
@@ -570,6 +570,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261117a"></script>
+<script src="app.js?v=20261117b"></script>
 </body>
 </html>
