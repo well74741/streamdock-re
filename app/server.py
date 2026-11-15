@@ -1992,7 +1992,18 @@ class App:
             if pos > 0:
                 self.goto_page(mains[pos - 1])
         elif name == "主页":
-            self.goto_page(mains[0] if mains else 0)
+            self.go_home()
+
+    def go_home(self) -> bool:
+        """「主页」键：回到当前场景的第一页；相册场景里先退出相册，再回第一页。"""
+        if self.album_active():
+            self.album_stop()
+        mains = self._main_pages()
+        target = mains[0] if mains else 0
+        if self.page == target:
+            log("已经是第 1 页")
+            return False
+        return self.goto_page(target)
 
     def _read_config_file(self) -> dict:
         """读 config.json。Windows 上文件正被原子替换的瞬间会 PermissionError，
@@ -2806,13 +2817,13 @@ class App:
                 self.key_gestures[key] = one
 
     def _album_nav_step(self, key: int) -> None:
-        """相册场景里导航键的短按：◀ 上一张 / ⌂ 回主场景 / ▶ 下一张。"""
+        """相册场景里导航键的短按：◀ 上一张 / ⌂ 退出相册并回第一页 / ▶ 下一张。"""
         if key == 16:
             self.album_goto(-1)
         elif key == 18:
             self.album_goto(1)
         elif key == 17:
-            self.album_stop()
+            self.go_home()
 
     def _ensure_album_nav(self, name: str) -> None:
         """相册场景的三个导航键默认是 上页 / 主页 / 下页：补进场景文件，编辑区里能看到。"""
@@ -3380,7 +3391,7 @@ class App:
                     elif key == 18:
                         threading.Thread(target=self.album_goto, args=(1,), daemon=True).start()
                     elif key == 17:
-                        threading.Thread(target=self.album_stop, daemon=True).start()
+                        threading.Thread(target=self.go_home, daemon=True).start()
                     else:
                         threading.Thread(target=self.next_scene, daemon=True).start()
                 elif key in (16, 18) and len(self._alb_items()) > 1:
@@ -6540,7 +6551,11 @@ __CODE__
             if self.lighting["mode"] not in MODES:
                 self.lighting["mode"] = "solid"
             self._dirty = True
+            snap = {"mode": self.lighting["mode"], "color": self.lighting["color"],
+                    "speed": self.lighting["speed"], "brightness": self.lighting["brightness"]}
         self.device.set_led_brightness(self.lighting["brightness"])
+        # 按键里的「控制台 → 灯光效果切换」改了模式，界面上的灯效预设也要跟着高亮
+        self.broadcast({"type": "lighting", "lighting": snap})
 
     def paint_led(self, index: int, color: str) -> None:
         self._save_soon()

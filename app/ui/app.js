@@ -2341,6 +2341,31 @@ function applyMode(mode) {
   if (clr) clr.hidden = mode !== "custom";
 }
 
+// 灯光状态单独应用一份：按键里的「控制台 → 灯光开关 / 灯光效果切换」改了以后，
+// 服务端会推一条 lighting，这里把色盘、亮度、速度、模式按钮一起跟上
+function applyLighting(L) {
+  if (!L) return;
+  currentColor = L.color || currentColor;
+  ledBrightness = L.brightness ?? 100;
+  const colorEl = $("#color");
+  if (colorEl) colorEl.value = currentColor;
+  const hexEl = $("#color-hex");
+  if (hexEl) hexEl.textContent = String(currentColor).toUpperCase();
+  syncSwatch();
+  const brightEl = $("#led-brightness");
+  if (brightEl) brightEl.value = ledBrightness;
+  const brightVal = $("#led-brightness-val");
+  if (brightVal) brightVal.textContent = ledBrightness;
+  const speedEl = $("#speed");
+  if (speedEl) speedEl.value = L.speed;
+  const speedVal = $("#speed-val");
+  if (speedVal && L.speed != null) speedVal.textContent = Number(L.speed).toFixed(1) + "×";
+  applyMode(L.mode);
+  if (Array.isArray(L.custom) && L.custom.length === 24) {
+    localCustom = L.custom.map((c) => [...c]);
+  }
+}
+
 function setSwitch(el, on) {
   if (!el) return;
   el.classList.toggle("on", !!on);
@@ -2402,20 +2427,8 @@ function applyState(s) {
   }
 
   const L = s.lighting;
-  currentColor = L.color || currentColor;
-  ledBrightness = L.brightness ?? 100;
   if (s.frame) paintDots(s.frame);
-  $("#color").value = currentColor;
-  $("#color-hex").textContent = currentColor.toUpperCase();
-  syncSwatch();
-  $("#led-brightness").value = ledBrightness;
-  $("#led-brightness-val").textContent = ledBrightness;
-  $("#speed").value = L.speed;
-  $("#speed-val").textContent = Number(L.speed).toFixed(1) + "×";
-  applyMode(L.mode);
-  if (Array.isArray(L.custom) && L.custom.length === 24) {
-    localCustom = L.custom.map((c) => [...c]);
-  }
+  applyLighting(L);
 
   $("#screen-brightness").value = s.screenBrightness;
   $("#screen-brightness-val").textContent = s.screenBrightness;
@@ -4028,6 +4041,9 @@ function connectEvents() {
       window.m18ReloadScenes?.();
     } else if (msg.type === "status") {
       refreshState();
+    } else if (msg.type === "lighting") {
+      if (state) state.lighting = { ...(state.lighting || {}), ...(msg.lighting || {}) };
+      applyLighting(msg.lighting);
     } else if (msg.type === "album") {
       renderAlbum(msg);
       window.m18ReloadScenes?.();
