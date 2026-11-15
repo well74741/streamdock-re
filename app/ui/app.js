@@ -1216,10 +1216,58 @@ function bindLibMenus() {
   });
 }
 
+/* 相册图片能拖到哪儿：按键、待机幻灯片、相册场景编辑区、壁纸 */
+function libDropZoneAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const cell = el.closest(".ring-board .cell[data-key]");
+  if (cell) return { kind: "key", el: cell };
+  if (el.closest("#sel-thumb")) return { kind: "key", el: $("#sel-thumb") };
+  const ed = el.closest("#album-editor");
+  if (ed) return { kind: "sceneAlbum", el: ed };
+  const card = el.closest("#album-card");
+  if (card) return { kind: "standbyAlbum", el: card };
+  const wp = el.closest("#wp-grid");
+  if (wp) return { kind: "wallpaper", el: wp };
+  return null;
+}
+
+/* 从相册分类拖一张图出去：加进相册场景 / 待机幻灯片 / 设为壁纸 */
+async function dropLibraryImage(name, zone) {
+  const rel = `assets/library/${name}`;
+  if (zone.kind === "wallpaper") {
+    const r = await post("/api/wallpaper/file", { file: rel });
+    toast(r.ok ? "已设为壁纸" : "设壁纸失败", 1600);
+    await refreshState();
+    return;
+  }
+  if (zone.kind === "standbyAlbum") {
+    const r = await post("/api/album/add", { files: [rel] });
+    if (r && r.items) renderAlbum(r);
+    toast(r.ok ? "已加到待机幻灯片" : "加不进去（可能不是图片）", 1800);
+    await refreshState();
+    return;
+  }
+  if (zone.kind === "sceneAlbum") {
+    const scene = activeAlbumScene();
+    if (!scene) {
+      toast("先在左上角选中一个相册场景，再拖进来", 2200);
+      return;
+    }
+    const r = await post("/api/album/add", { files: [rel], scene });
+    albumSceneSig = "";
+    renderAlbumEditor(r, scene);
+    window.m18ReloadScenes?.();
+    toast(r.ok ? `已加入相册场景「${scene}」` : "加入失败", 1800);
+  }
+}
+
 /* 图标瓦片 / 插件动作图标：单击 = 应用到选中键，拖动 = 放到目标键（事件委托，几千个图标只绑一次） */
 function bindIconDrag(container) {
   container.addEventListener("pointerdown", (e) => {
-    const img = e.target.closest("img[data-name]");
+    // 相册瓦片的 img 外面还包着一层 .lib-cell（全局 img 设了 pointer-events:none）
+    let img = e.target.closest("img[data-name]");
+    if (!img) img = e.target.closest(".lib-cell")?.querySelector("img[data-name]") || null;
     if (!img || e.button !== 0) return;
     e.preventDefault();
     const start = { x: e.clientX, y: e.clientY };
@@ -1232,6 +1280,13 @@ function bindIconDrag(container) {
       if (!dragging) return;
       moveGhost(ev.clientX, ev.clientY);
       clearDropHover();
+      if (img.dataset.name.startsWith("lib:")) {
+        const zone = libDropZoneAt(ev.clientX, ev.clientY);
+        if (zone && zone.kind !== "key") {
+          zone.el.classList.add("lib-drop-hot");
+          return;
+        }
+      }
       const t = dropTargetAt(ev.clientX, ev.clientY);
       if (t && !t.closest(".side-scroll")) t.classList.add("drop-hover");
     };
@@ -1247,6 +1302,14 @@ function bindIconDrag(container) {
           setCpIcon(img.dataset.name, img.src);
           toast("已设为自制插件的图标（保存后生效）", 1400);
           return;
+        }
+        // 相册分类的图：可以拖进相册场景 / 待机幻灯片 / 壁纸
+        if (img.dataset.name.startsWith("lib:")) {
+          const zone = libDropZoneAt(ev.clientX, ev.clientY);
+          if (zone && zone.kind !== "key") {
+            await dropLibraryImage(img.dataset.name.slice(4), zone);
+            return;
+          }
         }
         if (t?.dataset?.key) key = Number(t.dataset.key);
         else if (t?.classList.contains("thumb")) key = selectedKey;
@@ -1582,6 +1645,7 @@ function bindSidebar() {
     document.querySelectorAll("#icon-groups details[open]").forEach((d) => { d.open = false; });
   });
   bindIconDrag($("#icon-groups"));
+  bindIconDrag($("#lib-album"));
   bindIconDrag($("#plugin-list"));
   bindIconDrag($("#custom-plugin-list"));
   bindLibMenus();
@@ -1614,6 +1678,7 @@ function dropTargetAt(x, y) {
 }
 function clearDropHover() {
   document.querySelectorAll(".drop-hover").forEach((n) => n.classList.remove("drop-hover"));
+  document.querySelectorAll(".lib-drop-hot").forEach((n) => n.classList.remove("lib-drop-hot"));
 }
 
 /* ---------------------------------------------------------- 按键长按/右键 */

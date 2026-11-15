@@ -1727,3 +1727,19 @@ html, body { overflow: hidden; height: 100%; }
 .lib-album .lib-cell img { width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
 .lib-album .lib-cell:hover { outline: 2px solid #2f6fe0; outline-offset: -2px; }
 .lib-album .side-empty { grid-column: 1 / -1; }
+/* ---- 从「相册」分类把图拖出去：目标区域亮蓝框 ---- */
+.lib-album .lib-cell { cursor: grab; }
+.lib-album .lib-cell:active { cursor: grabbing; }
+#album-editor.lib-drop-hot,
+#album-card.lib-drop-hot,
+#wp-grid.lib-drop-hot,
+#sel-thumb.lib-drop-hot {
+  outline: 2px solid #2f6fe0;
+  outline-offset: -2px;
+  border-radius: 10px;
+  background: rgba(47, 111, 224, .08);
+}
+#as-strip.lib-drop-hot, #as-preview.lib-drop-hot { outline: 2px solid #2f6fe0; outline-offset: -2px; border-radius: 10px; }
+
+/* 相册瓦片：图片本身也要能接到鼠标（全局 img 是 pointer-events:none） */
+.lib-album .lib-cell img { pointer-events: auto; }

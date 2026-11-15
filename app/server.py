@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Stream Dock M18 控制台 — Core 服务
 
@@ -2948,21 +2948,30 @@ class App:
     def _album_copy_in(self, files: list) -> list:
         """把拖进来的图片收进上传目录，返回文件名列表（相册场景和待机相册共用）。"""
         names = []
+        self._album_from_library = set()     # 这一次有几个是从「相册」分类来的
         for f in files[:200]:
             p = asset_path(f)
-            if not p or not _inside(p, UPLOAD_DIR) or not os.path.isfile(p):
+            if not p or not os.path.isfile(p):
+                continue
+            # 允许上传目录里的图，也允许图标库「相册」分类里的图（拖过去的时候）
+            if not (_inside(p, UPLOAD_DIR) or _inside(p, LIBRARY_DIR)):
                 continue
             try:
                 with Image.open(p) as im:
                     im.verify()
             except Exception:  # noqa: BLE001
                 continue
-            name = os.path.relpath(p, UPLOAD_DIR).replace("\\", "/")
-            if "/" in name:              # 拖进来的是文件夹里的图：复制一份到上传目录根下
-                dst = os.path.join(UPLOAD_DIR, f"album_{int(time.time() * 1000)}_{len(names)}{os.path.splitext(p)[1]}")
-                shutil.copyfile(p, dst)
-                name = os.path.basename(dst)
-            names.append(name)
+            if _inside(p, UPLOAD_DIR):
+                name = os.path.relpath(p, UPLOAD_DIR).replace("\\", "/")
+                if "/" not in name:
+                    names.append(name)
+                    continue
+            # 来自上传目录的子文件夹，或者来自「相册」分类：复制一份到上传目录根下
+            dst = os.path.join(UPLOAD_DIR, f"album_{int(time.time() * 1000)}_{len(names)}{os.path.splitext(p)[1]}")
+            shutil.copyfile(p, dst)
+            names.append(os.path.basename(dst))
+            if _inside(p, LIBRARY_DIR):
+                self._album_from_library.add(os.path.basename(dst))
         return names
 
     # -- 图标库的「相册」分类 -------------------------------------------- #
@@ -3336,8 +3345,12 @@ class App:
         names = self._album_copy_in(files)
         if not names:
             return False
-        # 加到待机相册 / 相册场景的图，也顺手收进图标库的「相册」里
-        self.library_collect([os.path.join(UPLOAD_DIR, n) for n in names])
+        # 加到待机相册 / 相册场景的图，也顺手收进图标库的「相册」里。
+        # 从「相册」分类拖过去的不用再收一次（否则每拖一次就多一份重复图）。
+        skip = getattr(self, "_album_from_library", set())
+        rest = [os.path.join(UPLOAD_DIR, n) for n in names if n not in skip]
+        if rest:
+            self.library_collect(rest)
         if scene:
             def add(alb: dict) -> bool:
                 alb["items"] = list(alb.get("items") or []) + names
