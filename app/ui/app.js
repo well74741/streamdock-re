@@ -400,6 +400,7 @@ function buildRing() {
     const dot = document.createElement("div");
     dot.className = "dot";
     dot.dataset.index = i;
+    dot.dataset.key = i + 1;
     dot.style.left = x + "%";
     dot.style.top = y + "%";
     dot.title = `灯珠 ${i + 1}`;
@@ -2070,6 +2071,7 @@ function renderEditor() {
   // 相册场景：编辑区换成图片集，保存/清除按钮跟按键无关，收起来
   // 但三个导航键（16/17/18）还是按键编辑：它们有默认的上页 / 主页 / 下页动作
   const albScene = n && n > 15 ? null : activeAlbumScene();
+  syncAlbumBody();
   const bodyEl = $("#editor-body");
   const albEl = $("#album-editor");
   if (albEl) albEl.hidden = !albScene;
@@ -3520,7 +3522,8 @@ let albumState = null;
 let albumSig = "";
 
 function renderAlbum(a) {
-  document.body.classList.toggle("album-scene", !!(a && a.scene));
+  if (a && state) state.album = a;   // 相册消息是「最新事实」，先写进 state 再判断 body 类
+  syncAlbumBody();
   if (a && a.scene) {
     // 相册场景播放中：只更新「按键编辑」里的图片区和键盘预览，待机相册的卡片只同步数字
     if (a.scene === activeAlbumScene()) renderAlbumEditor(a, a.scene);
@@ -3713,6 +3716,17 @@ function activeAlbumScene() {
   const name = selectedScene || state?.album?.scene || state?.activeScene || "";
   const it = (sceneItems || []).find((i) => i.name === name);
   return it && it.sceneType === "album" && !it.builtin ? name : "";
+}
+
+/* 相册场景时给 body 挂个类：导航键显示 ◀ ⌂ ▶、翻页按钮收起。
+   跟的是「现在设备上放的是不是相册场景」，不是左边列表点了谁，
+   这样任何一次状态刷新都不会把类冲掉，切回普通场景也会自动去掉。 */
+function syncAlbumBody() {
+  const alb = state?.album || {};
+  const applied = (alb.active && alb.scene) || (state?.activeScene || "");
+  const name = applied || selectedScene || "";
+  const it = (sceneItems || []).find((i) => i.name === name);
+  document.body.classList.toggle("album-scene", !!(it && it.sceneType === "album" && !it.builtin));
 }
 
 function renderAlbumEditor(a, name = activeAlbumScene()) {
