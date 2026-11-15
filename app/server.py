@@ -1630,23 +1630,27 @@ class App:
         self._panel_dev = dev
         return dev
 
-    def sleep_panel(self) -> bool:
+    def _panel_write(self, fn) -> bool:
+        """开关屏指令优先走主连接：另开一条句柄会把按键上报抢走（关屏后按键就“失灵”了）。"""
+        dev = self.device
+        if dev is not None and dev.connected:
+            try:
+                return bool(dev.write(fn))
+            except Exception:  # noqa: BLE001
+                pass
         dev = self._panel_device()
         if not dev:
             return False
         try:
-            return bool(dev.write(lambda tr: tr.sleep()))
+            return bool(dev.write(fn))
         except Exception:  # noqa: BLE001
             return False
 
+    def sleep_panel(self) -> bool:
+        return self._panel_write(lambda tr: tr.sleep())
+
     def wake_panel(self) -> bool:
-        dev = self._panel_device()
-        if not dev:
-            return False
-        try:
-            return bool(dev.write(lambda tr: tr.wakeup_screen()))
-        except Exception:  # noqa: BLE001
-            return False
+        return self._panel_write(lambda tr: tr.wakeup_screen())
 
     CONSOLE_LIGHT_MODES = ("solid", "rainbow", "breathe", "chase", "gradient", "ripple")
 
@@ -3301,6 +3305,18 @@ class App:
         if state == 1 and self.lighting.get("mode") == "ripple":
             self.add_ripple(key)
             self._dirty = True
+        if self.screen_off and state == 1:
+            # 息屏时按任何键（含三个导航键）只负责唤醒，不执行动作：
+            # 否则「长按 = 屏幕开关」的那个键会在唤醒的同时又把自己关掉。
+            self.screen_off = False
+            self._wake_swallow.add(key)
+            self.broadcast({"type": "status", "screenOff": False})
+            log(f"按键 {key}：屏幕是关的，先唤醒")
+            threading.Thread(target=self._wake_screen_now, daemon=True).start()
+            return
+        if state == 0 and key in self._wake_swallow:
+            self._wake_swallow.discard(key)
+            return
         if self.album_active():
             # 相册场景播放中：点任意屏幕键都是「下一个场景」，导航键是 上页/主场景/下页；
             # 幻灯片（待机相册）只是待机画面，播放时 ◀ ▶ 翻照片、按其他键回到当前场景。
@@ -3366,6 +3382,15 @@ class App:
         # 设了长按 / 双击：一律交给手势判定。以前这里先判断插件就 return，
         # 结果「插件键 + 长按/双击」永远收不到手势，设了也没反应。
         self._gesture(key, state, g)
+
+    def _wake_screen_now(self) -> None:
+        """息屏状态下按了键：点亮屏幕并把按键画面补回去。"""
+        try:
+            self.wake_panel()
+            time.sleep(0.12)
+            self.apply_keys()
+        except Exception as exc:  # noqa: BLE001
+            log(f"唤醒屏幕失败：{exc}")
 
     def _maybe_repaint(self) -> None:
         """设备空闲会自己息屏，醒过来只显示开机图；按键时补一次画面。"""
@@ -4539,7 +4564,8 @@ class App:
         return False
 
     def swap_keys(self, a: int, b: int) -> bool:
-        if a == b or not (1 <= a <= KEY_COUNT) or not (1 <= b <= KEY_COUNT):
+        top = KEY_COUNT + 3
+        if a == b or not (1 <= a <= top) or not (1 <= b <= top):
             return False
         for store in (self.key_overrides, self.key_actions, self.key_styles, self.key_gestures):
             va, vb = store.get(a), store.get(b)
@@ -4558,7 +4584,7 @@ class App:
         return True
 
     def copy_key(self, key: int) -> bool:
-        if not (1 <= key <= KEY_COUNT):
+        if not (1 <= key <= KEY_COUNT + 3):      # 16/17/18 是三个导航键，也要能复制
             return False
         self.clipboard = {
             "image": copy.deepcopy(self.key_overrides.get(key)),
@@ -4569,7 +4595,7 @@ class App:
         return any(self.clipboard.values())
 
     def paste_key(self, key: int) -> bool:
-        if not self.clipboard or not (1 <= key <= KEY_COUNT):
+        if not self.clipboard or not (1 <= key <= KEY_COUNT + 3):
             return False
         for name, store in (("image", self.key_overrides),
                             ("action", self.key_actions),
@@ -4589,7 +4615,7 @@ class App:
         return True
 
     def clear_key_all(self, key: int) -> bool:
-        if not (1 <= key <= KEY_COUNT):
+        if not (1 <= key <= KEY_COUNT + 3):
             return False
         self.key_overrides.pop(key, None)
         self.key_actions.pop(key, None)
