@@ -338,9 +338,19 @@ function refreshCells() {
     const st = styles[n] || {};
     const act = acts[n];
     const imgEl = $(".cell-img", cell);
+    // 刚放上去、还没写入的图标：先按这个样子显示（点保存才真正写进按键）
+    const pend = pendingIcon && pendingIcon.key === Number(n) ? pendingIcon : null;
+    cell.classList.toggle("pending-icon", !!pend);
     if (imgEl) {
       const plug = state?.keyPlugin?.[n];
-      if (plug && plug.rev > 0) {
+      if (pend && pend.src) {
+        const pv = `pend-${pend.src}`;
+        if (imgEl.dataset.v !== pv) {
+          imgEl.src = pend.src;
+          imgEl.dataset.v = pv;
+        }
+        imgEl.hidden = false;
+      } else if (plug && plug.rev > 0) {
         // 插件在画这个键：显示服务端合成好的实时画面（已含标题）
         const lv = `${n}-live-${plug.rev}`;
         if (imgEl.dataset.v !== lv) {
@@ -1333,14 +1343,14 @@ function bindIconDrag(container) {
         setPendingIcon(key, editGesture, {
           kind: "plugin", plugin: m[1], index: Number(m[2]), src: img.src, label,
         });
-        toast(`临时预览：按键 ${key} →「${label}」，点「保存」才生效`, 2600);
+        toast(`已放到按键 ${key}：${label}`, 1600);
         return;
       }
       if (key !== selectedKey) selectKey(key);
       setPendingIcon(key, editGesture, {
         kind: "icon", name: img.dataset.name, src: img.src, label: "图标",
       });
-      toast(`临时预览：按键 ${key} 换这张图，点「保存」才生效`, 2400);
+      toast(`已放到按键 ${key}`, 1400);
     };
     document.addEventListener("pointermove", onMove, true);
     document.addEventListener("pointerup", onUp, true);
@@ -2168,11 +2178,12 @@ function clearPendingIcon() {
 }
 
 function setPendingIcon(key, gesture, info) {
+  if (selectedKey !== key) selectKey(key);          // 先把编辑区切到这个键
   pendingIcon = { key, gesture, ...info };
   paintPendingIcon();
 }
 
-/* 点空白处（既不是按键、也不在编辑区/图标库/插件面板里）就撤销临时预览 */
+/* 点空白处（既不是按键、也不在编辑区/图标库/插件面板里）就撤销没保存的图标 */
 document.addEventListener("pointerdown", (e) => {
   if (!pendingIcon) return;
   const t = e.target;
@@ -2182,21 +2193,8 @@ document.addEventListener("pointerdown", (e) => {
 
 function paintPendingIcon() {
   if (!pendingIcon) return;
-  const { key, gesture, src, label } = pendingIcon;
-  const cell = document.querySelector(`.ring-board .cell[data-key="${key}"]`);
-  if (cell) {
-    const imgEl = $(".cell-img", cell);
-    if (imgEl && src) {
-      imgEl.src = src;
-      imgEl.dataset.v = "";
-      imgEl.hidden = false;
-    }
-    cell.classList.add("pending-icon");
-  }
-  if (selectedKey === key && editGesture === gesture) {
-    const act = $("#sel-action");
-    if (act) act.textContent = `临时预览：${label}（点保存生效）`;
-  }
+  refreshCells();     // 按键格子直接按「放上去以后」的样子显示
+  renderEditor();     // 编辑区的缩略图、功能行也跟着显示，可以继续改标题 / 颜色
 }
 const VALUE_TYPES = {
   launch: "程序 / 文件 / 文件夹路径（可点「选择文件…」）",
@@ -2469,6 +2467,8 @@ function renderEditor() {
   const img = state?.keyImages?.[n];
   const act = state?.keyActions?.[n];
   const type = state?.keyActionTypes?.[n] || "launch";
+  // 刚拖进来、还没点保存的图标 / 程序：编辑区按「已经放上去了」的样子显示
+  const pend = pendingIcon && pendingIcon.key === n ? pendingIcon : null;
   const thumb = $("#sel-thumb");
   if (thumb) {
     thumb.classList.add("as-key");
@@ -2479,8 +2479,9 @@ function renderEditor() {
       const parts = [];
       const plugLive = (state?.keyPlugin?.[n]?.rev || 0) > 0;
       if (plugLive) parts.push(`<img class="thumb-img" src="/api/key/${n}/live.jpg?v=${Date.now()}" alt="" />`);
+      else if (pend && pend.src) parts.push(`<img class="thumb-img" src="${pend.src}" alt="" />`);
       else if (img) parts.push(`<img class="thumb-img" src="/api/key/${n}/raw?v=${Date.now()}" alt="" />`);
-      const label = plugLive ? "" : (st.text || (img ? "" : String(n)));
+      const label = plugLive ? "" : (st.text || (img || pend ? "" : String(n)));
       if (label) {
         const tw = thumb.clientWidth || 96;
         const fs = Math.max(6, (st.size ?? 20) * (tw / 64));
@@ -2516,7 +2517,8 @@ function renderEditor() {
       $("#sel-plugin-status").dataset.status = plug.status;
     }
   }
-  $("#sel-image").textContent = isNav ? "导航键无屏幕" : (img ? "单独图片 / 动图" : "无（标题 / 编号）");
+  $("#sel-image").textContent = isNav ? "导航键无屏幕"
+    : ((img || pend?.src) ? "单独图片 / 动图" : "无（标题 / 编号）");
 
   const actType = fillActionForm(n);
   const curDraft = formDrafts[editGesture];
@@ -2526,6 +2528,9 @@ function renderEditor() {
   } else if (curDraft) {
     $("#sel-action").textContent = "短按：未保存的改动";
   }
+  // 拖进来的插件 / 程序：功能行直接显示它，保存后就变成这个行为
+  if (pend && pend.kind === "plugin") $("#sel-action").textContent = `插件：${pend.label || "插件动作"}`;
+  else if (pend && pend.kind === "program") $("#sel-action").textContent = `打开：${pend.name}`;
 
   let hint = editGesture !== "press"
     ? `${gestureLabel(editGesture)}（${editGesture === "long" ? "按住 0.5 秒" : "0.3 秒内按两下"}）时执行。设置后，短按会在松开${editGesture === "double" ? "约 0.3 秒" : ""}后才触发。`
@@ -2535,6 +2540,7 @@ function renderEditor() {
       ? "导航键默认：左=上一页，中=主页，右=下一页；也可以改成打开程序、网页或热键。"
       : "拖图片换画面；拖程序 / 快捷方式 / 脚本 / 文件夹绑定动作，按下即打开。";
   if (Object.keys(formDrafts).length) hint = "有未保存的改动 —— 三种触发方式改完一起点右上角「保存」生效。" + hint;
+  if (pend) hint = "已经放到这个键上了：标题 / 颜色可以直接改，点右上角「保存」写进按键（点空白处或换键就撤销）。" + hint;
   $("#sel-hint").textContent = hint;
 }
 
@@ -2609,35 +2615,47 @@ async function resolveProgram(file, pathHint) {
 async function handleFile(key, file, pathHint) {
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name);
   if (isImage) {
+    // 先放到键上显示出来，点「保存」才真正写进按键
     const up = await upload(file);
-    const r = await post("/api/key/image", { key, file: up.file });
-    if (!r.ok) toast("图片设置失败");
+    if (!up?.ok) {
+      toast(up?.error || "上传失败", 2200);
+      return;
+    }
+    setPendingIcon(key, editGesture, {
+      kind: "image",
+      name: up.file,
+      src: `/api/asset?p=${encodeURIComponent(up.file)}&v=${Date.now()}`,
+      label: "图片",
+    });
     return;
   }
   // 程序 / 快捷方式：先自己解析路径（拖 href / 解析 .lnk / 按名字找），实在找不到才让用户选
   if (/\.(exe|lnk|bat|cmd|com|msi|appref-ms|ps1|vbs)$/i.test(file.name)) {
     const hit = await resolveProgram(file, pathHint);
     if (hit.ok && hit.path) {
-      const r = await post("/api/key/bind-program", { key, path: hit.path });
-      if (r.ok) {
-        toast(`已绑定：${r.name}${r.icon ? "（已用程序图标）" : ""}`, 2000);
-      } else {
-        toast(r.error || "绑定失败", 2200);
-      }
+      setPendingIcon(key, editGesture, {
+        kind: "program",
+        path: hit.path,
+        name: hit.name || file.name,
+        src: `/api/program/icon?path=${encodeURIComponent(hit.path)}&v=${Date.now()}`,
+      });
       return;
     }
     const go = await confirmDialog(
       `「${escHtml(file.name)}」没在常见目录里找到。<br><small>浏览器拿不到拖进来的完整路径，`
-      + `点「确定」后会弹一个选择窗口，在里面选它一次就能绑定。</small>`);
+      + `点「确定」后会弹一个选择窗口，在里面选它一次就能绑上。</small>`);
     if (!go) return;
     const picked = await post("/api/key/pick-program", {});
     if (!picked.ok) {
       toast("没选程序，绑定取消", 1600);
       return;
     }
-    const r = await post("/api/key/bind-program", { key, path: picked.path });
-    if (!r.ok) toast(r.error || "绑定失败", 2200);
-    else toast(`已绑定程序：${r.name}${r.icon ? "（已用程序图标）" : ""}`, 2200);
+    setPendingIcon(key, editGesture, {
+      kind: "program",
+      path: picked.path,
+      name: picked.name || file.name,
+      src: `/api/program/icon?path=${encodeURIComponent(picked.path)}&v=${Date.now()}`,
+    });
     return;
   }
   // 快捷方式类：解析出网址，类型自动设为「打开网页」
@@ -3403,13 +3421,17 @@ function bindUI() {
 
   $("#sel-save-top").addEventListener("click", async () => {
     if (!selectedKey) return;
-    // 图标库点过来的「临时预览」：点保存才真正写进去
+    // 拖上来还没写入的图标 / 图片 / 程序：点保存才真正写进去
+    let appliedPending = false;
     if (pendingIcon) {
       const p = pendingIcon;
       pendingIcon = null;
-      document.querySelector(`.ring-board .cell[data-key="${p.key}"]`)?.classList.remove("pending-icon");
       const r = p.kind === "plugin"
         ? await post("/api/key/plugin", { key: p.key, plugin: p.plugin, index: p.index })
+        : p.kind === "program"
+        ? await post("/api/key/bind-program", { key: p.key, path: p.path })
+        : p.kind === "image"
+        ? await post("/api/key/image", { key: p.key, file: p.name })
         : await post("/api/key/icon", { key: p.key, name: p.name });
       if (!r?.ok) {
         toast(r?.error || "应用失败", 2600);
@@ -3423,12 +3445,14 @@ function bindUI() {
         $("#key-editor")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         toast(`已换成控制台的「${r.label}」动作，请在下方补充内容后再点一次「保存」`, 3400);
       } else {
-        toast(`按键 ${p.key} 已应用`, 1600);
+        toast(`按键 ${p.key} 已保存`, 1600);
       }
+      appliedPending = true;
     }
     const n = selectedKey;
     // 当前页签的内容也进草稿，这样三种触发方式可以一起提交
-    formDrafts[editGesture] = readFormDraft();
+    // （只保存了刚拖上来的图标时，别把"没改过的表单"也当成改动）
+    if (!appliedPending || Object.keys(formDrafts).length) formDrafts[editGesture] = readFormDraft();
     const order = ["press", "long", "double"];
     const todo = order.filter((g) => formDrafts[g]);
     if (!todo.length) return;

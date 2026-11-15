@@ -7647,6 +7647,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self._image_file(fp)
+        elif path == "/api/asset":
+            # 用户数据目录里的图片（上传的图 / 相册里的图），给「还没保存的预览」用
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            fp = asset_path(str((query.get("p") or [""])[0]))
+            if not fp or os.path.splitext(fp)[1].lower() not in IMAGE_EXTS:
+                self.send_error(404)
+                return
+            self._image_file(fp)
+        elif path == "/api/program/icon":
+            # 程序的图标（拖进来先看到图标，点保存才真的绑上）
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            fp = APP.program_icon(str((query.get("path") or [""])[0]))
+            if not fp:
+                self.send_error(404)
+                return
+            self._image_file(fp)
         elif path.startswith("/api/plugin-icon/"):
             parts = path.split("/")
             try:
