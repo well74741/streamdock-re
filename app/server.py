@@ -37,6 +37,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+import winreg
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -7321,8 +7322,31 @@ def free_port(start=8642, tries=12) -> int:
     raise SystemExit("找不到可用端口")
 
 
+def _disable_edge_mouse_gestures() -> bool:
+    """关掉 Edge 的「鼠标手势」：按住右键画线会被浏览器当成手势，和控制台里的右键拖动冲突。"""
+    path = r"Software\Policies\Microsoft\Edge"
+    try:
+        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0,
+                                 winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE)
+        with key:
+            cur = None
+            try:
+                cur, _ = winreg.QueryValueEx(key, "MouseGestureEnabled")
+            except OSError:
+                cur = None
+            if cur != 0:
+                winreg.SetValueEx(key, "MouseGestureEnabled", 0, winreg.REG_DWORD, 0)
+                log("已关闭 Edge 的鼠标手势（右键拖动会被浏览器画成手势线）；"
+                    "想恢复：删掉 HKCU\\Software\\Policies\\Microsoft\\Edge 下的 MouseGestureEnabled")
+        return True
+    except OSError as exc:
+        log(f"关 Edge 鼠标手势失败：{exc}")
+        return False
+
+
 def open_window(url: str) -> bool:
     """用独立配置目录启动一个应用窗口；启动前先关掉旧的控制台窗口。"""
+    _disable_edge_mouse_gestures()
     profile = os.path.join(os.environ.get("LOCALAPPDATA") or HERE, "M18Console", "browser")
     try:
         os.makedirs(profile, exist_ok=True)

@@ -740,6 +740,16 @@ function openCropTool() {
     srcImg.src = r.src + `&v=${Date.now()}`;
     srcImg.hidden = false;
     emptyEl.hidden = true;
+    // 让左侧图片区按图片本身的比例收窄，不留大片空白
+    const fitDropWidth = () => {
+      const iw = srcImg.naturalWidth || 0;
+      const ih = srcImg.naturalHeight || 0;
+      if (!iw || !ih) return;
+      const w = Math.round(Math.min(gridH * (iw / ih), 340));
+      drop.style.width = `${Math.max(110, w)}px`;
+    };
+    srcImg.onload = fitDropWidth;
+    if (srcImg.complete) fitDropWidth();
     nameEl.innerHTML = `保存为：<b>${escHtml(baseName)}</b>${r.animated ? ` · 动图 ${r.frames} 帧` : ""}`;
     const stamp = Date.now();
     grid.querySelectorAll(".crop-cell").forEach((cell) => {

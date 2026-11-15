@@ -153,6 +153,10 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 - 收不到按键：确认 `StreamDockWebsocketSDK.exe` 在运行，且连接后发过 `read`
 - 屏幕不亮：检查 `setKeyImgData` 的 `imgData` 是否带 `data:image/jpeg;base64,` 前缀
 - 界面打不开：删掉 `%LOCALAPPDATA%\M18Console\browser` 后重启
+- 右键拖动会画出浏览器的手势线：控制台启动时会把 Edge 的「鼠标手势」策略关掉
+  （`HKCU\Software\Policies\Microsoft\Edge` 的 `MouseGestureEnabled = 0`，见 Microsoft 的
+  [MouseGestureEnabled](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/mousegestureenabled)）。
+  想恢复 Edge 手势就删掉这个值或改成 1；它对这个用户下的所有 Edge 窗口生效。
 - 图标库 / 插件索引为空：官方软件不在常见安装位置时，在 `app/config.json` 里加
   `"officialRoot": "X:\\你的路径\\Stream Dock"`（或设环境变量 `M18_SD_ROOT`）
 
