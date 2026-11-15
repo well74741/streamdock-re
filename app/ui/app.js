@@ -1313,7 +1313,22 @@ async function loadCustomPlugins() {
 }
 
 function bindCustomLab() {
-  $("#cp-agent").addEventListener("click", () => agentDialog().catch((e) => toast(`打开失败：${e.message || e}`)));
+  /* 自制插件区默认收起，点「展开」才占地方 */
+  const cpFold = $("#cp-fold");
+  const cpBody = $("#cp-body");
+  const setCpOpen = (open) => {
+    if (!cpBody || !cpFold) return;
+    cpBody.hidden = !open;
+    cpFold.textContent = open ? "收起" : "展开";
+    cpFold.classList.toggle("on", open);
+  };
+  setCpOpen(false);
+  cpFold?.addEventListener("click", () => setCpOpen(!!cpBody?.hidden));
+
+  $("#cp-agent").addEventListener("click", () => {
+    setCpOpen(true);
+    agentDialog().catch((e) => toast(`打开失败：${e.message || e}`));
+  });
   const tpl = $("#cp-template");
   tpl.innerHTML = Object.entries(CP_TEMPLATES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join("");
   tpl.addEventListener("change", async () => {
@@ -1350,8 +1365,9 @@ function bindCustomLab() {
     const url = await readAsDataURL(f);
     setCpIcon(url, url);
   });
-  $("#cp-new").addEventListener("click", () => openCustom(null));
+  $("#cp-new").addEventListener("click", () => { setCpOpen(true); openCustom(null); });
   $("#custom-new-side").addEventListener("click", () => {
+    setCpOpen(true);
     openCustom(null);
     $("#custom-lab").scrollIntoView({ behavior: "smooth", block: "start" });
     setTimeout(() => $("#cp-name").focus(), 400);
@@ -4014,6 +4030,27 @@ function bindDeselect() {
 }
 
 /* ------------------------------------------------------------------ SSE */
+/* 设备那边整组动图重新开始播放了：把界面上同样的动图也从头播，避免越看越错位 */
+function restartGifAnim(msg) {
+  const t = Math.round((msg && msg.t ? msg.t : Date.now() / 1000) * 1000);
+  const bump = (img) => {
+    if (!img) return;
+    const src = img.getAttribute("src") || "";
+    if (!src) return;
+    const base = src.split("&g=")[0].split("?g=")[0];
+    img.src = `${base}${base.includes("?") ? "&" : "?"}g=${t}`;
+  };
+  // 控制台预览：事件里列出的键都是正在播动图的，直接给它们换一次地址重新起播
+  for (const k of (msg && msg.keys) || []) {
+    bump(document.querySelector(`.cell[data-key="${k}"] .cell-img`));
+  }
+  // 图标库里的动图缩略图（同一次重播，和屏幕上对得上）
+  document.querySelectorAll("#icon-groups img").forEach((img) => {
+    const src = img.getAttribute("src") || "";
+    if (/\.gif(\?|$)/i.test(src)) bump(img);
+  });
+}
+
 function connectEvents() {
   const es = new EventSource("/api/events");
   es.onmessage = (ev) => {
@@ -4059,6 +4096,8 @@ function connectEvents() {
     } else if (msg.type === "lighting") {
       if (state) state.lighting = { ...(state.lighting || {}), ...(msg.lighting || {}) };
       applyLighting(msg.lighting);
+    } else if (msg.type === "gif") {
+      restartGifAnim(msg);
     } else if (msg.type === "album") {
       renderAlbum(msg);
       window.m18ReloadScenes?.();

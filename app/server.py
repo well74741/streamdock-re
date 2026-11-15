@@ -1479,6 +1479,19 @@ class App:
                 self.device.start_gif_loop()
             else:
                 self.device.stop_gif_loop()
+            keys = sorted(want.keys())
+        if keys:
+            self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
+
+    def _gif_resync(self) -> None:
+        """让所有正在播的动图从同一时刻重新开始，否则新加进来的那张会一直错位。"""
+        with self._gif_lock:
+            if not self._gif_active:
+                return
+            self.device.stop_gif_loop()
+            self.device.start_gif_loop()
+            keys = sorted(self._gif_active.keys())
+        self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
 
     def _gif_update_key(self, key: int) -> None:
         """单个键换图 / 改标题：只动这一个键。要在写静态画面之前调用。"""
@@ -1497,6 +1510,9 @@ class App:
                 self.device.start_gif_loop()
             elif not self._gif_active:
                 self.device.stop_gif_loop()
+        # 新加的动图要和大家对齐：整组停一下再一起开始
+        if want:
+            self._gif_resync()
 
     def apply_standby(self) -> bool:
         """待机：整屏铺壁纸（壁纸亮度在渲染层调暗，屏幕亮度保持正常）。"""

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261116m" />
+  <link rel="stylesheet" href="style.css?v=20261116n" />
 </head>
 <body>
 <div class="app">
@@ -334,9 +334,9 @@
               <h2>自制插件</h2>
               <span class="muted">写一小段 JavaScript 就是一个插件；保存后出现在左侧「自制插件」，拖到按键上使用</span>
               <span class="spacer"></span>
-              <span class="editor-actions"><button class="seg small" id="cp-agent" title="让 Codex / DeepSeek Harness / Claude 等 AI 帮你写插件">接入 AI</button><button class="seg small" id="cp-new">新建</button></span>
+              <span class="editor-actions"><button class="seg small" id="cp-fold" title="展开 / 收起自制插件区">展开</button><button class="seg small" id="cp-agent" title="让 Codex / DeepSeek Harness / Claude 等 AI 帮你写插件">接入 AI</button><button class="seg small" id="cp-new">新建</button></span>
             </div>
-            <div class="cp-body">
+            <div class="cp-body" id="cp-body" hidden>
               <div class="cp-list" id="cp-list"></div>
               <div class="cp-editor">
                 <div class="cp-meta">
@@ -593,6 +593,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261119b"></script>
+<script src="app.js?v=20261119d"></script>
 </body>
 </html>
