@@ -1699,30 +1699,14 @@ html, body { overflow: hidden; height: 100%; }
 .crop-cell span { position: absolute; right: 4px; bottom: 2px; font-size: 10px; color: #fff; opacity: .55; }
 .crop-card .confirm-actions { padding: 12px 20px 16px; }
 
-/* ---- 相册图片右键菜单（打开图片位置） ---- */
-.img-menu {
-  position: fixed;
-  z-index: 300;
-  min-width: 156px;
-  padding: 4px;
+/* ---- 相册分区：拖图进来时高亮 ---- */
+.side-sec[data-sec="library"].drop-hot {
+  outline: 2px solid #2f6fe0;
+  outline-offset: -2px;
+  background: rgba(47, 111, 224, .08);
   border-radius: 10px;
-  background: #1b2230;
-  border: 1px solid #2d384b;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
 }
-.img-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 7px 12px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #dfe8f7;
-  font-size: 13px;
-  cursor: pointer;
-}
-.img-menu button:hover { background: #253146; }
+.side-sec[data-sec="library"].drop-hot .lib-album { background: rgba(47, 111, 224, .12); }
 
 /* ---- 图标库点过来的临时预览（还没保存） ---- */
 .ring-board .cell.pending-icon { outline: 2px dashed #ffb347; outline-offset: -2px; }

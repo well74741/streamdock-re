@@ -3086,6 +3086,143 @@ class App:
             log(f"打开选择程序窗口失败：{exc}")
             return ""
 
+    def _lnk_target_bytes(self, data: bytes) -> str:
+        """从 .lnk 的字节里解析目标程序路径（先按结构读，再退化成字符串扫描）。"""
+        if not data or len(data) < 0x4C:
+            return ""
+        import struct
+        cands: list[str] = []
+        flags = 0
+        try:
+            flags = struct.unpack_from("<I", data, 0x14)[0]
+            pos = 0x4C
+            if flags & 0x1:                         # HasLinkTargetIDList
+                idl = struct.unpack_from("<H", data, pos)[0]
+                pos += 2 + idl
+            if flags & 0x2 and pos + 0x1C <= len(data):   # HasLinkInfo
+                _li_size, li_hdr, li_flags = struct.unpack_from("<III", data, pos)
+                if li_flags & 0x1:                  # VolumeIDAndLocalBasePath
+                    base_off = struct.unpack_from("<I", data, pos + 16)[0]
+                    start = pos + base_off
+                    end = data.find(b"\x00", start)
+                    if 0 < start < len(data) and end > start:
+                        try:
+                            cands.append(data[start:end].decode("mbcs", "ignore"))
+                        except Exception:             # noqa: BLE001
+                            pass
+                    if li_hdr >= 0x24 and pos + 0x20 <= len(data):
+                        uni_off = struct.unpack_from("<I", data, pos + 28)[0]
+                        if uni_off:
+                            start = pos + uni_off
+                            end = start
+                            while end + 1 < len(data) and data[end:end + 2] != b"\x00\x00":
+                                end += 2
+                            if end > start:
+                                cands.append(data[start:end].decode("utf-16-le", "ignore"))
+        except Exception:                             # noqa: BLE001
+            pass
+        # 兜底：有些安装器写的快捷方式不规范，直接扫「X:\...\xxx.exe」这种串
+        import re as _re
+        pat = _re.compile(r"[A-Za-z]:\\[^\x00:*?\"<>|\r\n]{1,240}?\.(?:exe|com|bat|cmd)", _re.I)
+        for enc in ("utf-16-le", "mbcs"):
+            try:
+                blob = data.decode(enc, "ignore")
+            except Exception:                         # noqa: BLE001
+                continue
+            cands.extend(m.group(0) for m in pat.finditer(blob))
+        for c in cands:
+            p = os.path.expandvars(c.strip().strip('"'))
+            if p and os.path.isfile(p):
+                return p
+        return ""
+
+    def _program_roots(self) -> list[str]:
+        roots = []
+        for env in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "APPDATA"):
+            p = os.environ.get(env)
+            if p:
+                roots.append(p)
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            roots.append(os.path.join(local, "Programs"))
+        sysroot = os.environ.get("SystemRoot")
+        if sysroot:
+            roots.extend([os.path.join(sysroot, "System32"), os.path.join(sysroot, "SysWOW64")])
+        home = os.path.expanduser("~")
+        for name in ("Desktop", "Downloads", "OneDrive\\Desktop", "OneDrive\\桌面", "桌面"):
+            roots.append(os.path.join(home, name))
+        out = []
+        for r in roots:
+            if os.path.isdir(r) and r not in out:
+                out.append(r)
+        return out
+
+    def _find_program(self, name: str, size: int = 0) -> str:
+        """在常见目录里按「文件名（+ 大小）」找程序，找不到再让用户选。"""
+        want = os.path.basename(name or "").lower()
+        if not want:
+            return ""
+        deadline = time.time() + 6.0
+        skip = {"$recycle.bin", "system volume information", "winsxs", "node_modules",
+                "__pycache__", ".git", "temp", "tmp", "cache", "cache2", "crashdumps",
+                "installer", "packages"}
+        hits: list[str] = []
+        for root in self._program_roots():
+            if len(hits) >= 8 or time.time() > deadline:
+                break
+            for dirpath, dirnames, filenames in os.walk(root):
+                if len(hits) >= 8 or time.time() > deadline:
+                    break
+                dirnames[:] = [d for d in dirnames if d.lower() not in skip]
+                for fn in filenames:
+                    if fn.lower() != want:
+                        continue
+                    fp = os.path.join(dirpath, fn)
+                    try:
+                        if size and os.path.getsize(fp) != size:
+                            continue
+                    except OSError:
+                        continue
+                    hits.append(fp)
+                    if len(hits) >= 8:
+                        break
+        if not hits:
+            return ""
+        hits.sort(key=lambda p: (0 if "\\program files" in p.lower() else 1, len(p)))
+        return hits[0]
+
+    def resolve_program(self, name: str, size: int = 0, data: bytes | None = None,
+                        path: str = "") -> dict:
+        """尽量把拖进来的程序 / 快捷方式解析成真实路径，省掉让用户再选一次。"""
+        hint = (path or "").strip().strip('"')
+        if hint and os.path.isfile(hint):
+            return {"ok": True, "path": hint, "how": "drop"}
+        base = os.path.basename((name or "").strip())
+        is_lnk = base.lower().endswith(".lnk")
+        if data and is_lnk:
+            tgt = self._lnk_target_bytes(data)
+            if tgt:
+                return {"ok": True, "path": tgt, "how": "shortcut"}
+        if is_lnk:
+            for root in self._program_roots():
+                cand = os.path.join(root, base)
+                if not os.path.isfile(cand):
+                    continue
+                try:
+                    with open(cand, "rb") as fh:
+                        tgt = self._lnk_target_bytes(fh.read())
+                except OSError:
+                    tgt = ""
+                if not tgt:
+                    tgt = self._lnk_target(cand)      # 退回到 PowerShell 解析
+                if tgt and os.path.isfile(tgt):
+                    return {"ok": True, "path": tgt, "how": "shortcut"}
+        if not is_lnk:
+            hit = self._find_program(base, size)
+            if hit:
+                return {"ok": True, "path": hit, "how": "search"}
+        return {"ok": False, "error": "没找到这个程序的位置"}
+
     def program_icon(self, path: str, size: int = 64) -> str | None:
         """取程序 / 快捷方式的图标，存成 PNG 缓存。"""
         if not path or not os.path.isfile(path):
@@ -7860,6 +7997,24 @@ class Handler(BaseHTTPRequestHandler):
                 target = info.get("source")
             self._json({"ok": bool(info.get("ok")) and APP.reveal_in_explorer(target or ""),
                         "path": target or ""})
+        elif path == "/api/program/resolve":
+            raw = str(body.get("data") or "")
+            blob = None
+            if raw:
+                try:
+                    blob = base64.b64decode(raw)
+                except Exception:                     # noqa: BLE001
+                    blob = None
+                if blob and len(blob) > 4 * 1024 * 1024:
+                    blob = None
+            try:
+                r = APP.resolve_program(str(body.get("name") or ""),
+                                        int(body.get("size") or 0), blob,
+                                        str(body.get("path") or ""))
+            except Exception as exc:                  # noqa: BLE001
+                log(f"解析程序路径失败：{exc}")
+                r = {"ok": False, "error": "解析失败"}
+            self._json(r)
         elif path == "/api/key/pick-program":
             # 浏览器拿不到拖进来的程序真实路径，只能由控制台在本机弹窗选
             picked = APP.pick_program()

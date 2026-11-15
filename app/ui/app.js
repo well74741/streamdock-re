@@ -720,55 +720,95 @@ function bindLibrary() {
   });
 }
 
-/* 相册瓦片的右键菜单：设为壁纸 / 加到幻灯片 / 打开位置 / 删除 */
+/* 相册瓦片的右键菜单：和图标库瓦片用同一套菜单（showLibMenu） */
 function bindLibraryMenu() {
   document.addEventListener("contextmenu", (e) => {
     const cell = e.target.closest?.(".lib-album .lib-cell");
     if (!cell) return;
     e.preventDefault();
+    e.stopPropagation();
     const file = cell.dataset.file;
-    closeImageMenu();
-    const menu = document.createElement("div");
-    menu.className = "img-menu";
-    menu.innerHTML = `<button data-act="wall">设为壁纸</button>`
-      + `<button data-act="album">加到待机幻灯片</button>`
-      + `<button data-act="reveal">打开图片位置</button>`
-      + `<button data-act="remove">从相册删除</button>`;
-    document.body.appendChild(menu);
-    const w = menu.offsetWidth, h = menu.offsetHeight;
-    menu.style.left = Math.min(e.clientX, innerWidth - w - 8) + "px";
-    menu.style.top = Math.min(e.clientY, innerHeight - h - 8) + "px";
-    window.__imgMenu = menu;
-    menu.addEventListener("click", async (ev) => {
-      const act = ev.target.closest("button")?.dataset.act;
-      menu.remove();
-      window.__imgMenu = null;
-      if (!act) return;
-      if (act === "wall") {
-        const r = await post("/api/wallpaper/file", { file: `assets/library/${file}` });
-        toast(r.ok ? "已设为壁纸" : "设壁纸失败", 1600);
-        await refreshState();
-      } else if (act === "album") {
-        const r = await post("/api/album/add", { files: [`assets/library/${file}`] });
-        toast(r.ok ? "已加到幻灯片" : "加不进去（可能不是图片）", 1800);
-        await refreshState();
-      } else if (act === "reveal") {
-        await post("/api/library/reveal", { name: file });
-      } else if (act === "remove") {
-        if (!(await confirmDialog(`从相册里删掉「${escHtml(file)}」？<br><small>只删相册里的这份，原来的文件不动。</small>`))) return;
-        const r = await post("/api/library/remove", { name: file });
-        libraryItems = r.items || [];
-        renderLibrary();
-        toast("已从相册删除", 1400);
-      }
-    });
-    const close = (ev) => {
-      if (menu.contains(ev.target)) return;
-      menu.remove();
-      window.__imgMenu = null;
-      document.removeEventListener("pointerdown", close, true);
-    };
-    document.addEventListener("pointerdown", close, true);
+    showLibMenu(e.clientX, e.clientY, [
+      {
+        label: "设为壁纸",
+        onPick: async () => {
+          const r = await post("/api/wallpaper/file", { file: `assets/library/${file}` });
+          toast(r.ok ? "已设为壁纸" : "设壁纸失败", 1600);
+          await refreshState();
+        },
+      },
+      {
+        label: "加到待机幻灯片",
+        onPick: async () => {
+          const r = await post("/api/album/add", { files: [`assets/library/${file}`] });
+          toast(r.ok ? "已加到幻灯片" : "加不进去（可能不是图片）", 1800);
+          await refreshState();
+        },
+      },
+      { label: "打开图片位置", onPick: () => post("/api/library/reveal", { name: file }) },
+      {
+        label: "从相册删除",
+        danger: true,
+        onPick: async () => {
+          if (!(await confirmDialog(`从相册里删掉「${escHtml(file)}」？<br><small>只删相册里的这份，原来的文件不动。</small>`))) return;
+          const r = await post("/api/library/remove", { name: file });
+          libraryItems = r.items || [];
+          renderLibrary();
+          toast("已从相册删除", 1400);
+        },
+      },
+    ]);
+  });
+}
+
+/* 相册分区支持把图片拖进来（和图标库、壁纸、幻灯片一样） */
+function bindLibraryDrop() {
+  const sec = document.querySelector('.side-sec[data-sec="library"]');
+  const box = $("#lib-album");
+  if (!sec || !box || sec.dataset.dropBound) return;
+  sec.dataset.dropBound = "1";
+  let depth = 0;
+  const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  sec.addEventListener("dragenter", (e) => {
+    if (!isFiles(e)) return;
+    depth += 1;
+    sec.classList.add("drop-hot");
+  });
+  sec.addEventListener("dragover", (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  sec.addEventListener("dragleave", (e) => {
+    if (!isFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) sec.classList.remove("drop-hot");
+  });
+  sec.addEventListener("drop", async (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    depth = 0;
+    sec.classList.remove("drop-hot");
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    const rels = [];
+    for (const f of files) {
+      if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name)) continue;
+      try {
+        const r = await upload(f);
+        if (r && r.file) rels.push(r.file);
+      } catch (_) { /* 掉一张不算错 */ }
+    }
+    if (!rels.length) {
+      toast("相册只收图片（PNG / JPG / GIF / WebP / BMP）", 2200);
+      return;
+    }
+    const r = await post("/api/library/add", { files: rels });
+    libraryItems = r.items || [];
+    renderLibrary();
+    toast(`已收进相册 ${r.added || 0} 张`, 1600);
   });
 }
 
@@ -1797,27 +1837,19 @@ document.addEventListener("pointerdown", (e) => {
   if (!e.target.closest?.(".key-menu")) hideKeyMenu();
 }, true);
 
-/* 相册图片右键菜单：打开图片所在位置（资源管理器里选中） */
+/* 相册图片右键菜单：打开图片所在位置（和图标库同一套菜单样式） */
 function closeImageMenu() {
-  document.querySelectorAll(".img-menu").forEach((n) => n.remove());
+  hideLibMenu();
 }
 
 function imageMenu(x, y, opts) {
-  closeImageMenu();
-  const box = document.createElement("div");
-  box.className = "img-menu";
-  box.innerHTML = `<button data-act="reveal">打开图片位置</button>`;
-  document.body.appendChild(box);
-  const r = box.getBoundingClientRect();
-  box.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + "px";
-  box.style.top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + "px";
-  box.querySelector('[data-act="reveal"]').addEventListener("click", async (ev) => {
-    ev.stopPropagation();
-    closeImageMenu();
-    const r2 = await post("/api/album/reveal", { scene: opts.scene || "", index: opts.index });
-    if (!r2?.ok) toast("打不开这张图片（文件可能已被移走）", 2000);
-  });
-  return box;
+  showLibMenu(x, y, [{
+    label: "打开图片位置",
+    onPick: async () => {
+      const r2 = await post("/api/album/reveal", { scene: opts.scene || "", index: opts.index });
+      if (!r2?.ok) toast("打不开这张图片（文件可能已被移走）", 2000);
+    },
+  }]);
 }
 
 document.addEventListener("contextmenu", (e) => {
@@ -1836,9 +1868,6 @@ document.addEventListener("contextmenu", (e) => {
   imageMenu(e.clientX, e.clientY, { scene, index });
 });
 
-document.addEventListener("pointerdown", (e) => {
-  if (!e.target.closest?.(".img-menu")) closeImageMenu();
-}, true);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeImageMenu();
@@ -2082,7 +2111,7 @@ function setPendingIcon(key, gesture, info) {
 document.addEventListener("pointerdown", (e) => {
   if (!pendingIcon) return;
   const t = e.target;
-  if (t.closest(".cell, .ring-btn, #key-editor, #icon-groups, #plugin-list, .icon-group, details.plugin, .img-menu, .confirm-modal, .toast")) return;
+  if (t.closest(".cell, .ring-btn, #key-editor, #icon-groups, #plugin-list, .icon-group, details.plugin, .img-menu, .lib-menu, .confirm-modal, .toast")) return;
   clearPendingIcon();
 }, true);
 
@@ -2468,7 +2497,51 @@ async function uploadTree(entry, prefix, budget) {
   }
 }
 
-async function handleFile(key, file) {
+/* 从拖放数据里捞真实路径：Edge 从资源管理器拖文件时会带上 file:/// 形式的地址 */
+function filePathFromDt(dt) {
+  if (!dt) return "";
+  let raw = "";
+  try { raw = dt.getData("text/uri-list") || ""; } catch (_) { /* 有的浏览器不给读 */ }
+  if (!raw) {
+    try { raw = dt.getData("text/plain") || ""; } catch (_) { /* 同上 */ }
+  }
+  for (const line of String(raw).split(/\r?\n/)) {
+    let s = line.trim();
+    if (!s || s.startsWith("#")) continue;
+    if (/^file:\/\//i.test(s)) {
+      try { s = decodeURIComponent(s.replace(/^file:\/\/\//i, "")); } catch (_) { continue; }
+    }
+    if (/^\/[A-Za-z]:\//.test(s)) s = s.slice(1);
+    s = s.replace(/\//g, "\\");
+    if (/^[A-Za-z]:\\/.test(s)) return s;
+  }
+  return "";
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || "").replace(/^data:[^,]*,/, ""));
+    fr.onerror = () => resolve("");
+    fr.readAsDataURL(file);
+  });
+}
+
+/* 先把「拖进来的程序」解析成真实路径，解析不出来才弹选择窗口 */
+async function resolveProgram(file, pathHint) {
+  const body = { name: file.name, size: file.size };
+  if (pathHint) body.path = pathHint;
+  if (!pathHint && /\.lnk$/i.test(file.name) && file.size && file.size < 4 * 1024 * 1024) {
+    body.data = await fileToBase64(file);
+  }
+  try {
+    return await post("/api/program/resolve", body);
+  } catch (_) {
+    return { ok: false };
+  }
+}
+
+async function handleFile(key, file, pathHint) {
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name);
   if (isImage) {
     const up = await upload(file);
@@ -2476,11 +2549,21 @@ async function handleFile(key, file) {
     if (!r.ok) toast("图片设置失败");
     return;
   }
-  // 程序 / 快捷方式：浏览器只给文件内容、拿不到真实路径，改成在控制台里弹窗选
+  // 程序 / 快捷方式：先自己解析路径（拖 href / 解析 .lnk / 按名字找），实在找不到才让用户选
   if (/\.(exe|lnk|bat|cmd|com|msi|appref-ms|ps1|vbs)$/i.test(file.name)) {
+    const hit = await resolveProgram(file, pathHint);
+    if (hit.ok && hit.path) {
+      const r = await post("/api/key/bind-program", { key, path: hit.path });
+      if (r.ok) {
+        toast(`已绑定：${r.name}${r.icon ? "（已用程序图标）" : ""}`, 2000);
+      } else {
+        toast(r.error || "绑定失败", 2200);
+      }
+      return;
+    }
     const go = await confirmDialog(
-      `「${escHtml(file.name)}」是程序 / 快捷方式。<br><small>浏览器拿不到本机的完整路径（只能拿到文件内容），`
-      + `点「确定」后会弹出一个选择窗口，在里面选它一次就能绑定，按键会显示这个程序的图标。</small>`);
+      `「${escHtml(file.name)}」没在常见目录里找到。<br><small>浏览器拿不到拖进来的完整路径，`
+      + `点「确定」后会弹一个选择窗口，在里面选它一次就能绑定。</small>`);
     if (!go) return;
     const picked = await post("/api/key/pick-program", {});
     if (!picked.ok) {
@@ -2541,6 +2624,8 @@ async function dropOnKey(key, dt) {
     if (ok.ok) await refreshState();
     return;
   }
+  // 真实路径要在 drop 事件这一拍就读出来，事件过后 dataTransfer 就空了
+  const pathHint = filePathFromDt(dt);
   const items = [...(dt.items || [])];
   const entry = items[0]?.webkitGetAsEntry?.();
   try {
@@ -2554,9 +2639,9 @@ async function dropOnKey(key, dt) {
       else toast(`已绑定文件夹：${entry.name}`);
     } else if (entry) {
       const file = await new Promise((res, rej) => entry.file(res, rej));
-      await handleFile(key, file);
+      await handleFile(key, file, pathHint);
     } else if (dt.files?.[0]) {
-      await handleFile(key, dt.files[0]);
+      await handleFile(key, dt.files[0], pathHint);
     }
   } catch (err) {
     toast("拖入失败：" + err.message);
@@ -3535,6 +3620,8 @@ function bindUI() {
   bindCustomLab();
   loadIcons();
   loadLibrary();
+  bindLibrary();
+  bindLibraryDrop();
   bindLibraryMenu();
   loadPlugins();
 
