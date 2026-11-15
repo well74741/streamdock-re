@@ -579,10 +579,24 @@ async function loadIcons(refresh = false) {
       : `<div class="side-empty">没有匹配「${escHtml(q)}」的图标</div>`;
     return;
   }
+  const mineCount = iconPacks.filter((p) => p.mine).length;
+  let seenMine = false, seenOfficial = false;
   box.innerHTML = iconPacks.map((p) => {
     const open = sideState.openPacks.includes(p.id);
     const cover = p.files[0] ? `<img class="cover" src="${packIconUrl(p.id, p.files[0])}" alt="" />` : "";
-    return `<details class="icon-group" data-pack="${escHtml(p.id)}"${open ? " open" : ""}>`
+    let head = "";
+    if (p.mine && !seenMine) {
+      seenMine = true;
+      head = `<div class="lib-sec">我的图标</div>`;
+    }
+    if (!p.mine && !seenOfficial) {
+      seenOfficial = true;
+      head = (!mineCount
+        ? `<div class="lib-sec">我的图标</div>`
+          + `<div class="side-empty small">还没有：点控制台右下角「裁图工具」，把一张图裁成 15 张就存到这里。</div>`
+        : "") + `<div class="lib-sec">官方图标包</div>`;
+    }
+    return head + `<details class="icon-group" data-pack="${escHtml(p.id)}"${open ? " open" : ""}>`
       + `<summary>${cover}<span class="g-name" title="${escHtml(p.author ? `${p.name} · ${p.author}` : p.name)}">${escHtml(p.name)}</span><em>${p.count}</em></summary>`
       + `<div class="tiles"></div></details>`;
   }).join("");
@@ -597,6 +611,183 @@ async function loadIcons(refresh = false) {
       }
       saveSideState();
     });
+  });
+}
+
+/* --------------------------------------------------------------- 裁图工具 */
+/* 控制台键位（视觉顺序）：上排 11-15、中排 6-10、下排 1-5 */
+const CROP_KEYS = [11, 12, 13, 14, 15, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5];
+
+function openCropTool() {
+  if (document.querySelector(".crop-modal")) return;
+  const box = document.createElement("div");
+  box.className = "modal confirm-modal crop-modal";
+  box.innerHTML = `<div class="confirm-card crop-card">
+    <div class="crop-head">
+      <h2>裁图工具</h2>
+      <p>把一张图片拖到左边，右边就是 15 个屏幕键各自的画面。保存后会进「我的图标」，文件夹名就是图片名。</p>
+    </div>
+    <div class="crop-body">
+      <div class="crop-left">
+        <div class="crop-drop" id="crop-drop">
+          <img id="crop-src" alt="" hidden />
+          <div class="crop-empty" id="crop-empty">把图片拖到这里<br><span>或点一下选择文件 · PNG / JPG / GIF</span></div>
+        </div>
+        <div class="kv-line as-fit-row"><span>铺放</span>
+          <span class="seg-group compact" id="crop-fit">
+            <button class="seg on" data-fit="cover">填充</button>
+            <button class="seg" data-fit="contain">完整</button>
+            <button class="seg" data-fit="fill">拉伸</button>
+          </span>
+        </div>
+        <div class="slider-row tight as-gap-row"><span>间隙</span>
+          <input id="crop-gap" type="range" min="0" max="64" step="1" value="27" />
+          <b id="crop-gap-val">27</b>
+        </div>
+        <p class="crop-name" id="crop-name">还没有选图片</p>
+        <input type="file" id="crop-file" accept="image/*" hidden />
+      </div>
+      <div class="crop-grid" id="crop-grid">${CROP_KEYS.map((k) => `<div class="crop-cell" data-key="${k}"><img alt="" /><span>${k}</span></div>`).join("")}</div>
+    </div>
+    <div class="confirm-actions">
+      <button class="seg" id="crop-cancel">取消</button>
+      <button class="seg on" id="crop-save" disabled>保存到「我的图标」</button>
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+
+  const drop = $("#crop-drop", box);
+  const srcImg = $("#crop-src", box);
+  const emptyEl = $("#crop-empty", box);
+  const nameEl = $("#crop-name", box);
+  const grid = $("#crop-grid", box);
+  const saveBtn = $("#crop-save", box);
+  const fileEl = $("#crop-file", box);
+  const gapEl = $("#crop-gap", box);
+  const gapVal = $("#crop-gap-val", box);
+
+  let token = "";
+  let fileRel = "";
+  let baseName = "";
+  let fit = "cover";
+  let gap = 27;
+  let busy = false;
+
+  const cancelToken = () => {
+    const old = token;
+    token = "";
+    if (old) post("/api/iconcrop/cancel", { token: old }).catch(() => {});
+  };
+
+  const close = () => {
+    cancelToken();
+    box.remove();
+  };
+
+  const paint = () => {
+    saveBtn.disabled = !token || busy;
+  };
+
+  const preview = async () => {
+    if (!fileRel) return;
+    cancelToken();
+    saveBtn.disabled = true;
+    const r = await post("/api/iconcrop/preview", { file: fileRel, fit, gap, name: baseName });
+    if (!r.ok || !r.token) {
+      nameEl.textContent = r.reason || r.error || "这张图裁不了，换一张试试";
+      saveBtn.disabled = true;
+      return;
+    }
+    token = r.token;
+    baseName = r.name || baseName;
+    srcImg.src = r.src + `&v=${Date.now()}`;
+    srcImg.hidden = false;
+    emptyEl.hidden = true;
+    nameEl.innerHTML = `保存为：<b>${escHtml(baseName)}</b>${r.animated ? ` · 动图 ${r.frames} 帧` : ""}`;
+    const stamp = Date.now();
+    grid.querySelectorAll(".crop-cell").forEach((cell) => {
+      const k = Number(cell.dataset.key);
+      const im = cell.querySelector("img");
+      im.src = `${r.tiles[k - 1]}&v=${stamp}`;
+    });
+    paint();
+  };
+
+  const takeFiles = async (files) => {
+    const f = (files || [])[0];
+    if (!f) return;
+    if (!/^image\//.test(f.type || "")) {
+      toast("只能放图片（PNG / JPG / GIF）", 1800);
+      return;
+    }
+    nameEl.textContent = "正在读入…";
+    baseName = (f.name || "").replace(/\.[^.]+$/, "").slice(0, 60);
+    try {
+      const r = await upload(f);
+      fileRel = r.file;
+      await preview();
+    } catch (err) {
+      nameEl.textContent = `读入失败：${err.message || err}`;
+    }
+  };
+
+  drop.addEventListener("click", () => fileEl.click());
+  drop.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    drop.classList.add("over");
+  });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("over");
+    takeFiles(e.dataTransfer?.files);
+  });
+  fileEl.addEventListener("change", () => {
+    takeFiles(fileEl.files);
+    fileEl.value = "";
+  });
+
+  box.querySelectorAll("#crop-fit [data-fit]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      fit = b.dataset.fit;
+      box.querySelectorAll("#crop-fit [data-fit]").forEach((x) => x.classList.toggle("on", x === b));
+      if (fileRel) await preview();
+    });
+  });
+
+  const pushGap = throttle(async (v) => {
+    gap = Number(v);
+    if (fileRel) await preview();
+  }, 320);
+  gapEl.addEventListener("input", () => {
+    gapVal.textContent = gapEl.value;
+    pushGap(gapEl.value);
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    if (!token || busy) return;
+    busy = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "正在保存…";
+    const r = await post("/api/iconcrop/save", { token, name: baseName });
+    busy = false;
+    saveBtn.textContent = "保存到「我的图标」";
+    if (!r.ok) {
+      toast(r.reason || r.error || "保存失败", 2600);
+      paint();
+      return;
+    }
+    token = "";
+    toast(`已存进「我的图标」：${r.pack.name}（${r.pack.count} 个）`, 2400);
+    await loadIcons(true);
+    box.remove();
+  });
+
+  $("#crop-cancel", box).addEventListener("click", close);
+  box.addEventListener("click", (e) => { if (e.target === box) close(); });
+  document.addEventListener("keydown", function onEsc(e) {
+    if (!document.body.contains(box)) { document.removeEventListener("keydown", onEsc); return; }
+    if (e.key === "Escape") { document.removeEventListener("keydown", onEsc); close(); }
   });
 }
 
@@ -2542,6 +2733,8 @@ function bindUI() {
     await refreshState();
   });
 
+  $("#crop-tool").addEventListener("click", () => openCropTool());
+
   $("#wp-reset").addEventListener("click", async () => {
     await post("/api/wallpaper/reset");
     await refreshState();
@@ -3473,10 +3666,8 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
   $("#sel-label").textContent = `相册场景：${name}`;
   $("#as-name").textContent = name;
   $("#as-count").textContent = `${items.length} 张`;
-  const play = $("#as-play");
-  play.textContent = a.active ? "■ 停止播放" : "▶ 播放";
-  play.classList.toggle("on", !!a.active);
-  play.disabled = !items.length;
+  const del = $("#as-del");
+  if (del) del.disabled = !items.length;
   $("#as-live").hidden = !a.active;
   setSwitch($("#as-slideshow"), a.slideshow);
   $("#as-interval").value = a.interval;
@@ -3535,7 +3726,7 @@ async function albumSceneAddFiles(files) {
   albumSceneSig = "";
   renderAlbumEditor(r, name);
   toast(r.ok ? `已加入 ${ups.length} 张` : "加入失败", 1400);
-  reloadScenes();
+  window.m18ReloadScenes?.();
 }
 
 function bindAlbumSceneEditor() {
@@ -3571,18 +3762,19 @@ function bindAlbumSceneEditor() {
     view.classList.remove("drop-hot");
     albumSceneAddFiles(e.dataTransfer.files);
   });
-  $("#as-play").addEventListener("click", async () => {
+  $("#as-del").addEventListener("click", async () => {
     const name = activeAlbumScene();
     if (!name) return;
-    if (albumSceneState?.active) {
-      renderAlbumEditor(await post("/api/album/stop", {}), name);
-      toast("已停止播放", 1200);
-      return;
-    }
-    const r = await post("/api/scenes", { apply: name });
-    if (!r.ok) return toast(r.reason || "先加几张图片", 2000);
-    renderAlbumEditor(await post("/api/album", { scene: name }), name);
-    toast("正在播放这个相册场景", 1400);
+    const a = albumSceneState || {};
+    const items = a.items || [];
+    if (!items.length) return toast("这个相册场景里还没有图片", 1600);
+    const idx = Number(a.index || 0);
+    const ok = await confirmDialog(`删除预览框里的这张图片？<br><span class="muted">只从这个相册场景里移除，文件本身还留在上传目录里。</span>`);
+    if (!ok) return;
+    albumSceneSig = "";
+    renderAlbumEditor(await post("/api/album/remove", { index: idx, scene: name }), name);
+    window.m18ReloadScenes?.();
+    toast("已删除这张图片", 1400);
   });
   const strip = $("#as-strip");
   strip.addEventListener("click", async (e) => {
@@ -3593,14 +3785,16 @@ function bindAlbumSceneEditor() {
       e.stopPropagation();
       albumSceneSig = "";
       renderAlbumEditor(await post("/api/album/remove", { index: Number(del.dataset.del), scene: name }), name);
-      reloadScenes();
+      window.m18ReloadScenes?.();
       return;
     }
     const t = e.target.closest(".album-thumb");
     if (!t) return;
     const i = Number(t.dataset.i);
     if (albumSceneState?.active) {
-      renderAlbumEditor(await post("/api/album/goto", { index: i }), name);
+      await post("/api/album/goto", { index: i });
+      albumSceneSig = "";
+      renderAlbumEditor(await post("/api/album", { scene: name }), name);
     } else {
       albumSceneSig = "";
       renderAlbumEditor({ ...(albumSceneState || {}), index: i }, name);
@@ -3627,7 +3821,7 @@ function bindAlbumSceneEditor() {
     if (!name || src === to) return;
     albumSceneSig = "";
     renderAlbumEditor(await post("/api/album/move", { from: src, to, scene: name }), name);
-    reloadScenes();
+    window.m18ReloadScenes?.();
   });
   strip.addEventListener("dragend", () => { from = -1; });
   $("#as-slideshow").addEventListener("click", async () => {

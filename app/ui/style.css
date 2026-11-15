@@ -1223,6 +1223,12 @@ html, body { overflow: hidden; height: 100%; }
 .side-sec.collapsed .side-sec-body { display: none; }
 #scene-list { max-height: 228px; overflow: auto; margin-top: 0; }
 .side-empty { font-size: 11.5px; color: #6a7689; padding: 6px 2px; line-height: 1.5; }
+.side-empty.small { font-size: 10.5px; }
+.lib-sec {
+  font-size: 10.5px; letter-spacing: .4px; color: #5d6b7f; text-transform: none;
+  padding: 8px 2px 3px; font-weight: 600;
+}
+.lib-sec:first-child { padding-top: 2px; }
 .side-note { font-size: 10.5px; color: #6a7689; margin: 8px 2px 0; line-height: 1.5; }
 
 /* 图标包：封面 + 名称 + 数量，展开后懒加载 */
@@ -1512,7 +1518,8 @@ html, body { overflow: hidden; height: 100%; }
 #album-editor .thumb-actions { flex-direction: row; gap: 8px; }
 #album-editor .thumb-actions .seg { width: auto; flex: 1 1 0; font-size: 12px; padding: 6px 10px; }
 #album-editor .editor-info { gap: 8px; }
-#album-editor .kv-line > span:first-child { width: 64px; }
+#album-editor .slider-row { grid-template-columns: auto 1fr 46px; gap: 10px; }
+#album-editor .kv-line > span:first-child { width: auto; flex: 0 0 auto; }
 #album-editor .album-view { width: 100%; max-width: none; }
 #as-strip { max-height: 116px; flex-wrap: wrap; overflow-y: auto; }
 #as-strip .album-thumb { width: 62px; height: 37px; }
@@ -1523,12 +1530,12 @@ html, body { overflow: hidden; height: 100%; }
 #album-editor .as-fit-row { margin: 2px 0 2px; }
 #album-editor .as-fit-row #as-fit { flex: 1 1 auto; display: flex; gap: 6px; }
 #album-editor .as-fit-row #as-fit .seg { flex: 1 1 0; min-width: 0; font-size: 12px; padding: 6px 4px; text-align: center; }
-#album-editor .as-gap-row { margin: 0; }
-#album-editor .as-gap-row > span { width: 64px; flex: 0 0 auto; color: #46536a; font-size: 12.5px; }
+#album-editor .as-gap-row { margin: 0; grid-template-columns: auto 1fr 46px; gap: 10px; }
+#album-editor .as-gap-row > span { width: auto; flex: 0 0 auto; color: #46536a; font-size: 12.5px; }
 
 /* 过渡的 5 个按钮：跟标签同一行，按钮做窄一点刚好放得下（不要再折成两行） */
 #album-editor .kv-line.tr-row { flex-wrap: nowrap; }
-#album-editor .kv-line.tr-row > span:first-child { width: 64px; flex: 0 0 64px; }
+#album-editor .kv-line.tr-row > span:first-child { width: auto; flex: 0 0 auto; }
 #album-editor .kv-line.tr-row #as-transition {
   flex: 1 1 auto;
   min-width: 0;
@@ -1540,8 +1547,8 @@ html, body { overflow: hidden; height: 100%; }
   flex: 1 1 0;
   min-width: 0;
   padding: 5px 0;
-  font-size: 10px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.35;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
@@ -1552,7 +1559,7 @@ html, body { overflow: hidden; height: 100%; }
 @media (max-width: 1300px) {
   #album-editor .kv-line.tr-row > span:first-child { width: auto; flex: 0 0 auto; }
   #album-editor .kv-line.tr-row #as-transition { gap: 3px; }
-  #album-editor .kv-line.tr-row #as-transition .seg { font-size: 9.5px; padding: 5px 0; }
+  #album-editor .kv-line.tr-row #as-transition .seg { font-size: 10px; padding: 5px 0; }
 }
 
 /* 场景列表：长按拖动排序 */
@@ -1625,3 +1632,36 @@ html, body { overflow: hidden; height: 100%; }
 .scene-mute.on { background: #2f6fe0; }
 .scene-mute.on span { left: 14px; }
 .scene-row:hover .scene-mute, .scene-mute:not(.on) { opacity: 1; }
+
+/* ===== 裁图工具弹窗 ===== */
+.crop-card { width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+.crop-head { padding: 18px 20px 4px; }
+.crop-head h2 { margin: 0 0 4px; font-size: 15px; }
+.crop-head p { margin: 0; font-size: 12px; color: #46536a; line-height: 1.55; }
+.crop-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 16px; padding: 10px 20px 6px; overflow: auto;
+}
+.crop-left { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.crop-drop {
+  position: relative; height: 208px; border: 1px dashed #93a1b6; border-radius: 12px;
+  background: rgba(255, 255, 255, .45); display: flex; align-items: center; justify-content: center;
+  overflow: hidden; cursor: pointer;
+}
+.crop-drop.over { border-color: var(--accent); background: rgba(47, 111, 224, .10); }
+.crop-drop img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.crop-empty { text-align: center; font-size: 12.5px; color: #55637a; line-height: 1.7; }
+.crop-empty span { font-size: 11px; color: #6a7689; }
+.crop-card .as-fit-row, .crop-card .as-gap-row { margin: 0; }
+.crop-card .kv-line > span:first-child,
+.crop-card .slider-row > span:first-child { width: auto; flex: 0 0 auto; }
+.crop-card #crop-fit { flex: 1 1 auto; display: flex; gap: 6px; min-width: 0; }
+.crop-card #crop-fit .seg { flex: 1 1 0; min-width: 0; font-size: 11.5px; padding: 6px 4px; }
+.crop-card .slider-row { grid-template-columns: auto 1fr 46px; gap: 10px; }
+.crop-name { margin: 2px 0 0; font-size: 11.5px; color: #5a687f; }
+.crop-name b { color: #16202e; }
+.crop-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-content: start; }
+.crop-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; background: #0f131c; }
+.crop-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.crop-cell span { position: absolute; right: 4px; bottom: 2px; font-size: 10px; color: #fff; opacity: .55; }
+.crop-card .confirm-actions { padding: 12px 20px 16px; }

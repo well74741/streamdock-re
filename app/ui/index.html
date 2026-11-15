@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261115f" />
+  <link rel="stylesheet" href="style.css?v=20261116a" />
 </head>
 <body>
 <div class="app">
@@ -127,6 +127,8 @@
               <button class="seg small" id="page-add">+ 新页</button>
               <button class="seg small" id="page-rename">改名</button>
               <button class="seg small" id="page-del">删除</button>
+              <span class="spacer"></span>
+              <button class="seg small" id="crop-tool" title="把一张图片裁成 15 张，正好对应 15 个屏幕键">✂ 裁图工具</button>
             </div>
           </div>
 
@@ -272,7 +274,7 @@
                 </div>
                 <div class="thumb-actions">
                   <button class="seg small" id="as-add">添加图片</button>
-                  <button class="seg small" id="as-play">▶ 播放</button>
+                  <button class="seg small" id="as-del" title="删除预览框里这张图片">删除图片</button>
                 </div>
                 <div class="kv-line as-fit-row">
                   <span>铺放</span>
@@ -583,6 +585,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261117d"></script>
+<script src="app.js?v=20261117f"></script>
 </body>
 </html>

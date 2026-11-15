@@ -35,6 +35,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -126,6 +127,8 @@ KEY_COUNT = 15
 CANDIDATES = [(0x6603, 0x1012), (0x6603, 0x1009), (0x5548, 0x1000)]
 CONFIG_BAK_DIR = os.path.join(DATA_DIR, "config-backups")
 ICON_DIR = os.path.join(DATA_DIR, "assets", "icons")
+MY_ICON_DIR = os.path.join(DATA_DIR, "assets", "myicons")   # 「我的图标」：裁图工具存进来的图标包
+CROP_CACHE = os.path.join(DATA_DIR, "cache", "crop")        # 裁图工具预览用的临时目录
 SCENE_DIR = os.path.join(DATA_DIR, "scenes")
 def _find_sd_root() -> str:
     """定位官方 Stream Dock 安装目录（图标库 / 插件索引用）。
@@ -2623,7 +2626,9 @@ class App:
             items = [str(n) for n in (alb.get("items") or []) if str(n)]
             fit = str(alb.get("fit") or "cover")
             gap = alb.get("gap")
-            return {"items": items, "index": int(alb.get("index") or 0), "active": False,
+            playing = self.album_active() and self.album_scene_name == scene
+            index = self._alb_index() if playing else int(alb.get("index") or 0)
+            return {"items": items, "index": index, "active": bool(playing),
                     "slideshow": bool(alb.get("slideshow", True)),
                     "interval": max(2, min(600, int(alb.get("interval") or 8))),
                     "transition": str(alb.get("transition") or "fade"),
@@ -2978,6 +2983,12 @@ class App:
         except Exception:  # noqa: BLE001
             return None
 
+    def _album_scene_index(self, scene: str, alb: dict) -> int:
+        """正在播放这个场景时用内存里的当前张，否则用场景文件里存的。"""
+        if self.album_active() and self.album_scene_name == scene:
+            return self._alb_index()
+        return int(alb.get("index") or 0)
+
     def album_preview_jpg(self, scene: str = "") -> bytes | None:
         """相册卡片里的大预览：当前图片按整版画布（观看方向）渲染。"""
         if scene:
@@ -2985,7 +2996,7 @@ class App:
             items = self._album_scene_items(scene)
             if not items:
                 return None
-            canvas = self._album_canvas_generic(alb, items, int(alb.get("index") or 0))
+            canvas = self._album_canvas_generic(alb, items, self._album_scene_index(scene, alb))
         else:
             if not self.album_items:
                 return None
@@ -3001,7 +3012,7 @@ class App:
             items = self._album_scene_items(scene)
             if not items:
                 return None
-            canvas = self._album_canvas_generic(alb, items, int(alb.get("index") or 0))
+            canvas = self._album_canvas_generic(alb, items, self._album_scene_index(scene, alb))
             gap = self._gap(alb.get("gap"))
         else:
             canvas = self._album_canvas(self.album_index)
@@ -4823,6 +4834,11 @@ class App:
                 info = official.icon_pack_info(folder)
                 if info["files"] and info["id"] not in packs:
                     packs[info["id"]] = info
+            for folder in sorted(glob.glob(os.path.join(MY_ICON_DIR, "*.sdIconPack"))):
+                info = official.icon_pack_info(folder)      # 「我的图标」：裁图工具存的
+                if info["files"] and info["id"] not in packs:
+                    info["mine"] = True
+                    packs[info["id"]] = info
             plugins = {p["id"]: p for p in official.plugin_list(SD_ROOT)}
             cat = self._catalog_cache = {"packs": packs, "plugins": plugins}
             log(f"官方资源：图标包 {len(packs)} 个（{sum(len(p['files']) for p in packs.values())} 个图标），"
@@ -4832,10 +4848,10 @@ class App:
     def icon_packs(self, refresh: bool = False) -> list:
         packs = [{
             "id": p["id"], "name": p["name"], "author": p["author"],
-            "count": len(p["files"]),
+            "count": len(p["files"]), "mine": bool(p.get("mine")),
             "files": [os.path.basename(f) for f in p["files"]],
         } for p in self._catalog(refresh)["packs"].values()]
-        packs.sort(key=lambda p: p["name"].lower())
+        packs.sort(key=lambda p: (0 if p["mine"] else 1, p["name"].lower()))
         names = [p["name"] for p in packs]
         for p in packs:            # 同名图标包（官方有两个 "Icons for Designer"）加上来源后缀
             if names.count(p["name"]) > 1:
@@ -4952,6 +4968,139 @@ class App:
                     return False
                 target = pack["folder"]
         return self.reveal_in_explorer(target)
+
+    # -- 裁图工具：一张大图裁成 15 张，正好对应 15 个屏幕键 ---------------- #
+    def _crop_dir(self, token: str) -> str:
+        return os.path.join(CROP_CACHE, "".join(c for c in (token or "") if c.isalnum())[:32])
+
+    def _crop_canvas(self, src: str, fit: str, gap: int) -> tuple[list, list[int], bool]:
+        """返回 (15 张图块（按 1..15 排列）、每帧时长、是否动图)。"""
+        fit = fit if fit in ("cover", "contain", "fill") else "cover"
+        g = max(0, min(64, int(gap)))
+        w = GRID_COLS * KEY_SIZE + (GRID_COLS - 1) * g
+        h = GRID_ROWS * KEY_SIZE + (GRID_ROWS - 1) * g
+        tiles: list = [[] for _ in range(KEY_COUNT)]
+        durations: list[int] = []
+        with Image.open(src) as im:
+            frames = []
+            try:
+                frames_total = int(getattr(im, "n_frames", 1) or 1)
+            except Exception:  # noqa: BLE001
+                frames_total = 1
+            animated = frames_total > 1
+            for i in range(frames_total if animated else 1):
+                if animated:
+                    im.seek(i)
+                    durations.append(int(im.info.get("duration") or 100))
+                frame = im.convert("RGBA")
+                canvas = self._fit_canvas(frame, w, h, zoom_offset=False, fit=fit)
+                for key in range(1, KEY_COUNT + 1):
+                    col = (key - 1) % GRID_COLS
+                    row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+                    box = (col * (KEY_SIZE + g), row_top * (KEY_SIZE + g),
+                           col * (KEY_SIZE + g) + KEY_SIZE, row_top * (KEY_SIZE + g) + KEY_SIZE)
+                    tiles[key - 1].append(canvas.crop(box).convert("RGB"))
+        return tiles, durations, animated
+
+    def crop_preview(self, file: str, fit: str = "cover", gap: int = 27, name: str = "") -> dict:
+        src = asset_path(file)
+        if not src:
+            return {"ok": False, "reason": "找不到这张图片，重新拖一次"}
+        token = uuid.uuid4().hex
+        out_dir = self._crop_dir(token)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+            shutil.copy2(src, os.path.join(out_dir, "src" + (os.path.splitext(src)[1].lower() or ".png")))
+            tiles, durations, animated = self._crop_canvas(src, fit, gap)
+            ext = ".gif" if animated else ".png"
+            for idx, frames in enumerate(tiles, start=1):
+                dst = os.path.join(out_dir, f"{idx}{ext}")
+                if animated:
+                    frames[0].save(dst, "GIF", save_all=True, append_images=frames[1:],
+                                   duration=durations or 100, loop=0, optimize=False)
+                else:
+                    frames[0].save(dst, "PNG")
+        except Exception as exc:  # noqa: BLE001
+            log(f"裁图失败：{exc}")
+            return {"ok": False, "reason": f"这张图片裁不了：{exc}"}
+        shown = "".join(c for c in (name or "").strip() if c not in '\\/:*?"<>|').strip()
+        name = (shown[:60] or os.path.splitext(os.path.basename(src))[0])
+        return {"ok": True, "token": token, "name": name, "animated": animated,
+                "frames": len(durations) if animated else 1,
+                "fit": fit if fit in ("cover", "contain", "fill") else "cover",
+                "gap": max(0, min(64, int(gap))),
+                "src": f"/api/iconcrop/src?token={token}",
+                "tiles": [f"/api/iconcrop/tile?token={token}&n={i}{ext}" for i in range(1, KEY_COUNT + 1)]}
+
+    def crop_src(self, token: str) -> tuple[bytes, str] | None:
+        folder = self._crop_dir(token)
+        for path in sorted(glob.glob(os.path.join(folder, "src.*"))):
+            ext = os.path.splitext(path)[1].lower()
+            ctype = {".gif": "image/gif", ".png": "image/png", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".webp": "image/webp", ".bmp": "image/bmp"}.get(
+                         ext, "application/octet-stream")
+            try:
+                with open(path, "rb") as fh:
+                    return fh.read(), ctype
+            except OSError:
+                return None
+        return None
+
+    def crop_tile(self, token: str, name: str) -> tuple[bytes, str] | None:
+        folder = self._crop_dir(token)
+        safe = os.path.basename(name)
+        if not safe or not folder:
+            return None
+        path = os.path.join(folder, safe)
+        if not os.path.isfile(path):
+            return None
+        ctype = "image/gif" if safe.lower().endswith(".gif") else "image/png"
+        try:
+            with open(path, "rb") as fh:
+                return fh.read(), ctype
+        except OSError:
+            return None
+
+    def crop_save(self, token: str, name: str = "") -> dict:
+        folder = self._crop_dir(token)
+        files = sorted(glob.glob(os.path.join(folder, "*"))) if folder else []
+        if not files:
+            return {"ok": False, "reason": "预览已经过期，重新裁一次"}
+        pack_name = "".join(c for c in (name or "").strip() if c not in '\\/:*?"<>|').strip() or "我的图标"
+        pack_name = pack_name[:40]
+        os.makedirs(MY_ICON_DIR, exist_ok=True)
+        base, n = pack_name, 2
+        while os.path.exists(os.path.join(MY_ICON_DIR, f"{base}.sdIconPack")):
+            base = f"{pack_name} {n}"
+            n += 1
+        pack_dir = os.path.join(MY_ICON_DIR, f"{base}.sdIconPack")
+        icons = os.path.join(pack_dir, "icons")
+        try:
+            os.makedirs(icons, exist_ok=True)
+            for path in files:
+                fname = os.path.basename(path)
+                if fname.startswith("src."):
+                    continue   # 原图只是给编辑区左侧预览用的，不进图标包
+                shutil.copy2(path, os.path.join(icons, fname))
+            with open(os.path.join(pack_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+                json.dump({"Name": base, "Author": "我", "Version": "1.0.0",
+                           "Description": "裁图工具生成的 15 键图标"}, fh, ensure_ascii=False, indent=2)
+            with open(os.path.join(pack_dir, "zh_CN.json"), "w", encoding="utf-8") as fh:
+                json.dump({"Name": base}, fh, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            log(f"保存图标包失败：{exc}")
+            return {"ok": False, "reason": f"保存失败：{exc}"}
+        shutil.rmtree(folder, ignore_errors=True)
+        self._catalog_cache = None
+        log(f"已保存图标包：{base}（15 个图标）")
+        info = official.icon_pack_info(pack_dir)
+        return {"ok": True, "pack": {"id": info["id"], "name": info["name"], "mine": True,
+                                     "count": len(info["files"]),
+                                     "files": [os.path.basename(f) for f in info["files"]]}}
+
+    def crop_cancel(self, token: str) -> bool:
+        shutil.rmtree(self._crop_dir(token), ignore_errors=True)
+        return True
 
     def _drop_plugin_bindings(self, plugin_id: str) -> int:
         """把绑在已删插件上的按键清空，返回清掉的个数。"""
@@ -6457,6 +6606,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/api/iconcrop/src":
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            got = APP.crop_src((q.get("token") or [""])[0])
+            if not got:
+                self.send_error(404)
+                return
+            data, ctype = got
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        elif path == "/api/iconcrop/tile":
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            got = APP.crop_tile((q.get("token") or [""])[0], (q.get("n") or [""])[0])
+            if not got:
+                self.send_error(404)
+                return
+            data, ctype = got
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
         elif path == "/api/iconpacks":
             self._json({"ok": True, "packs": APP.icon_packs()})
         elif path == "/api/plugins":
@@ -6749,6 +6924,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "message": msg, "packs": APP.icon_packs()})
         elif path == "/api/iconpacks/reveal":
             self._json({"ok": APP.reveal_icon_pack(str(body.get("pack") or ""), str(body.get("file") or ""))})
+        elif path == "/api/iconcrop/preview":
+            self._json(APP.crop_preview(str(body.get("file") or ""),
+                                        str(body.get("fit") or "cover"),
+                                        int(body.get("gap") or 27),
+                                        str(body.get("name") or "")))
+        elif path == "/api/iconcrop/save":
+            r = APP.crop_save(str(body.get("token") or ""), str(body.get("name") or ""))
+            if r.get("ok"):
+                r["packs"] = APP.icon_packs(True)
+            self._json(r)
+        elif path == "/api/iconcrop/cancel":
+            self._json({"ok": APP.crop_cancel(str(body.get("token") or ""))})
         elif path == "/api/plugins/delete":
             ok, msg = APP.delete_plugin(str(body.get("plugin") or ""))
             self._json({"ok": ok, "message": msg, "plugins": APP.plugin_catalog()})
