@@ -560,13 +560,13 @@ function fillPackTiles(details) {
   const pack = iconPacks.find((p) => p.id === details.dataset.pack);
   if (!pack) return;
   if (pack.crop) {
-    // 裁图包：缩略图用第一帧静态图（15 个动图同时播既费 CPU、看着也乱），
-    // 每个角上标出它对应的键号，拖的时候不会对错行
+    // 裁图包：动图照常播（裁出来的 GIF 就是要看动效），
+    // 每格右下角标出它属于哪个键，5 列排布和屏幕一致，拖的时候不会对错行
     tiles.innerHTML = pack.files.map((f, i) => {
       const key = cropKeyOfIndex(i + 1);
       return `<span class="tile-wrap" title="键 ${key}">`
         + `<img loading="lazy" draggable="false" data-name="pack:${escHtml(pack.id)}/${escHtml(f)}"`
-        + ` src="${packIconUrl(pack.id, f)}?still=1" alt="" />`
+        + ` src="${packIconUrl(pack.id, f)}" alt="" />`
         + `<i class="tile-key">${key}</i></span>`;
     }).join("");
   } else {

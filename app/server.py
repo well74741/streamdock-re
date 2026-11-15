@@ -996,6 +996,8 @@ class App:
         self._frame = [[0, 0, 0] for _ in range(LED_COUNT)]
         self._frame_hash = None
         self._perf: dict = {}            # 灯效诊断：帧间隔 / 写灯带耗时
+        self._anim_pushes = 0            # 诊断：主机侧推的动图张数（和灯带抢同一条通道）
+        self._gif_retry_at = 0.0         # 上一次尝试恢复「SDK 原生播放动图」的时间
         self._last_push = 0.0
         self.official_running = self._detect_official()
         self.device.connect()
@@ -2340,6 +2342,16 @@ class App:
                          and not self._plugin_vis(k)]
             if not host_keys:
                 continue
+            # 能用 SDK 原生播放就别走「主机推图」：推图走的是和灯带同一条通道，
+            # 18 张/秒往里塞会把灯珠的帧挤断（灯效看起来一顿一顿）。
+            # 原生播放被停掉后（待机/壁纸/息屏/整屏重画都会 stop），这里负责把它恢复回来。
+            if self._gif_allowed():
+                now_g = time.time()
+                if now_g - self._gif_retry_at > 2.0:
+                    self._gif_retry_at = now_g
+                    self._gif_start_all()
+                if self._gif_active:
+                    continue
             # SDK 写图没有回执、也没有背压：所有动图合计每秒最多 20 帧，
             # 超出就丢帧而不是排队，否则积压会拖慢之后的灯光 / 换页 / 切场景
             per_key_fps = max(2.0, 20.0 / len(host_keys))
@@ -2356,6 +2368,7 @@ class App:
             if pushed and now - last_refresh >= 0.05:
                 self.device.refresh()
                 last_refresh = now
+                self._anim_pushes += pushed      # 诊断：主机侧推了多少张动图（会占通道）
 
     def _gap(self, gap: int | None = None) -> int:
         """键间缝隙；相册场景可以有自己的缝隙，传 gap 就按它算（None = 全局设置）。"""
@@ -6535,7 +6548,7 @@ __CODE__
         gaps = collections.deque(maxlen=240)        # 每帧间隔（诊断灯效是否顺滑）
         sends = collections.deque(maxlen=240)       # 每次写灯带耗时
         skipped = 0
-        frame_no = 0
+        fails = 0                                   # 写灯带失败次数（转发到设备失败）
         while True:
             time.sleep(1 / 30)
             now_tick = time.time()
@@ -6550,34 +6563,36 @@ __CODE__
             static = self.lighting["mode"] in ("off", "solid", "gradient", "custom") or (
                 self.lighting["mode"] == "ripple" and not self._ripples)
             h = hash(tuple(tuple(c) for c in frame))
-            # 让位 / 静默 / 暂停写入：一律不碰灯带。
-            # 图片传输中不再彻底停写，改成 10 帧/秒（每 3 帧写一次）：
-            # 既不给图片数据包添乱，灯带也不会看起来「停住」——换场景、待机幻灯片
-            # 每 6 秒换一张图的时候，原来会明显顿一下。
-            # 例外：涟漪正在扩散时照原速写（灯带一帧很小）。
+            # 让位 / 静默 / 暂停写入 / 图片传输中，一律不碰灯带。
+            # 灯珠和图片共用同一条通道，推图时不去抢——这样图片发得快，灯带也不会被挤得断流。
+            # 例外：涟漪正在扩散时照写（灯带一帧很小）。
             rippling = self.lighting["mode"] == "ripple" and bool(self._ripples)
             blocked = self.writes_paused or self.quiet or self.yielded
-            pushing_throttle = (self._pushing and not rippling and (frame_no % 3) != 0)
-            can_write = (not blocked) and not pushing_throttle
-            frame_no += 1
+            can_write = (not blocked) and not (self._pushing and not rippling)
 
             if static:
                 if can_write and self._dirty and h != self._frame_hash:
                     ts = time.perf_counter()
-                    self.device.set_leds(self._to_hw(frame))
+                    ok = self.device.set_leds(self._to_hw(frame))
                     sends.append((time.perf_counter() - ts) * 1000.0)
-                    self._frame_hash = h
-                    self._dirty = False
+                    if ok:
+                        self._frame_hash = h
+                        self._dirty = False
+                    else:
+                        fails += 1
             elif can_write:
                 ts = time.perf_counter()
-                self.device.set_leds(self._to_hw(frame))
+                ok = self.device.set_leds(self._to_hw(frame))
                 sends.append((time.perf_counter() - ts) * 1000.0)
-                self._frame_hash = h
+                if ok:
+                    self._frame_hash = h
+                else:
+                    fails += 1
             elif not can_write:
                 skipped += 1
             self._perf = {
                 "gaps": list(gaps), "sends": list(sends),
-                "skipped": skipped, "pushing": bool(self._pushing),
+                "skipped": skipped, "fails": fails, "pushing": bool(self._pushing),
                 "mode": self.lighting["mode"],
             }
 
@@ -6907,7 +6922,11 @@ class Handler(BaseHTTPRequestHandler):
 
             self._json({
                 "ok": True, "mode": p.get("mode"), "pushing": bool(p.get("pushing")),
-                "skipped": int(p.get("skipped") or 0), "frames": len(gaps),
+                "skipped": int(p.get("skipped") or 0), "fails": int(p.get("fails") or 0),
+                "frames": len(gaps),
+                "gifNative": bool(getattr(APP.device, "gif_native", False)),
+                "gifActive": len(APP._gif_active),
+                "animPushes": int(APP._anim_pushes),
                 "gapMs": {"p50": q(gaps, .5), "p95": q(gaps, .95), "max": round(gaps[-1], 1) if gaps else 0.0},
                 "sendMs": {"p50": q(sends, .5), "p95": q(sends, .95), "max": round(sends[-1], 1) if sends else 0.0},
             })
