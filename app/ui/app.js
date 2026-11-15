@@ -2078,7 +2078,7 @@ function renderEditor() {
   if (bodyEl) bodyEl.hidden = !!albScene;
   // 相册场景的页由图片自动分，页数按钮收起来
   const pageRow = document.querySelector(".page-row");
-  if (pageRow) pageRow.classList.toggle("album-scene", !!albScene);
+  if (pageRow) pageRow.classList.toggle("album-scene", !!activeAlbumScene());
   const saveTop = $("#sel-save-top");
   const clearTop = $("#sel-clear-top");
   if (saveTop) saveTop.hidden = !!albScene;
@@ -2755,6 +2755,8 @@ function bindUI() {
   $("#page-prev").addEventListener("click", () => goPage(-1));
   $("#page-next").addEventListener("click", () => goPage(1));
   $("#page-add").addEventListener("click", async () => {
+    const n = (state?.mainPages || state?.pageNames || []).length;
+    if (!(await confirmDialog(`在当前页之后新增一页？<br><small>新页会复制当前页的按键图片和动作，加完一共 ${n + 1} 页。</small>`))) return;
     applyState(await post("/api/page", { add: true }));
   });
 

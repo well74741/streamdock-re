@@ -2661,6 +2661,95 @@ class App:
 
     ALBUM_NAV = {16: "上一页", 17: "主页", 18: "下一页"}
 
+    def _album_nav_page(self, name: str) -> dict | None:
+        """相册场景文件里的第一页（导航键的动作/手势都存在这里，不跟当前页走）。"""
+        data = self._scene_file_data(self._scene_path(name))
+        if not data or data.get("sceneType") != "album":
+            return None
+        pages = data.get("pages")
+        if not isinstance(pages, list) or not pages:
+            return None
+        if not isinstance(pages[0], dict):
+            return None
+        return pages[0]
+
+    def _album_nav_write(self, name: str, key: int, spec: dict | None, gesture: str = "") -> bool:
+        """把相册场景里导航键的动作写回场景文件：长按 / 双击进 gestures，短按进 actions。"""
+        data = self._scene_file_data(self._scene_path(name))
+        if not data or data.get("sceneType") != "album":
+            return False
+        pages = data.get("pages")
+        if not isinstance(pages, list) or not pages or not isinstance(pages[0], dict):
+            pages = [{"name": name, "images": {}, "actions": {}}]
+            data["pages"] = pages
+            data["page"] = 0
+        page = pages[0]
+        if gesture in ("long", "double"):
+            gs = page.get("gestures")
+            if not isinstance(gs, dict):
+                gs = {}
+                page["gestures"] = gs
+            one = gs.get(str(key))
+            if not isinstance(one, dict):
+                one = {}
+            if spec:
+                one[gesture] = spec
+            else:
+                one.pop(gesture, None)
+            if one:
+                gs[str(key)] = one
+            else:
+                gs.pop(str(key), None)
+            if not gs:
+                page.pop("gestures", None)
+        else:
+            acts = page.get("actions")
+            if not isinstance(acts, dict):
+                acts = {}
+                page["actions"] = acts
+            if spec:
+                acts[str(key)] = spec
+            else:
+                acts.pop(str(key), None)
+        try:
+            path = self._scene_path(name)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+            return True
+        except OSError as exc:
+            log(f"写入相册场景导航键失败：{exc}")
+            return False
+
+    def _album_nav_load(self, name: str) -> None:
+        """进相册场景时，把场景文件里导航键的动作/手势装进内存，编辑区就能看到。"""
+        page = self._album_nav_page(name)
+        if not page:
+            return
+        acts = page.get("actions") if isinstance(page.get("actions"), dict) else {}
+        for k in self.ALBUM_NAV:
+            spec = acts.get(str(k))
+            if isinstance(spec, dict):
+                self.key_actions[k] = spec
+        gs = page.get("gestures") if isinstance(page.get("gestures"), dict) else {}
+        for k, one in gs.items():
+            try:
+                key = int(k)
+            except (TypeError, ValueError):
+                continue
+            if key in self.ALBUM_NAV and isinstance(one, dict) and one:
+                self.key_gestures[key] = one
+
+    def _album_nav_step(self, key: int) -> None:
+        """相册场景里导航键的短按：◀ 上一张 / ⌂ 回主场景 / ▶ 下一张。"""
+        if key == 16:
+            self.album_goto(-1)
+        elif key == 18:
+            self.album_goto(1)
+        elif key == 17:
+            self.album_stop()
+
     def _ensure_album_nav(self, name: str) -> None:
         """相册场景的三个导航键默认是 上页 / 主页 / 下页：补进场景文件，编辑区里能看到。"""
         data = self._scene_file_data(self._scene_path(name))
@@ -2978,6 +3067,13 @@ class App:
         if not self.album_active():
             self._album_return = self.active_scene or self.custom_scene_name
         self._ensure_album_nav(name)
+        if not self.album_active():
+            # 记住进相册前这三个键的动作，退出时还原
+            self._album_nav_backup = {
+                k: (self.key_actions.get(k),
+                    dict(self.key_gestures.get(k) or {})) for k in self.ALBUM_NAV
+            }
+        self._album_nav_load(name)
         self.album_scene_name = name
         fit = str(alb.get("fit") or "cover")
         self._album_scene = {
@@ -3018,6 +3114,19 @@ class App:
         self.album_scene_name = ""
         self._album_scene = {}
         self._last_activity = time.time()
+        # 退出相册：把那三个导航键还原成进相册之前的样子，别把相册的设置带到原场景里
+        backup = getattr(self, "_album_nav_backup", None)
+        if backup:
+            for k, (act, gs) in backup.items():
+                if act is None:
+                    self.key_actions.pop(k, None)
+                else:
+                    self.key_actions[k] = act
+                if gs:
+                    self.key_gestures[k] = gs
+                else:
+                    self.key_gestures.pop(k, None)
+            self._album_nav_backup = None
         back = getattr(self, "_album_return", None)
         self._album_return = None
         self.broadcast({"type": "album", **self.album_state()})
@@ -3180,6 +3289,11 @@ class App:
             # 相册场景播放中：点任意屏幕键都是「下一个场景」，导航键是 上页/主场景/下页；
             # 幻灯片（待机相册）只是待机画面，播放时 ◀ ▶ 翻照片、按其他键回到当前场景。
             self._last_activity = time.time()
+            g = self.key_gestures.get(key) or {}
+            if self.album_scene_name and (g.get("long") or g.get("double")):
+                # 相册场景里给导航键设了长按/双击：照常按手势判定，短按还是 上页/主页/下页
+                self._gesture(key, state, g)
+                return
             if state == 1:
                 self._wake_swallow.add(key)
                 if self.album_scene_name:
@@ -4480,6 +4594,13 @@ class App:
         """设了长按 / 双击的键：长按 ≥0.5 秒触发长按；两次点击间隔 <0.3 秒触发双击；否则是短按。"""
         st = self._press.setdefault(key, {})
         run = lambda act: threading.Thread(target=self._run_action, args=(key, act), daemon=True).start()  # noqa: E731
+
+        def short() -> None:
+            # 相册场景里的导航键，短按就是 上页 / 主场景 / 下页（别去跑那条 nav 动作）
+            if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
+                threading.Thread(target=self._album_nav_step, args=(key,), daemon=True).start()
+                return
+            run(None)
         if state == 1:
             st["down"] = time.time()
             st["long_fired"] = False
@@ -4512,10 +4633,10 @@ class App:
                 log(f"按键 {key} → 双击")
                 run(g["double"])
                 return
-            st["single_timer"] = threading.Timer(self.DOUBLE_GAP_SEC, lambda: run(None))
+            st["single_timer"] = threading.Timer(self.DOUBLE_GAP_SEC, short)
             st["single_timer"].start()
         else:
-            run(None)
+            short()
 
     def _run_action(self, key: int, act: dict | None = None) -> None:
         act = act if act is not None else self.key_actions.get(key)
@@ -4765,6 +4886,10 @@ class App:
             self.key_gestures.setdefault(key, {})[gesture] = action
         else:
             self.key_actions[key] = action
+        if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
+            # 相册场景的导航键存在场景文件里，切场景回来还在
+            self._album_nav_write(self.album_scene_name, key, action,
+                                  gesture if gesture in ("long", "double") else "")
         if self._drop_orphan_folders():           # 原来是文件夹、被换成别的动作：子页一并回收
             self._bind_page()
         self._save_config()
@@ -4780,6 +4905,8 @@ class App:
         g.pop(gesture, None)
         if not g:
             self.key_gestures.pop(key, None)
+        if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
+            self._album_nav_write(self.album_scene_name, key, None, gesture)
         if self._drop_orphan_folders():
             self._bind_page()
         self._save_config()
@@ -5093,6 +5220,16 @@ class App:
                     tiles[key - 1].append(canvas.crop(box).convert("RGB"))
         return tiles, durations, animated
 
+    @staticmethod
+    def _crop_visual_index(key: int) -> int:
+        """键号 → 图标库里的文件名序号（按屏幕从上到下、从左到右数）。
+        控制台第一行是 11–15、第二行 6–10、第三行 1–5，
+        所以 11 号键存成 01，1 号键存成 11，图标库展开时才是屏幕上的样子。"""
+        col = (key - 1) % GRID_COLS
+        row_from_bottom = (key - 1) // GRID_COLS
+        row_from_top = GRID_ROWS - 1 - row_from_bottom
+        return row_from_top * GRID_COLS + col + 1
+
     def crop_preview(self, file: str, fit: str = "cover", gap: int = 27, name: str = "") -> dict:
         src = asset_path(file)
         if not src:
@@ -5105,8 +5242,8 @@ class App:
             tiles, durations, animated = self._crop_canvas(src, fit, gap)
             ext = ".gif" if animated else ".png"
             for idx, frames in enumerate(tiles, start=1):
-                # 两位数补零：图标库里按文件名排序时才是 01…15 的顺序，不会出现 1,10,11…2
-                dst = os.path.join(out_dir, f"{idx:02d}{ext}")
+                # 文件名按屏幕上看到的顺序补零：图标库按文件名排序时和 15 个键一一对应
+                dst = os.path.join(out_dir, f"{self._crop_visual_index(idx):02d}{ext}")
                 if animated:
                     frames[0].save(dst, "GIF", save_all=True, append_images=frames[1:],
                                    duration=durations or 100, loop=0, optimize=False)
@@ -5122,7 +5259,8 @@ class App:
                 "fit": fit if fit in ("cover", "contain", "fill") else "cover",
                 "gap": max(0, min(64, int(gap))),
                 "src": f"/api/iconcrop/src?token={token}",
-                "tiles": [f"/api/iconcrop/tile?token={token}&n={i:02d}{ext}" for i in range(1, KEY_COUNT + 1)]}
+                "tiles": [f"/api/iconcrop/tile?token={token}&n={self._crop_visual_index(i):02d}{ext}"
+                          for i in range(1, KEY_COUNT + 1)]}
 
     def crop_src(self, token: str) -> tuple[bytes, str] | None:
         folder = self._crop_dir(token)
