@@ -559,12 +559,18 @@ function fillPackTiles(details) {
   if (!tiles || tiles.dataset.filled) return;
   const pack = iconPacks.find((p) => p.id === details.dataset.pack);
   if (!pack) return;
-  tiles.innerHTML = pack.files.map((f) => iconTile(pack.id, f)).join("");
   if (pack.crop) {
-    // 裁图包的文件名按屏幕顺序补零，顺序就是屏幕顺序；顺手标上它属于哪个键，拖的时候不会搞错
-    tiles.querySelectorAll("img").forEach((im, i) => {
-      im.title = `键 ${cropKeyOfIndex(i + 1)}`;
-    });
+    // 裁图包：缩略图用第一帧静态图（15 个动图同时播既费 CPU、看着也乱），
+    // 每个角上标出它对应的键号，拖的时候不会对错行
+    tiles.innerHTML = pack.files.map((f, i) => {
+      const key = cropKeyOfIndex(i + 1);
+      return `<span class="tile-wrap" title="键 ${key}">`
+        + `<img loading="lazy" draggable="false" data-name="pack:${escHtml(pack.id)}/${escHtml(f)}"`
+        + ` src="${packIconUrl(pack.id, f)}?still=1" alt="" />`
+        + `<i class="tile-key">${key}</i></span>`;
+    }).join("");
+  } else {
+    tiles.innerHTML = pack.files.map((f) => iconTile(pack.id, f)).join("");
   }
   tiles.dataset.filled = "1";
 }

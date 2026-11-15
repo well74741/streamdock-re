@@ -6873,7 +6873,8 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/", 4)
             fp = APP.icon_pack_file(urllib.parse.unquote(parts[3]), urllib.parse.unquote(parts[4])) \
                 if len(parts) == 5 else None
-            self._image_file(fp)
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._image_file(fp, still=bool(query.get("still")))
         elif path.startswith("/api/plugin-icon/"):
             parts = path.split("/")
             try:
@@ -7466,13 +7467,23 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json({"error": "not found"}, 404)
 
-    def _image_file(self, fp: str | None) -> None:
-        """官方图标 / 插件图：按内容判断类型；.mbg 解密成 GIF。"""
+    def _image_file(self, fp: str | None, still: bool = False) -> None:
+        """官方图标 / 插件图：按内容判断类型；.mbg 解密成 GIF。
+        still=True 时只取动图的第一帧（图标库里的缩略图用，省得同时放十几个动图）。"""
         img = official.read_image(fp) if fp else None
         if not img:
             self.send_error(404)
             return
         ext, data = img
+        if still and ext in (".gif", ".webp"):
+            try:
+                with Image.open(io.BytesIO(data)) as im:
+                    im.seek(0)
+                    buf = io.BytesIO()
+                    im.convert("RGB").save(buf, "PNG")
+                ext, data = ".png", buf.getvalue()
+            except Exception:  # noqa: BLE001
+                pass
         ctype = {".png": "image/png", ".gif": "image/gif", ".jpg": "image/jpeg",
                  ".webp": "image/webp", ".bmp": "image/bmp"}.get(ext, "application/octet-stream")
         self.send_response(200)

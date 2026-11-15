@@ -1262,6 +1262,14 @@ html, body { overflow: hidden; height: 100%; }
 .icon-group .tiles img { width: 100%; height: auto; aspect-ratio: 1 / 1; }
 /* 裁图包固定 5 列：和屏幕一样上排 5 个、中排 5 个、下排 5 个，展开就能对着键位看 */
 .icon-group[data-crop="1"] .tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tile-wrap { position: relative; display: block; line-height: 0; }
+.tile-wrap .tile-key {
+  position: absolute; right: 2px; bottom: 2px;
+  font-style: normal; font-size: 8.5px; line-height: 1;
+  padding: 1px 3px; border-radius: 4px;
+  color: #dbe7ff; background: rgba(12, 20, 34, .72);
+  pointer-events: none; letter-spacing: 0;
+}
 .icon-group.search .group-title {
   display: flex; justify-content: space-between;
   font-size: 11px; font-weight: 600; color: #33415a; margin: 0 2px 6px;
