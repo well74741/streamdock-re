@@ -983,6 +983,7 @@ class App:
         self.autostart = self.autostart_state()["this"]
         self._last_activity = time.time()
         self._last_input_seen = time.time()   # 最近一次收到真实按键事件（看门狗用）
+        self._last_tick = time.time()         # 巡检线程上一次醒来的时刻（用来发现「电脑休眠过」）
         self._last_wake = 0.0                 # 最近一次发唤醒包的时间（防止连发把设备按回休眠）
         self.clear_before_paint = False
         self.writes_paused = False
@@ -2420,15 +2421,23 @@ class App:
         """
         while True:
             time.sleep(30)
+            now = time.time()
+            gap = now - getattr(self, "_last_tick", now)
+            self._last_tick = now
             try:
+                # 这一轮本该只睡 30 秒：实际过去很久，说明电脑刚休眠过。
+                # 休眠后 SDK 那条连接常常变成「能发不能收」，灯还亮着但按键没反应。
+                if gap > 90:
+                    log(f"系统休眠了约 {int(gap / 60)} 分钟，正在恢复按键通道")
+                    threading.Thread(target=self._after_resume, daemon=True).start()
+                    continue
                 if not self.device.connected or self.screen_off or self.yielded:
                     continue
-                now = time.time()
-                # 输入通道看门狗：半小时一个按键都没有，基本是休眠把读取停了，重订阅一次
-                if now - self._last_input_seen > 1800:
+                # 输入通道看门狗：15 分钟一个按键都没有，重订阅一次（比整条重连温和）
+                if now - self._last_input_seen > 900:
                     self.device.resubscribe_input()
                     self._last_input_seen = now
-                    log("输入通道 30 分钟无事件，已重新订阅按键")
+                    log("输入通道 15 分钟无事件，已重新订阅按键")
                 # 很久没画过（设备可能已睡过去）：叫醒一次再补画，别连发
                 if now - self._last_paint > 1800 and now - self._last_wake > 600:
                     self._last_wake = now
@@ -2437,6 +2446,41 @@ class App:
                     self.apply_keys("keepalive")
             except Exception:  # noqa: BLE001
                 pass
+
+    def _after_resume(self) -> None:
+        """电脑从休眠里醒过来之后收拾残局。
+
+        休眠后 SDK 的连接经常变成「能发不能收」：写图、写灯照常（所以灯还是亮着、
+        显示也正常），但按键读回来的那条通道停了 —— 界面上看着「已连接」，按了却没反应。
+        先探一次活，活着就重发 read 把输入通道拉回来，再把画面和动图重推一遍；
+        探不通（半死连接）就整条断开，交给热插拔线程重连并重推。
+        """
+        try:
+            dev = self.device
+            if not dev.connected:
+                return
+            probe = getattr(dev, "probe_alive", None)
+            if not dev.check_present() or (probe is not None and not probe()):
+                log("休眠恢复：连接没有回应，重新连接设备")
+                dev.mark_lost("休眠恢复后连接无回应")
+                self.broadcast({"type": "status", "connected": False})
+                return
+            dev.resubscribe_input()
+            time.sleep(0.3)
+            if self.screen_off:
+                self._blanked = False
+                self.blank_screen()
+            elif self.in_standby:
+                self.apply_standby()
+            else:
+                self.apply_keys()
+            self._gif_start_all()
+            self._frame_hash = None
+            self._last_activity = time.time()
+            self._last_input_seen = time.time()
+            log("休眠恢复：按键通道已重新订阅，画面和动图已重推")
+        except Exception as exc:  # noqa: BLE001
+            log(f"休眠恢复处理失败：{exc}")
 
     def _animation_loop(self) -> None:
         """按键动图：主机侧逐帧推送（设备本身不循环播放）。"""
@@ -7814,6 +7858,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok})
         elif path == "/api/device/repaint":
             threading.Thread(target=APP._wake_from_standby, daemon=True).start()
+            self._json({"ok": True})
+        elif path == "/api/device/resume":
+            # 电脑休眠回来后按键没反应时，手动点一下（和自动恢复走同一段代码）
+            threading.Thread(target=APP._after_resume, daemon=True).start()
             self._json({"ok": True})
         elif path == "/api/device/gif-resync":
             APP._gif_resync()

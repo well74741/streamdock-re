@@ -496,5 +496,18 @@ class DeviceWS:
         """
         return self._send("read", {})
 
+    def probe_alive(self, timeout: float = 1.2) -> bool:
+        """问一句 gifLoopStatus，能收到回执说明这条连接还能收发。
+
+        电脑休眠后 SDK 连接常常变成「能发不能收」：写图/写灯照常（所以灯还亮着），
+        但按键读不回来。这种半死状态 check_present() 看不出来，得真问一次。
+        """
+        if not self.gif_native:
+            return True                     # 老固件不支持这个事件，没法用它探活
+        self._gif_status.clear()
+        if not self._send("gifLoopStatus", {}):
+            return False
+        return self._gif_status.wait(timeout)
+
     def get_firmware(self) -> str:
         return self.firmware
