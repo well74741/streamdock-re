@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 import colorsys
+import collections
 import copy
 import ctypes
 import glob
@@ -130,6 +131,7 @@ CONFIG_BAK_DIR = os.path.join(DATA_DIR, "config-backups")
 ICON_DIR = os.path.join(DATA_DIR, "assets", "icons")
 MY_ICON_DIR = os.path.join(DATA_DIR, "assets", "myicons")   # 「我的图标」：裁图工具存进来的图标包
 CROP_CACHE = os.path.join(DATA_DIR, "cache", "crop")        # 裁图工具预览用的临时目录
+_STILL_CACHE: dict = {}                                     # 动图缩略图首帧缓存：(路径, mtime) -> PNG 字节
 SCENE_DIR = os.path.join(DATA_DIR, "scenes")
 def _find_sd_root() -> str:
     """定位官方 Stream Dock 安装目录（图标库 / 插件索引用）。
@@ -993,6 +995,7 @@ class App:
         self._t0 = time.time()
         self._frame = [[0, 0, 0] for _ in range(LED_COUNT)]
         self._frame_hash = None
+        self._perf: dict = {}            # 灯效诊断：帧间隔 / 写灯带耗时
         self._last_push = 0.0
         self.official_running = self._detect_official()
         self.device.connect()
@@ -6528,8 +6531,15 @@ __CODE__
     def _engine_loop(self) -> None:
         t0 = time.time()
         ui_hash = None
+        last_tick = time.time()
+        gaps = collections.deque(maxlen=240)        # 每帧间隔（诊断灯效是否顺滑）
+        sends = collections.deque(maxlen=240)       # 每次写灯带耗时
+        skipped = 0
         while True:
             time.sleep(1 / 30)
+            now_tick = time.time()
+            gaps.append((now_tick - last_tick) * 1000.0)
+            last_tick = now_tick
             t = time.time() - t0
             if self._identify and time.time() < self._identify[1]:
                 frame = [[0, 0, 0] for _ in range(LED_COUNT)]
@@ -6547,12 +6557,23 @@ __CODE__
 
             if static:
                 if can_write and self._dirty and h != self._frame_hash:
+                    ts = time.perf_counter()
                     self.device.set_leds(self._to_hw(frame))
+                    sends.append((time.perf_counter() - ts) * 1000.0)
                     self._frame_hash = h
                     self._dirty = False
             elif can_write:
+                ts = time.perf_counter()
                 self.device.set_leds(self._to_hw(frame))
+                sends.append((time.perf_counter() - ts) * 1000.0)
                 self._frame_hash = h
+            elif not can_write:
+                skipped += 1
+            self._perf = {
+                "gaps": list(gaps), "sends": list(sends),
+                "skipped": skipped, "pushing": bool(self._pushing),
+                "mode": self.lighting["mode"],
+            }
 
             # 只在画面真的变了时才推给界面（静态灯效不再每秒刷 30 条 SSE）
             if h != ui_hash:
@@ -6867,6 +6888,23 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         elif path == "/api/iconpacks":
             self._json({"ok": True, "packs": APP.icon_packs()})
+        elif path == "/api/perf":
+            # 灯效诊断：看看引擎是不是被卡住 / 写灯带是不是变慢
+            p = APP._perf or {}
+            gaps = sorted(p.get("gaps") or [])
+            sends = sorted(p.get("sends") or [])
+
+            def q(arr, r):
+                if not arr:
+                    return 0.0
+                return round(arr[min(len(arr) - 1, int(len(arr) * r))], 1)
+
+            self._json({
+                "ok": True, "mode": p.get("mode"), "pushing": bool(p.get("pushing")),
+                "skipped": int(p.get("skipped") or 0), "frames": len(gaps),
+                "gapMs": {"p50": q(gaps, .5), "p95": q(gaps, .95), "max": round(gaps[-1], 1) if gaps else 0.0},
+                "sendMs": {"p50": q(sends, .5), "p95": q(sends, .95), "max": round(sends[-1], 1) if sends else 0.0},
+            })
         elif path == "/api/plugins":
             self._json({"ok": True, "plugins": APP.plugin_catalog()})
         elif path.startswith("/api/iconpack/"):
@@ -7469,21 +7507,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def _image_file(self, fp: str | None, still: bool = False) -> None:
         """官方图标 / 插件图：按内容判断类型；.mbg 解密成 GIF。
-        still=True 时只取动图的第一帧（图标库里的缩略图用，省得同时放十几个动图）。"""
+        still=True 时只取动图的第一帧（图标库里的缩略图用，省得同时放十几个动图）。
+        结果按「文件 + 修改时间」缓存，免得每次开图标库都重新解码一遍（解码会占 GIL，拖慢灯效）。"""
         img = official.read_image(fp) if fp else None
         if not img:
             self.send_error(404)
             return
         ext, data = img
         if still and ext in (".gif", ".webp"):
-            try:
-                with Image.open(io.BytesIO(data)) as im:
-                    im.seek(0)
-                    buf = io.BytesIO()
-                    im.convert("RGB").save(buf, "PNG")
-                ext, data = ".png", buf.getvalue()
-            except Exception:  # noqa: BLE001
-                pass
+            cache_key = None
+            if fp:
+                try:
+                    cache_key = (fp, os.path.getmtime(fp))
+                    hit = _STILL_CACHE.get(cache_key)
+                    if hit:
+                        ext, data = ".png", hit
+                        cache_key = None     # 命中，不再回写
+                except OSError:
+                    cache_key = None
+            if cache_key is not None:
+                try:
+                    with Image.open(io.BytesIO(data)) as im:
+                        im.seek(0)
+                        buf = io.BytesIO()
+                        im.convert("RGB").save(buf, "PNG")
+                    png = buf.getvalue()
+                    if len(_STILL_CACHE) > 600:
+                        _STILL_CACHE.clear()
+                    _STILL_CACHE[cache_key] = png
+                    ext, data = ".png", png
+                except Exception:  # noqa: BLE001
+                    pass
         ctype = {".png": "image/png", ".gif": "image/gif", ".jpg": "image/jpeg",
                  ".webp": "image/webp", ".bmp": "image/bmp"}.get(ext, "application/octet-stream")
         self.send_response(200)
