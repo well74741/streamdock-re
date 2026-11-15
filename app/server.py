@@ -6535,6 +6535,7 @@ __CODE__
         gaps = collections.deque(maxlen=240)        # 每帧间隔（诊断灯效是否顺滑）
         sends = collections.deque(maxlen=240)       # 每次写灯带耗时
         skipped = 0
+        frame_no = 0
         while True:
             time.sleep(1 / 30)
             now_tick = time.time()
@@ -6549,11 +6550,16 @@ __CODE__
             static = self.lighting["mode"] in ("off", "solid", "gradient", "custom") or (
                 self.lighting["mode"] == "ripple" and not self._ripples)
             h = hash(tuple(tuple(c) for c in frame))
-            # 让位 / 静默 / 暂停写入 / 图片传输中，一律不碰灯带。
-            # 例外：涟漪正在扩散时照写（灯带一帧很小）——否则按「切换场景」键时，
-            # 换场景推 15 张图的那段时间灯带停住，涟漪看起来一卡一卡。
+            # 让位 / 静默 / 暂停写入：一律不碰灯带。
+            # 图片传输中不再彻底停写，改成 10 帧/秒（每 3 帧写一次）：
+            # 既不给图片数据包添乱，灯带也不会看起来「停住」——换场景、待机幻灯片
+            # 每 6 秒换一张图的时候，原来会明显顿一下。
+            # 例外：涟漪正在扩散时照原速写（灯带一帧很小）。
             rippling = self.lighting["mode"] == "ripple" and bool(self._ripples)
-            can_write = not ((self._pushing and not rippling) or self.writes_paused or self.quiet or self.yielded)
+            blocked = self.writes_paused or self.quiet or self.yielded
+            pushing_throttle = (self._pushing and not rippling and (frame_no % 3) != 0)
+            can_write = (not blocked) and not pushing_throttle
+            frame_no += 1
 
             if static:
                 if can_write and self._dirty and h != self._frame_hash:
