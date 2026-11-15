@@ -232,6 +232,16 @@ body {
   border-color: #7fb0ff;
   box-shadow: 0 0 16px -2px rgba(79, 140, 255, .9);
 }
+/* 相册场景：三个导航键上标出 ◀ 主页 ▶，和下面的说明文字对得上 */
+body.album-scene .ring-btn[data-key="16"],
+body.album-scene .ring-btn[data-key="17"],
+body.album-scene .ring-btn[data-key="18"] {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1; color: #cfe0ff;
+}
+body.album-scene .ring-btn[data-key="16"]::before { content: "◀"; }
+body.album-scene .ring-btn[data-key="17"]::before { content: "⌂"; font-size: 15px; }
+body.album-scene .ring-btn[data-key="18"]::before { content: "▶"; }
 .dot {
   position: absolute;
   width: 34px; height: 24px;
@@ -339,6 +349,9 @@ input[type="range"]::-webkit-slider-thumb {
 .topbar .seg { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
 
 .page-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+/* 相册场景：页数由图片自动分，翻页/新建/改名/删除都收起来，只留裁图工具 */
+.page-row.album-scene > :not(.spacer):not(#crop-tool) { display: none; }
+.page-row.album-scene { justify-content: flex-end; }
 .page-label { color: var(--muted); font-size: 12px; min-width: 92px; text-align: center; }
 
 /* 壁纸缩略预览 */

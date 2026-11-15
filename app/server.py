@@ -189,6 +189,8 @@ CODE_TO_KEY = {
 
 MODES = ["off", "solid", "rainbow", "breathe", "chase", "gradient", "ripple", "custom"]
 DEFAULT_LIGHTING = {"mode": "chase", "color": "#00aaff", "speed": 1.0, "brightness": 100}
+CONSOLE_LABELS = {"screen": "屏幕开关", "mute": "屏蔽按键开关",
+                  "light": "灯光开关", "lightfx": "灯光效果切换"}
 STANDBY_MIN, STANDBY_MAX = 3, 300          # 待机等待秒数
 ALBUM_TRANSITIONS = ("none", "fade", "slide", "wipe", "mosaic")
 LEGACY_ALBUM_NAMES = ("相册", "幻灯片")      # 旧配置里可能把待机相册记成当前场景，读进来要纠正
@@ -547,6 +549,8 @@ def action_label(spec: dict) -> str:
         return WINDOW_LABELS.get(spec.get("op", ""), "窗口操作")
     if kind == "scene":
         return f"场景：{spec.get('scene', '')}"
+    if kind == "console":
+        return f"控制台：{CONSOLE_LABELS.get(spec.get('op', ''), spec.get('op', ''))}"
     if kind == "folder":
         return f"📁 {spec.get('name') or '文件夹'}"
     if kind == "sound":
@@ -923,6 +927,8 @@ class App:
         self.album_scene_name = ""                # 正在播放的相册场景名（空 = 没在放相册场景）
         self._album_scene: dict = {}               # {"items": [...], "index": 0, "slideshow": …, …}
         self._album_return = None                  # 进相册前的场景名，退出时回到这里
+        # 场景 / 页切换计数：界面用它判断要不要重拉按键预览（同名图片文件在不同场景里也要换）
+        self.scene_rev = 0
         self.screen_brightness = 100
         self.wallpaper_enabled = True
         self.wallpaper_flip = False
@@ -954,6 +960,7 @@ class App:
         self.selected_key = 0
         self.screen_off = False
         self.yielded = False
+        self._light_back = ""          # 灯光开关：关灯前用的效果，再按一次开回来
         self.clipboard = None
         self.custom_scene_name = "自定义"
         self.active_scene = ""
@@ -1635,6 +1642,44 @@ class App:
             return bool(dev.write(lambda tr: tr.wakeup_screen()))
         except Exception:  # noqa: BLE001
             return False
+
+    CONSOLE_LIGHT_MODES = ("solid", "rainbow", "breathe", "chase", "gradient", "ripple")
+
+    def console_action(self, op: str) -> str:
+        """按键上的「控制台」动作：屏幕开关 / 屏蔽按键 / 灯光开关 / 灯光效果切换。"""
+        op = (op or "").strip()
+        if op == "screen":
+            if self.screen_off:
+                self.screen_off = False
+                self.wake_panel()
+                self.apply_keys()
+                self.broadcast({"type": "status", "screenOff": False})
+                return "屏幕已打开"
+            self.screen_off = True
+            threading.Thread(target=self.sleep_panel, daemon=True).start()
+            self.broadcast({"type": "status", "screenOff": True})
+            return "屏幕已关闭"
+        if op == "mute":
+            self.input_muted = not self.input_muted
+            self.broadcast({"type": "status", "inputMuted": self.input_muted})
+            return "按键已屏蔽（只有这个键还能用）" if self.input_muted else "按键已恢复"
+        if op == "light":
+            mode = self.lighting.get("mode") or "chase"
+            if mode == "off":
+                back = self._light_back or "chase"
+                self._light_back = ""
+                self.set_lighting({"mode": back})
+                return f"灯光已打开（{back}）"
+            self._light_back = mode
+            self.set_lighting({"mode": "off"})
+            return "灯光已关闭"
+        if op == "lightfx":
+            modes = list(self.CONSOLE_LIGHT_MODES)
+            cur = self.lighting.get("mode") or "chase"
+            nxt = modes[(modes.index(cur) + 1) % len(modes)] if cur in modes else modes[0]
+            self.set_lighting({"mode": nxt})
+            return f"灯光效果：{nxt}"
+        return "未知的控制台动作"
 
     def _wake_from_standby(self) -> None:
         """按键唤醒：先叫醒设备，再整屏重画。"""
@@ -2614,6 +2659,35 @@ class App:
         self.broadcast({"type": "album", **self.album_state()})
         return True
 
+    ALBUM_NAV = {16: "上一页", 17: "主页", 18: "下一页"}
+
+    def _ensure_album_nav(self, name: str) -> None:
+        """相册场景的三个导航键默认是 上页 / 主页 / 下页：补进场景文件，编辑区里能看到。"""
+        data = self._scene_file_data(self._scene_path(name))
+        if not data or data.get("sceneType") != "album":
+            return
+        pages = data.get("pages")
+        if not isinstance(pages, list) or not pages:
+            return
+        acts = pages[0].get("actions")
+        if not isinstance(acts, dict):
+            acts = {}
+            pages[0]["actions"] = acts
+        changed = False
+        for k, nav in self.ALBUM_NAV.items():
+            if str(k) not in acts:
+                acts[str(k)] = {"type": "nav", "name": nav}
+                changed = True
+        if not changed:
+            return
+        try:
+            tmp = self._scene_path(name) + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, self._scene_path(name))
+        except OSError as exc:
+            log(f"写入相册场景默认导航键失败：{exc}")
+
     def _album_file_for(self, items: list, index: int) -> str | None:
         if not items:
             return None
@@ -2903,6 +2977,7 @@ class App:
             return False
         if not self.album_active():
             self._album_return = self.active_scene or self.custom_scene_name
+        self._ensure_album_nav(name)
         self.album_scene_name = name
         fit = str(alb.get("fit") or "cover")
         self._album_scene = {
@@ -3093,7 +3168,11 @@ class App:
     def _on_input(self, key: int, state: int) -> None:
         self._last_input_seen = time.time()
         if self.input_muted:
-            return
+            # 屏蔽按键时，只有设了「控制台 → 屏蔽按键开关」的键还能用，否则关不回来
+            acts = [self.key_actions.get(key) or {}]
+            acts += [g for g in (self.key_gestures.get(key) or {}).values() if isinstance(g, dict)]
+            if not any(a.get("type") == "console" and a.get("op") == "mute" for a in acts if isinstance(a, dict)):
+                return
         if state == 1 and self.lighting.get("mode") == "ripple":
             self.add_ripple(key)
             self._dirty = True
@@ -3508,7 +3587,9 @@ class App:
                 data = {"sceneType": "album",
                         "album": {"items": [], "index": 0, "slideshow": True, "interval": 8,
                                   "transition": "fade", "fit": "cover"},
-                        "pages": [{"name": name, "images": {}, "actions": {}}],
+                        "pages": [{"name": name, "images": {},
+                                   "actions": {str(k): {"type": "nav", "name": v}
+                                               for k, v in self.ALBUM_NAV.items()}}],
                         "page": 0}
                 with open(self._scene_path(name), "w", encoding="utf-8") as fh:
                     json.dump(data, fh, ensure_ascii=False, indent=2)
@@ -3777,6 +3858,7 @@ class App:
         name = self._canonical_scene(name)
         if not name:
             return False
+        self.scene_rev += 1
         if self.is_album_scene(name):
             if self._play_album_scene(name):
                 return True
@@ -4448,6 +4530,11 @@ class App:
             log(f"按键 {key} → 插件 {act.get('plugin')}")
             return
 
+        if kind == "console":
+            msg = self.console_action(str(act.get("op") or ""))
+            log(f"按键 {key} → 控制台：{msg}")
+            return
+
         if kind == "folder":
             ok = self.open_folder(str(act.get("page") or ""))
             log(f"按键 {key} → 打开文件夹「{act.get('name')}」" + ("" if ok else "（子页不存在）"))
@@ -4645,6 +4732,9 @@ class App:
             if path and not os.path.isfile(path):
                 return None
             return {"type": "sound", "path": path}
+        if kind == "console":
+            op = str(spec.get("op") or "")
+            return {"type": "console", "op": op} if op in CONSOLE_LABELS else None
         raw = str(spec.get("path") or "")
         path = data_path(raw)
         if not raw or not os.path.exists(path):
@@ -5015,7 +5105,8 @@ class App:
             tiles, durations, animated = self._crop_canvas(src, fit, gap)
             ext = ".gif" if animated else ".png"
             for idx, frames in enumerate(tiles, start=1):
-                dst = os.path.join(out_dir, f"{idx}{ext}")
+                # 两位数补零：图标库里按文件名排序时才是 01…15 的顺序，不会出现 1,10,11…2
+                dst = os.path.join(out_dir, f"{idx:02d}{ext}")
                 if animated:
                     frames[0].save(dst, "GIF", save_all=True, append_images=frames[1:],
                                    duration=durations or 100, loop=0, optimize=False)
@@ -5031,7 +5122,7 @@ class App:
                 "fit": fit if fit in ("cover", "contain", "fill") else "cover",
                 "gap": max(0, min(64, int(gap))),
                 "src": f"/api/iconcrop/src?token={token}",
-                "tiles": [f"/api/iconcrop/tile?token={token}&n={i}{ext}" for i in range(1, KEY_COUNT + 1)]}
+                "tiles": [f"/api/iconcrop/tile?token={token}&n={i:02d}{ext}" for i in range(1, KEY_COUNT + 1)]}
 
     def crop_src(self, token: str) -> tuple[bytes, str] | None:
         folder = self._crop_dir(token)
@@ -6427,6 +6518,8 @@ __CODE__
                 # 图片换了文件名就变：界面据此决定要不要重新拉预览（切场景 / 翻页时同一个键会换图）
                 "keyImageRev": {str(k): os.path.basename(v.get("file") or "") or str(id(v))
                                 for k, v in self.key_overrides.items()},
+                # 场景每切一次就 +1：两个场景用了同名图片文件时，靠这个让预览也跟着换
+                "sceneRev": self.scene_rev,
                 "ledCount": LED_COUNT,
                 "keyCount": KEY_COUNT,
                 "officialRunning": self.official_running,
@@ -6900,6 +6993,7 @@ class Handler(BaseHTTPRequestHandler):
             elif body.get("apply"):
                 want = str(body.get("apply"))
                 ok = APP.apply_scene(want)
+                APP.broadcast({"type": "scene", "name": want, "ok": ok})
                 self._json({"ok": ok,
                             "reason": "" if ok else (APP.scene_hint(want) or "切换失败"),
                             "items": APP.list_scenes()})

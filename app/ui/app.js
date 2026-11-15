@@ -346,7 +346,8 @@ function refreshCells() {
       } else if (hasImg) {
         // 用原始文件（GIF 会实时播放），和控制台"所见即所得"
         // 按图片版本判断：切场景 / 翻页后同一个键换了图，也要重新加载
-        const rev = `${n}-${state?.keyImageRev?.[n] || imgs[n]}`;
+        // 按图片版本判断：切场景 / 翻页后同一个键换了图，也要重新加载
+        const rev = `${state?.sceneRev || 0}-${n}-${state?.keyImageRev?.[n] || imgs[n]}`;
         if (imgEl.dataset.v !== rev) {
           imgEl.src = `/api/key/${n}/raw?v=${stamp}`;
           imgEl.dataset.v = rev;
@@ -740,16 +741,6 @@ function openCropTool() {
     srcImg.src = r.src + `&v=${Date.now()}`;
     srcImg.hidden = false;
     emptyEl.hidden = true;
-    // 让左侧图片区按图片本身的比例收窄，不留大片空白
-    const fitDropWidth = () => {
-      const iw = srcImg.naturalWidth || 0;
-      const ih = srcImg.naturalHeight || 0;
-      if (!iw || !ih) return;
-      const w = Math.round(Math.min(gridH * (iw / ih), 340));
-      drop.style.width = `${Math.max(110, w)}px`;
-    };
-    srcImg.onload = fitDropWidth;
-    if (srcImg.complete) fitDropWidth();
     nameEl.innerHTML = `保存为：<b>${escHtml(baseName)}</b>${r.animated ? ` · 动图 ${r.frames} 帧` : ""}`;
     const stamp = Date.now();
     grid.querySelectorAll(".crop-cell").forEach((cell) => {
@@ -1883,6 +1874,13 @@ function gestureLabel(g) {
   return g === "press" ? "短按" : g === "long" ? "长按" : "双击";
 }
 
+const CONSOLE_LABELS = {
+  screen: "屏幕开关",
+  mute: "屏蔽按键开关",
+  light: "灯光开关",
+  lightfx: "灯光效果切换",
+};
+
 // 把服务端返回的「某个触发方式」转成和表单一样的结构，便于统一填充
 function viewToDraft(view) {
   const spec = view?.spec || {};
@@ -1897,6 +1895,7 @@ function viewToDraft(view) {
     mouse: t === "mouse" ? (spec.button || "click") : "click",
     window: t === "window" ? (spec.op || "minimize") : "minimize",
     scene: t === "scene" ? val : "",
+    console: t === "console" ? (spec.op || "screen") : "screen",
     enter: !!spec.enter,
     secret: !!spec.secret,
   };
@@ -1913,6 +1912,7 @@ function readFormDraft() {
     mouse: $("#sel-mouse").value,
     window: $("#sel-window").value,
     scene: $("#sel-scene").value,
+    console: $("#sel-console")?.value || "screen",
     enter: !!$("#sel-enter")?.checked,
     secret: !!$("#sel-secret")?.checked,
   };
@@ -1940,6 +1940,7 @@ function specFromDraft(d, key, gesture) {
   } else if (t === "close") spec.target = val;
   else if (t === "window") spec.op = d.window;
   else if (t === "scene") spec.scene = d.scene;
+  else if (t === "console") spec.op = d.console || "screen";
   else if (t === "sound") spec.path = val;
   else spec.path = val;
   return spec;
@@ -1952,6 +1953,7 @@ function draftLabel(d) {
   if (t === "none") return "未设置";
   if (t === "nav") return `导航：${d.nav}`;
   if (t === "scene") return `场景：${d.scene}`;
+  if (t === "console") return `控制台：${CONSOLE_LABELS[d.console] || d.console}`;
   if (t === "folder") return `文件夹：${val || "文件夹"}`;
   if (t === "hotkey" || t === "toggle") return val;
   if (t === "text") return val;
@@ -2010,6 +2012,7 @@ function applyTypeVisibility(t) {
   show("#sel-media", t === "media");
   show("#sel-mouse", t === "mouse");
   show("#sel-scene", t === "scene");
+  show("#sel-console", t === "console");
   show("#sel-window", t === "window");
   show("#sel-record", t === "hotkey" || t === "toggle");
   show("#sel-pick", t === "launch" || t === "sound");
@@ -2017,7 +2020,7 @@ function applyTypeVisibility(t) {
   show("#sel-open-folder", t === "folder" && fv?.type === "folder");
   show("#row-macro", t === "macro");
   show("#row-text-opts", t === "text");
-  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "launch", "sound", "window", "folder"].includes(t));
+  show("#editor-actions-row", ["hotkey", "toggle", "media", "nav", "mouse", "scene", "console", "launch", "sound", "window", "folder"].includes(t));
   if (t !== "hotkey" && t !== "toggle") $("#sel-record")?.classList.remove("on");
 }
 
@@ -2039,6 +2042,7 @@ function fillActionForm(n) {
   if (t === "media" && d.media) $("#sel-media").value = d.media;
   if (t === "mouse" && d.mouse) $("#sel-mouse").value = d.mouse;
   if (t === "window" && d.window) $("#sel-window").value = d.window;
+  if (t === "console") $("#sel-console").value = d.console || "screen";
   $("#sel-enter").checked = !!d.enter;
   $("#sel-secret").checked = !!d.secret;
   const nav = $("#sel-nav");
@@ -2064,11 +2068,15 @@ function renderEditor() {
   const n = selectedKey;
   const label = $("#sel-label");
   // 相册场景：编辑区换成图片集，保存/清除按钮跟按键无关，收起来
-  const albScene = activeAlbumScene();
+  // 但三个导航键（16/17/18）还是按键编辑：它们有默认的上页 / 主页 / 下页动作
+  const albScene = n && n > 15 ? null : activeAlbumScene();
   const bodyEl = $("#editor-body");
   const albEl = $("#album-editor");
   if (albEl) albEl.hidden = !albScene;
   if (bodyEl) bodyEl.hidden = !!albScene;
+  // 相册场景的页由图片自动分，页数按钮收起来
+  const pageRow = document.querySelector(".page-row");
+  if (pageRow) pageRow.classList.toggle("album-scene", !!albScene);
   const saveTop = $("#sel-save-top");
   const clearTop = $("#sel-clear-top");
   if (saveTop) saveTop.hidden = !!albScene;
@@ -2874,7 +2882,7 @@ function bindUI() {
     });
   });
   // 表单里任何改动都记进草稿：这样服务端推送刷新画面时，正在填的内容不会被冲掉
-  ["#sel-value", "#sel-macro", "#sel-media", "#sel-mouse", "#sel-window", "#sel-scene", "#sel-enter", "#sel-secret", "#sel-nav"].forEach((sel) => {
+  ["#sel-value", "#sel-macro", "#sel-media", "#sel-mouse", "#sel-window", "#sel-scene", "#sel-console", "#sel-enter", "#sel-secret", "#sel-nav"].forEach((sel) => {
     const el = $(sel);
     if (!el) return;
     const snap = () => {
@@ -3512,6 +3520,7 @@ let albumState = null;
 let albumSig = "";
 
 function renderAlbum(a) {
+  document.body.classList.toggle("album-scene", !!(a && a.scene));
   if (a && a.scene) {
     // 相册场景播放中：只更新「按键编辑」里的图片区和键盘预览，待机相册的卡片只同步数字
     if (a.scene === activeAlbumScene()) renderAlbumEditor(a, a.scene);

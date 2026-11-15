@@ -1,11 +1,11 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261116e" />
+  <link rel="stylesheet" href="style.css?v=20261116f" />
 </head>
 <body>
 <div class="app">
@@ -178,6 +178,7 @@
                     <option value="scene">切换到场景</option>
                     <option value="sound">播放音效</option>
                     <option value="nav">导航</option>
+                    <option value="console">控制台</option>
                     <option value="folder">文件夹（子页）</option>
                     <option value="plugin" disabled>插件动作（从侧栏拖入）</option>
                   </select>
@@ -253,6 +254,12 @@
                     <option value="scrolldown">滚轮向下</option>
                   </select>
                   <select id="sel-scene" class="sel-input" hidden></select>
+                  <select id="sel-console" class="sel-input" hidden>
+                    <option value="screen">屏幕开关（息屏 / 亮屏）</option>
+                    <option value="mute">屏蔽按键开关</option>
+                    <option value="light">灯光开关</option>
+                    <option value="lightfx">灯光效果切换</option>
+                  </select>
                   <select id="sel-window" class="sel-input" hidden>
                     <option value="minimize">最小化当前窗口</option>
                     <option value="maximize">最大化 / 还原当前窗口</option>
@@ -585,6 +592,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261118b"></script>
+<script src="app.js?v=20261118c"></script>
 </body>
 </html>
