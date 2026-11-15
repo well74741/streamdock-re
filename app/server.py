@@ -1484,13 +1484,23 @@ class App:
             self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
 
     def _gif_resync(self) -> None:
-        """让所有正在播的动图从同一时刻重新开始，否则新加进来的那张会一直错位。"""
+        """让所有正在播的动图从同一时刻重新开始，否则新加进来的那张会一直错位。
+
+        只 stop/start 循环不够：每张动图是各自加载、各自计时的，停一下再开
+        并不会把它们拉回同一个起点。这里整组清掉重发，再一起开始播。
+        """
         with self._gif_lock:
             if not self._gif_active:
                 return
+            items = dict(self._gif_active)
             self.device.stop_gif_loop()
+            for key in items:
+                self.device.clear_key_gif(key)
+            for key, path in items.items():
+                self.device.set_key_gif(key, path)
+            self._gif_active = dict(items)
             self.device.start_gif_loop()
-            keys = sorted(self._gif_active.keys())
+            keys = sorted(items.keys())
         self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
 
     def _gif_update_key(self, key: int) -> None:
@@ -7255,6 +7265,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/device/repaint":
             threading.Thread(target=APP._wake_from_standby, daemon=True).start()
             self._json({"ok": True})
+        elif path == "/api/device/gif-resync":
+            APP._gif_resync()
+            self._json({"ok": True, "keys": sorted(APP._gif_active.keys())})
         elif path == "/api/device/sleep":
             APP.screen_off = True
             try:

@@ -3589,6 +3589,12 @@ function bindUI() {
     applyState(await post("/api/device/reconnect"));
   });
 
+  /* 动图错位时的手动对齐：整组重新加载后一起开始 */
+  $("#gif-resync").addEventListener("click", async () => {
+    const r = await post("/api/device/gif-resync");
+    toast(r?.ok ? `已重播 ${(r.keys || []).length} 张动图` : "没有正在播的动图", 1600);
+  });
+
   $("#quit").addEventListener("click", async () => {
     if (!confirm("退出后控制台会停止，设备灯光由官方软件或固件默认接管。确定退出？")) return;
     await post("/api/quit");
