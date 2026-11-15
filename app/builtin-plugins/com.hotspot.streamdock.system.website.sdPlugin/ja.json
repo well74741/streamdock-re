@@ -1,0 +1,8 @@
+﻿{
+  "Description": "ウエブサイトを開きます", 
+  "Name": "ウエブサイト", 
+  "com.hotspot.streamdock.system.website": {
+    "Name": "ウエブサイト", 
+    "Tooltip": "ウエブサイトを開きます"
+  }
+}

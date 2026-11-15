@@ -1,0 +1,12 @@
+{
+  "Description": "Zarządzaj multimediami", 
+  "Name": "Multimedia", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "Multimedia", 
+    "Tooltip": "Zarządzaj multimediami"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "głośność systemu", 
+    "Tooltip": "Kontroluj głośność systemu"
+  }
+}

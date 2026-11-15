@@ -1,0 +1,32 @@
+{
+  "Description": "Multi Action", 
+  "Name": "Multi Action", 
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "Multi Action", 
+    "Tooltip": "Perform several actions"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "Random Action", 
+    "Tooltip": "Execute a random action"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "Delay",
+    "Tooltip": "Add a delay between actions and actions"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "Action Carousel",
+    "Tooltip": "Automatically switch between plugins and modules"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "Action Cycle",
+    "Tooltip": "Single-step between plugins"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "Multi ActionTrigger",
+    "Tooltip": "Execute multiple actions"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "Multi ActionWheel",
+    "Tooltip": "Execute multiple actions"
+  }
+}

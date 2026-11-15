@@ -1,0 +1,12 @@
+{
+  "Description": "يتحكم YouTube。", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "معلومات الدردشة", 
+    "Tooltip": "انشر رسالة دردشة مبرمجة مسبقًا على YouTube"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "جمهور", 
+    "Tooltip": "يعرض عدد مشاهدي البث المباشر على YouTube"
+  }
+}

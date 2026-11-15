@@ -1,0 +1,8 @@
+{
+  "Description": "激活热键", 
+  "Name": "超级热键", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "超级热键", 
+    "Tooltip": "可绕过游戏屏蔽"
+  }
+}

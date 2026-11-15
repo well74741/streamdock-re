@@ -1,0 +1,105 @@
+{
+    "Description": "Funcionalidad de la barra táctil", 
+    "Name": "Touchbar", 
+    "com.hotspot.streamdock.touchbar.dispatchcenter": {
+      "Name": "Centro de despacho",
+      "Tooltip": "Centro de despacho"
+    },
+    "com.hotspot.streamdock.touchbar.focusonsearch": {
+      "Name": "Enfoque en la búsqueda",
+      "Tooltip": "Enfoque en la búsqueda"
+    },
+    "com.hotspot.streamdock.touchbar.siri": {
+      "Name": "Siri",
+      "Tooltip": "Despierta a Siri"
+    },
+    "com.hotspot.streamdock.touchbar.notificationcenter": {
+      "Name": "Centros de notificaciones",
+      "Tooltip": "Centros de notificaciones"
+    },
+    "com.hotspot.streamdock.touchbar.dndmode": {
+      "Name": "Modo No molestar",
+      "Tooltip": "Modo No molestar"
+    },
+    "com.hotspot.streamdock.touchbar.screenshot": {
+      "Name": "Captura de pantalla",
+      "Tooltip": "Captura de pantalla"
+    },
+    "com.hotspot.streamdock.touchbar.dictation": {
+      "Name": "Dictado",
+      "Tooltip": "Dictado"
+    },
+    "com.hotspot.streamdock.touchbar.inputmethod": {
+      "Name": "Método de entrada",
+      "Tooltip": "Método de entrada"
+    },
+    "com.hotspot.streamdock.touchbar.launchpad": {
+      "Name": "Launchpad",
+      "Tooltip": "Launchpad"
+    },
+    "com.hotspot.streamdock.touchbar.showdesktop": {
+      "Name": "Mostrar escritorio",
+      "Tooltip": "Mostrar escritorio"
+    },
+    "com.hotspot.streamdock.touchbar.desktopsaver": {
+      "Name": "Protector de escritorio",
+      "Tooltip": "Protector de escritorio"
+    },
+    "com.hotspot.streamdock.touchbar.screenlock": {
+      "Name": "Bloqueo de pantalla",
+      "Tooltip": "Bloqueo de pantalla"
+    },
+    "com.hotspot.streamdock.touchbar.sleep": {
+      "Name": "Dormir",
+      "Tooltip": "Dormir"
+    },
+    "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+      "Name": "Aumentar el brillo",
+      "Tooltip": "Aumentar el brillo de la pantalla"
+    },
+    "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+      "Name": "Reducir el brillo",
+      "Tooltip": "Reducir el brillo de la pantalla"
+    },
+    "com.hotspot.streamdock.touchbar.previoustrack": {
+      "Name": "Canción anterior",
+      "Tooltip": "Canción anterior"
+    },
+    "com.hotspot.streamdock.touchbar.fastrewind": {
+      "Name": "Rebobinar",
+      "Tooltip": "Rebobinar"
+    },
+    "com.hotspot.streamdock.touchbar.playpause": {
+      "Name": "Reproducir/Pausa",
+      "Tooltip": "Reproducir/Pausa"
+    },
+    "com.hotspot.streamdock.touchbar.fastforward": {
+      "Name": "Avance rápido",
+      "Tooltip": "Avance rápido"
+    },
+    "com.hotspot.streamdock.touchbar.nexttrack": {
+      "Name": "Siguiente canción",
+      "Tooltip": "Siguiente canción"
+    },
+    "com.hotspot.streamdock.touchbar.volumeup": {
+      "Name": "Aumentar el volumen",
+      "Tooltip": "Aumentar el volumen"
+    },
+    "com.hotspot.streamdock.touchbar.volumedown": {
+      "Name": "Baje el volumen", 
+      "Tooltip": "Baje el volumen"
+    },
+    "com.hotspot.streamdock.touchbar.mute": {
+      "Name": "Mudo", 
+      "Tooltip": "Mudo"
+    },
+    "com.hotspot.streamdock.touchbar.volume": {
+      "Name": "Volumen", 
+      "Tooltip": "Control de volumen"
+    },
+    "com.hotspot.streamdock.touchbar.screen.brightness": {
+      "Name": "Brillo de la pantalla", 
+      "Tooltip": "Ajustar el brillo de la pantalla"
+    }
+  }
+  

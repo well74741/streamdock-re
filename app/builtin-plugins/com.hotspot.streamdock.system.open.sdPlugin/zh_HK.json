@@ -1,0 +1,12 @@
+{
+  "Description": "打開應用、文件或文件夾", 
+  "Name": "打開", 
+  "com.hotspot.streamdock.system.open": {
+    "Name": "打開", 
+    "Tooltip": "打開應用、文件或文件夾"
+  },
+  "com.hotspot.streamdock.system.openApps": {
+    "Name": "打開應用", 
+    "Tooltip": "打開應用"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "Immettere una stringa di password pre-modificata", 
+  "Name": "Parola d’ordine", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "Parola d’ordine", 
+    "Tooltip": "Immettere una stringa di password pre-modificata"
+  }
+}

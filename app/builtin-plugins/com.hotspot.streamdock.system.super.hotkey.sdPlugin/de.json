@@ -1,0 +1,8 @@
+{
+  "Description": "Einen Tastenbefehl ausführen", 
+  "Name": "Super Hotkeys", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "Super Hotkeys", 
+    "Tooltip": "Kann die Spielblockierung umgehen"
+  }
+}

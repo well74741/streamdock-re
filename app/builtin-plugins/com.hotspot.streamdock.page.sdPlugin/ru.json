@@ -1,0 +1,24 @@
+{
+  "Description": "Навигация по веб-странице",
+  "Name": "страница",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "Предыдущая страница",
+    "Tooltip": "Перейти на предыдущую страницу"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "Следущая страница",
+    "Tooltip": "Перейти на следующую страницу"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "Перейти на страницу",
+    "Tooltip": "Переключиться на указанный номер страницы"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "Поле индикатора страницы",
+    "Tooltip": "Отображение номера страницы текущего файла конфигурации"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "Переключить страницу",
+    "Tooltip": "Переключить страницу"
+  }
+}

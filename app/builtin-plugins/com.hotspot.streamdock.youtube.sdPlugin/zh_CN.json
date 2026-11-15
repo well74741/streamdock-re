@@ -1,0 +1,12 @@
+{
+  "Description": "控制YouTube。", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "聊天信息", 
+    "Tooltip": "发布一个预先编排的YouTube聊天信息"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "观众", 
+    "Tooltip": "显示YouTube直播观众的数量"
+  }
+}

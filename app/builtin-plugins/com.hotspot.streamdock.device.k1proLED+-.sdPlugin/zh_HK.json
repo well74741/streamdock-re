@@ -1,0 +1,12 @@
+{
+  "Description": "調整設備的亮度",
+  "Name": "亮度",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "亮度",
+    "Tooltip": "調整設備的亮度"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "关闭屏幕",
+    "Tooltip": "让设备关闭屏幕"
+  }
+}

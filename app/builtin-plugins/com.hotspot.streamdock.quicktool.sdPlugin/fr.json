@@ -1,0 +1,41 @@
+{
+  "Description": "Contrôle rapide", 
+  "Name": "Contrôle rapide", 
+  "Category": "Contrôle rapide",  
+  "com.hotspot.streamdock.quicktool.calculator": {
+    "Name": "Calculatrice", 
+    "Tooltip": "Ouvrez la calculatrice"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.emoticons": {
+    "Name": "Émoticônes", 
+    "Tooltip": "Ouvrez les émoticônes"
+  },
+  "com.hotspot.streamdock.quicktool.mail": {
+    "Name": "Courrier", 
+    "Tooltip": "Ouvrir le courrier"
+  },
+  "com.hotspot.streamdock.quicktool.music": {
+    "Name": "Musique", 
+    "Tooltip": "Allumer la musique"
+  },
+  "com.hotspot.streamdock.quicktool.homepage": {
+    "Name": "Page d’accueil", 
+    "Tooltip": "Ouvrir la page d’accueil"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.notification": {
+    "Name": "Notification", 
+    "Tooltip": "Notification ouverte"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.taskmanager": {
+    "Name": "Gestionnaire des tâches", 
+    "Tooltip": "Ouvrez le Gestionnaire des tâches"
+  },
+  "com.hotspot.streamdock.quicktool.controlpanel": {
+    "Name": "Panneau de configuration", 
+    "Tooltip": "Ouvrez le panneau de configuration"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.searchbar": {
+    "Name": "Barre de recherche", 
+    "Tooltip": "Ouvrez la barre de recherche"
+  }
+}

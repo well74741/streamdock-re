@@ -1,0 +1,12 @@
+{
+  "Description": "УпрУправление YouTube。", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "Информация чата", 
+    "Tooltip": "Опубликуйте заранее запрограммированное сообщение в чате YouTube"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "аудитория", 
+    "Tooltip": "Показывает количество зрителей YouTube в прямом эфире."
+  }
+}

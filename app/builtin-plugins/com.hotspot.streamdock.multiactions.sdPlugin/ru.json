@@ -1,0 +1,32 @@
+{
+  "Description": "Множественное действие",
+  "Name": "Множественное действие",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "Множественное действие",
+    "Tooltip": "Выполнить несколько действий"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "Случайная операция",
+    "Tooltip": "выполнить случайное действие"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "Задерживать",
+    "Tooltip": "Добавляйте задержки между действиями"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "Карусель действий",
+    "Tooltip": "Автоматически переключаться между плагинами и модулями"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "Цикл действий",
+    "Tooltip": "Переключение между плагинами и плагинами в один шаг"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "Рабочее колесо",
+    "Tooltip": "Выполнение нескольких циклов на ручке"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "Триггер управления",
+    "Tooltip": "Ручка передачи для выполнения операции"
+  }
+}

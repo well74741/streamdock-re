@@ -1,0 +1,22 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/close_launch", 
+      "Name": "Close", 
+      "States": [
+        {
+          "Image": "Images/close"
+        }
+      ], 
+      "Tooltip": "close app", 
+      "UUID": "com.hotspot.streamdock.system.close"
+    }
+    
+  ], 
+  "Author": "Hotspot", 
+  "Description": "close app", 
+  "Name": "close", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

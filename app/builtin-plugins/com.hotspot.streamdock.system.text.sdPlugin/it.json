@@ -1,0 +1,8 @@
+{
+  "Description": "Immettere una stringa di testo pre-modificata", 
+  "Name": "Testo", 
+  "com.hotspot.streamdock.system.text": {
+    "Name": "Testo", 
+    "Tooltip": "Immettere una stringa di testo pre-modificata"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "Description": "快捷控制", 
+  "Name": "快捷控制", 
+  "Category": "快捷控制",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "睡眠", 
+    "Tooltip": "让电脑进入睡眠状态，如果电脑支持休眠，则会进入休眠状态"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "切换屏幕", 
+    "Tooltip": "切换屏幕"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "语音识别", 
+    "Tooltip": "打开语音识别"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop": {
+    "Name": "显示桌面", 
+    "Tooltip": "显示桌面"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "静音", 
+    "Tooltip": "静音"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "降低音量", 
+    "Tooltip": "降低音量"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "提高音量", 
+    "Tooltip": "提高音量"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "麦克风", 
+    "Tooltip": "静音/取消静音麦克风"
+  }
+}

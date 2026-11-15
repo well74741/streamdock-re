@@ -1,0 +1,8 @@
+{
+  "Description": "افتح الموقع", 
+  "Name": "موقع إلكتروني", 
+  "com.hotspot.streamdock.system.website": {
+    "Name": "موقع إلكتروني", 
+    "Tooltip": "افتح الموقع"
+  }
+}

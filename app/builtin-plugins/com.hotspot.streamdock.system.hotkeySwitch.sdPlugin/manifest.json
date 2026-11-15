@@ -1,0 +1,25 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/trigger_hotkey_white", 
+      "Name": "HotkeySwitch", 
+      "States": [
+        {
+          "Image": "Images/btn_custom_trigger_hotkeySwitch1"
+        }
+        ,{
+          "Image": "Images/btn_custom_trigger_hotkeySwitch2"
+        }
+      ],
+      "Controllers": [ "Keypad" ],
+      "Tooltip": "Activate a key command", 
+      "UUID": "com.hotspot.streamdock.system.hotkeySwitch"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Activate a key command", 
+  "Name": "HotkeySwitch", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

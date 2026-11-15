@@ -1,0 +1,32 @@
+{
+  "Description": "Action multiple",
+  "Name": "Action multiple",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "Action multiple",
+    "Tooltip": "Effectuer plusieurs actions"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "Action aléatoire",
+    "Tooltip": "Lancez une action aléatoire"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "Retarder",
+    "Tooltip": "Ajouter un délai entre les actions et les actions"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "Carrousel d’actions",
+    "Tooltip": "Changer automatiquement entre les plugins et les modules"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "Cycle d’actions",
+    "Tooltip": "Basculez entre les plug-ins et les plug-ins en une seule étape"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "Roue d'opération",
+    "Tooltip": "Exécution de plusieurs cycles d'opération sur le bouton"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "Déclencheur d'opération",
+    "Tooltip": "Bouton de transfert pour effectuer l'opération"
+  }
+}

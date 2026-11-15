@@ -1,0 +1,8 @@
+﻿{
+  "Description": "事前に作成されたパスワード文字列を入力します", 
+  "Name": "パスワード", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "パスワード", 
+    "Tooltip": "事前に作成されたパスワード文字列を入力します"
+  }
+}

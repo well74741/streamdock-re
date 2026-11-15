@@ -1,0 +1,12 @@
+{
+  "Description": "Отрегулируйте яркость вашего устройства",
+  "Name": "яркость",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "яркость",
+    "Tooltip": "Отрегулируйте яркость вашего устройства"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "выключить экран",
+    "Tooltip": "Пусть устройство выключает экран"
+  }
+}

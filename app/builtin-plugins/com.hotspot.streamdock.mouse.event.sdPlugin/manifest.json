@@ -1,0 +1,23 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/mouse_event_white", 
+      "Name": "Mouse event", 
+      "SupportTutorial": true,
+  "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-mouse-event-function-on-streamdock",
+      "States": [
+        {
+          "Image": "Images/btn_mouse_event"
+        }
+      ], "Controllers": [ "Keypad", "Knob" ],
+      "Tooltip": "Simulated mouse event", 
+      "UUID": "com.hotspot.streamdock.mouse.event"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Simulated mouse event", 
+  "Name": "Mouse event", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

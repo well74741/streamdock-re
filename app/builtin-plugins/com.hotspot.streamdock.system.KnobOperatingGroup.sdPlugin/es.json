@@ -1,0 +1,10 @@
+{
+    "Description": "Activar grupo de operación de perilla", 
+    "Category": "Grupo de acciones del mando", 
+    "Name": "Grupo de acciones del mando", 
+    "com.hotspot.streamdock.system.KnobOperatingGroup": {
+      "Name": "Grupo de acciones del mando", 
+      "Tooltip": "Activar grupo de operación de perilla"
+    }
+}
+  

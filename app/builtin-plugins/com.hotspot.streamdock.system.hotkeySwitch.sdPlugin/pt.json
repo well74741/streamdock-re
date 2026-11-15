@@ -1,0 +1,9 @@
+{
+    "Description": "Ativar a chave quente", 
+    "Name": "HotkeySwitch", 
+    "com.hotspot.streamdock.system.hotkeySwitch": {
+      "Name": "HotkeySwitch", 
+      "Tooltip": "Ativar a chave quente"
+    }
+}
+  

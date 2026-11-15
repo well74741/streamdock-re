@@ -1,0 +1,8 @@
+{
+  "Description": "純文本顯示", 
+  "Name": "文本", 
+  "com.hotspot.streamdock.plain.text": {
+    "Name": "文本", 
+    "Tooltip": "純文本顯示"
+  }
+}

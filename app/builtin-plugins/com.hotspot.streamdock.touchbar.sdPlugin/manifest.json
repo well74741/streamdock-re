@@ -1,0 +1,296 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/dispatchCenter/icon", 
+      "Name": "Dispatch Center", 
+      "States": [
+        {
+          "Image": "Images/dispatchCenter/action"
+        }
+      ], 
+      "Tooltip": "Dispatch Center", 
+      "UUID": "com.hotspot.streamdock.touchbar.dispatchcenter"
+    },
+    {
+      "Icon": "Images/focusOnSearch/icon", 
+      "Name": "Focus On Search", 
+      "States": [
+        {
+          "Image": "Images/focusOnSearch/action"
+        }
+      ], 
+      "Tooltip": "Focus on search", 
+      "UUID": "com.hotspot.streamdock.touchbar.focusonsearch",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/siri/icon", 
+      "Name": "Siri", 
+      "States": [
+        {
+          "Image": "Images/siri/action"
+        }
+      ], 
+      "Tooltip": "Wake up siri", 
+      "UUID": "com.hotspot.streamdock.touchbar.siri"
+    },
+    {
+      "Icon": "Images/notificationCenter/icon", 
+      "Name": "Notification Center", 
+      "States": [
+        {
+          "Image": "Images/notificationCenter/action"
+        }
+      ], 
+      "Tooltip": "Notification Center", 
+      "UUID": "com.hotspot.streamdock.touchbar.notificationcenter",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/dndMode/icon", 
+      "Name": "DND Mode", 
+      "States": [
+        {
+          "Image": "Images/dndMode/action"
+        }
+      ], 
+      "Tooltip": "Do not disturb mode", 
+      "UUID": "com.hotspot.streamdock.touchbar.dndmode",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/screenshot/icon", 
+      "Name": "Screenshot", 
+      "States": [
+        {
+          "Image": "Images/screenshot/action"
+        }
+      ], 
+      "Tooltip": "Screenshot", 
+      "UUID": "com.hotspot.streamdock.touchbar.screenshot"
+    },
+    {
+      "Icon": "Images/dictation/icon", 
+      "Name": "Dictation", 
+      "States": [
+        {
+          "Image": "Images/dictation/action"
+        }
+      ], 
+      "Tooltip": "Dictation", 
+      "UUID": "com.hotspot.streamdock.touchbar.dictation",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/inputMethod/icon", 
+      "Name": "Input Method", 
+      "States": [
+        {
+          "Image": "Images/inputMethod/action"
+        }
+      ], 
+      "Tooltip": "Input Method", 
+      "UUID": "com.hotspot.streamdock.touchbar.inputmethod",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/launchpad/icon", 
+      "Name": "Launchpad", 
+      "States": [
+        {
+          "Image": "Images/launchpad/action"
+        }
+      ], 
+      "Tooltip": "Launchpad", 
+      "UUID": "com.hotspot.streamdock.touchbar.launchpad"
+    },
+    {
+      "Icon": "Images/showDesktop/icon", 
+      "Name": "Show Desktop", 
+      "States": [
+        {
+          "Image": "Images/showDesktop/action"
+        }
+      ], 
+      "Tooltip": "Show Desktop", 
+      "UUID": "com.hotspot.streamdock.touchbar.showdesktop",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/desktopSaver/icon", 
+      "Name": "Desktop Saver", 
+      "States": [
+        {
+          "Image": "Images/desktopSaver/action"
+        }
+      ], 
+      "Tooltip": "Desktop Saver", 
+      "UUID": "com.hotspot.streamdock.touchbar.desktopsaver"
+    },
+    {
+      "Icon": "Images/screenLock/icon", 
+      "Name": "Screen Lock", 
+      "States": [
+        {
+          "Image": "Images/screenLock/action"
+        }
+      ], 
+      "Tooltip": "Screen Lock", 
+      "UUID": "com.hotspot.streamdock.touchbar.screenlock",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/sleep/icon", 
+      "Name": "Sleep", 
+      "States": [
+        {
+          "Image": "Images/sleep/action"
+        }
+      ], 
+      "Tooltip": "Sleep", 
+      "UUID": "com.hotspot.streamdock.touchbar.sleep"
+    },
+    {
+      "Icon": "Images/increaseScreenBrightness/icon", 
+      "Name": "Increase screen brightness", 
+      "States": [
+        {
+          "Image": "Images/increaseScreenBrightness/action"
+        }
+      ], 
+      "Tooltip": "Increase screen brightness", 
+      "UUID": "com.hotspot.streamdock.touchbar.increasescreenbrightness"
+    },
+    {
+      "Icon": "Images/decreaseScreenBrightness/icon", 
+      "Name": "Decrease screen brightness", 
+      "States": [
+        {
+          "Image": "Images/decreaseScreenBrightness/action"
+        }
+      ], 
+      "Tooltip": "Decrease screen brightness", 
+      "UUID": "com.hotspot.streamdock.touchbar.decreasescreenbrightness"
+    },
+    {
+      "Icon": "Images/previousTrack/icon", 
+      "Name": "Previous Track", 
+      "States": [
+        {
+          "Image": "Images/previousTrack/action"
+        }
+      ], 
+      "Tooltip": "Previous Track", 
+      "UUID": "com.hotspot.streamdock.touchbar.previoustrack"
+    },
+    {
+      "Icon": "Images/fastRewind/icon", 
+      "Name": "Fast Rewind", 
+      "States": [
+        {
+          "Image": "Images/fastRewind/action"
+        }
+      ], 
+      "Tooltip": "Fast Rewind", 
+      "UUID": "com.hotspot.streamdock.touchbar.fastrewind",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/playPause/icon", 
+      "Name": "Play/Pause", 
+      "States": [
+        {
+          "Image": "Images/playPause/action"
+        }
+      ], 
+      "Tooltip": "Play/Pause", 
+      "UUID": "com.hotspot.streamdock.touchbar.playpause"
+    },
+    {
+      "Icon": "Images/fastForward/icon", 
+      "Name": "Fast Forward", 
+      "States": [
+        {
+          "Image": "Images/fastForward/action"
+        }
+      ], 
+      "Tooltip": "Fast Forward", 
+      "UUID": "com.hotspot.streamdock.touchbar.fastforward",
+      "VisibleInActionsList": false
+    },
+    {
+      "Icon": "Images/nextTrack/icon", 
+      "Name": "Next Track", 
+      "States": [
+        {
+          "Image": "Images/nextTrack/action"
+        }
+      ], 
+      "Tooltip": "Next Track", 
+      "UUID": "com.hotspot.streamdock.touchbar.nexttrack"
+    },
+    {
+      "Icon": "Images/volumeUp/icon", 
+      "Name": "Volume up", 
+      "States": [
+        {
+          "Image": "Images/volumeUp/action"
+        }
+      ], 
+      "Tooltip": "Volume up", 
+      "UUID": "com.hotspot.streamdock.touchbar.volumeup"
+    },
+    {
+      "Icon": "Images/volumeDown/icon", 
+      "Name": "Volume down", 
+      "States": [
+        {
+          "Image": "Images/volumeDown/action"
+        }
+      ], 
+      "Tooltip": "Volume down", 
+      "UUID": "com.hotspot.streamdock.touchbar.volumedown"
+    },
+    {
+      "Icon": "Images/mute/icon", 
+      "Name": "Mute", 
+      "States": [
+        {
+          "Image": "Images/mute/action"
+        }
+      ], 
+      "Tooltip": "Mute", 
+      "UUID": "com.hotspot.streamdock.touchbar.mute"
+    },
+    {
+      "Icon": "Images/volume/icon", 
+      "Name": "Volume", 
+      "States": [
+        {
+          "Image": "Images/volume/action"
+        }
+      ], 
+      "Controllers": [ "Knob" ],
+      "Tooltip": "Volume control", 
+      "UUID": "com.hotspot.streamdock.touchbar.volume"
+    },
+    {
+      "Icon": "Images/brightness/icon", 
+      "Name": "Screen brightness", 
+      "States": [
+        {
+          "Image": "Images/brightness/action"
+        }
+      ], 
+      "Controllers": [ "Knob" ],
+      "Tooltip": "Adjusting screen brightness", 
+      "UUID": "com.hotspot.streamdock.touchbar.screen.brightness"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Touchbar function", 
+  "Name": "Touchbar", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

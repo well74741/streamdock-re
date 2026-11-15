@@ -1,0 +1,12 @@
+{
+  "Description": "Управление воспроизведением мультимедиа", 
+  "Name": "мультимедиа", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "мультимедиа", 
+    "Tooltip": "Управление воспроизведением мультимедиа"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "системный том", 
+    "Tooltip": "Громкость системы управления"
+  }
+}

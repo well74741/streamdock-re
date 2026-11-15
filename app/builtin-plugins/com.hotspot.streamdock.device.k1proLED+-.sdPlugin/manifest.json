@@ -1,0 +1,82 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/LED+.png",
+      "Name": "LED+", 
+      "States": [
+        {
+          "Image": "Images/LED+"
+        }
+      ], 
+      "Controllers": [ "Keypad"],
+      "Tooltip": "Control K1Pro LED+", 
+      "UUID": "com.hotspot.streamdock.device.k1proLED+"
+    },
+    {
+      "Icon": "Images/LED-.png",
+      "Name": "LED-", 
+      "States": [
+        {
+          "Image": "Images/LED-"
+        }
+      ], 
+      "Controllers": [ "Keypad"],
+      "Tooltip": "Control K1Pro LED-", 
+      "UUID": "com.hotspot.streamdock.device.k1proLED-"
+    },
+    {
+      "Icon": "Images/LEDSPEED+.png",
+      "Name": "LEDSPEED+", 
+      "States": [
+        {
+          "Image": "Images/LEDSPEED+"
+        }
+      ], 
+      "Controllers": [ "Keypad"],
+      "Tooltip": "Control K1Pro LEDSPEED+", 
+      "UUID": "com.hotspot.streamdock.device.k1proLEDSPEED+"
+    },
+    {
+      "Icon": "Images/LEDSPEED-.png",
+      "Name": "LEDSPEED-", 
+      "States": [
+        {
+          "Image": "Images/LEDSPEED-"
+        }
+      ], 
+      "Controllers": [ "Keypad"],
+      "Tooltip": "Control K1Pro LEDSPEED-", 
+      "UUID": "com.hotspot.streamdock.device.k1proLEDSPEED-"
+    },
+    {
+      "Icon": "Images/LEDMODECHANGE.png",
+      "Name": "LEDMODECHANGE", 
+      "States": [
+        {
+          "Image": "Images/LEDMODECHANGE"
+        }
+      ], 
+      "Controllers": [ "Keypad"],
+      "Tooltip": "Control K1Pro LEDMODECHANGE", 
+      "UUID": "com.hotspot.streamdock.device.k1proLEDMODECHANGE"
+    },
+    {
+      "Icon": "Images/WinqMac.png",
+      "Name": "WinqMac", 
+      "States": [
+        {
+          "Image": "Images/WinqMac"
+        }
+      ], 
+      "Controllers": [ "Keypad"],
+      "Tooltip": "Control K1Pro WinqMac", 
+      "UUID": "com.hotspot.streamdock.device.k1proWinqMac"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Control K1Pro LED", 
+  "Name": "K1ProLEDLight", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

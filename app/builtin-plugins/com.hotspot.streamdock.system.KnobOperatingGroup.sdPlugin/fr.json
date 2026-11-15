@@ -1,0 +1,9 @@
+{
+  "Description": "Attiva il gruppo di operazioni tramite manopola", 
+  "Category": "Groupe d’actions du bouton rotatif", 
+  "Name": "Groupe d’actions du bouton rotatif", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "Groupe d’actions du bouton rotatif", 
+    "Tooltip": "Attiva il gruppo di operazioni tramite manopola"
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "Description": "Touchbar 터치바", 
+  "Name": "Touchbar", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "디스패치 센터",
+    "Tooltip": "디스패치 센터"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "포커스 검색",
+    "Tooltip": "포커스 검색"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "시리",
+    "Tooltip": "시리 깨우기"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "알림센터",
+    "Tooltip": "알림센터"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "방해금지 모드",
+    "Tooltip": "방해금지 모드"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "스크린샷",
+    "Tooltip": "스크린샷"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "받아쓰기",
+    "Tooltip": "받아쓰기"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "입력방신",
+    "Tooltip": "입력방신"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "런치패드",
+    "Tooltip": "런치패드"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "데스크탑 표시",
+    "Tooltip": "데스크탑 표시"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "화면 보호기",
+    "Tooltip": "화면 보호기"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "화면 잠금",
+    "Tooltip": "화면 잠금"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "잠자기",
+    "Tooltip": "잠자기"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "화면 밝기 높이기",
+    "Tooltip": "화면 밝기 높이기"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "화면 밝기 낮추기",
+    "Tooltip": "화면 밝기 낮추기"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "이전 트랙",
+    "Tooltip": "이전 트랙"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "되돌리기",
+    "Tooltip": "되돌리기"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "재생/중지",
+    "Tooltip": "재생/중지"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "빨리감기",
+    "Tooltip": "빨리감기"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "다음 트랙",
+    "Tooltip": "다음 트랙"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "볼륨 올리기",
+    "Tooltip": "볼륨 올리기"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "볼륨 낮추기", 
+    "Tooltip": "볼륨 낮추기"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "음소거", 
+    "Tooltip": "음소거"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "볼륨", 
+    "Tooltip": "볼륨 제어"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "화면 밝기", 
+    "Tooltip": "화면 밝기 조정"
+  }
+}

@@ -1,0 +1,21 @@
+﻿{
+  "Description": "ブラウザをコントロールします", 
+  "Name": "ブラウザー", 
+  "Category": "ブラウザー",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "戻る", 
+    "Tooltip": "前のページに戻ります"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "前進", 
+    "Tooltip": "次のページに移動します"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "更新", 
+    "Tooltip": "現在のページを更新します"　
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "コレクション", 
+    "Tooltip": "現在のページをブックマークします"　
+  }
+}

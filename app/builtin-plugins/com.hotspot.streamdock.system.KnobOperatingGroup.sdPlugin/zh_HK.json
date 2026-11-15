@@ -1,0 +1,9 @@
+{
+  "Description": "激活旋鈕操作組", 
+  "Category": "旋鈕操作組", 
+  "Name": "旋鈕操作組", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "旋鈕操作組", 
+    "Tooltip": "激活旋鈕操作組"
+  }
+}

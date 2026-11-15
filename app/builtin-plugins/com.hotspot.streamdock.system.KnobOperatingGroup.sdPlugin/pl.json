@@ -1,0 +1,9 @@
+{
+  "Description": "Włącz grupę działania pokrętła", 
+  "Category": "Grupa akcji pokrętła", 
+  "Name": "Grupa akcji pokrętła", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "Grupa akcji pokrętła", 
+    "Tooltip": "Włącz grupę działania pokrętła"
+  }
+}

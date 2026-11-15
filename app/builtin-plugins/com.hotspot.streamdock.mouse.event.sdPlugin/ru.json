@@ -1,0 +1,8 @@
+{
+  "Description": "Имитировать события мыши", 
+  "Name": "события мыши", 
+  "com.hotspot.streamdock.mouse.event": {
+    "Name": "события мыши", 
+    "Tooltip": "Имитировать события мыши"
+  }
+}

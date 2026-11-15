@@ -1,0 +1,8 @@
+{
+  "Description": "Naviguer jusqu’à la scène suivante/précédente",
+  "Name": "Changement de scène",
+  "com.hotspot.streamdock.profile.rotate": {
+    "Name": "Changement de scène",
+    "Tooltip": "Basculer vers une autre scène préconfigurée"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/launch_white", 
+      "Name": "Open", 
+      "States": [
+        {
+          "Image": "Images/btn_launch"
+        }
+      ], 
+      "Tooltip": "Open an app, file or folder", 
+      "SupportTutorial": true,
+  "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-the-open-function-close-function-on-streamdock",
+      "UUID": "com.hotspot.streamdock.system.open"
+    }
+    ,
+    {
+      "Icon": "Images/launch_white", 
+      "Name": "OpenApps", 
+      "States": [
+        {
+          "Image": ""
+        }
+      ], 
+      "Tooltip": "Open an app, file or folder", 
+      "UUID": "com.hotspot.streamdock.system.openApps"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Open an app, file or folder", 
+  "Name": "Open", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

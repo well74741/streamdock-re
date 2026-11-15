@@ -1,0 +1,8 @@
+{
+  "Description": "Przypisz przycisk do skrótu klawiszowego", 
+  "Name": "Przełącznik skrótu", 
+  "com.hotspot.streamdock.system.hotkeySwitch": {
+    "Name": "Przełącznik skrótu", 
+    "Tooltip": "Przypisz przycisk do skrótu klawiszowego"
+  }
+}

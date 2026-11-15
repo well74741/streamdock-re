@@ -1,0 +1,37 @@
+{
+  "Description": "Быстрое управление", 
+  "Name": "Быстрое управление", 
+  "Category": "Быстрое управление",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "спать", 
+    "Tooltip": "Переведите компьютер в спящий режим. Если компьютер поддерживает спящий режим, он перейдет в спящий режим."
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "Переключить экран", 
+    "Tooltip": "Переключить экран"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "Распознавание речи", 
+    "Tooltip": "Включите распознавание речи"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop": {
+    "Name": "Показать рабочий стол", 
+    "Tooltip": "Показать рабочий стол"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "немой", 
+    "Tooltip": "немой"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "уменьшить громкость", 
+    "Tooltip": "уменьшить громкость"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "Увеличьте громкость", 
+    "Tooltip": "Увеличьте громкость"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "микрофон", 
+    "Tooltip": "Отключить/включить микрофон"
+  }
+}

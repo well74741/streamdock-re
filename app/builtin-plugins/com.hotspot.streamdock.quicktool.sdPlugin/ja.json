@@ -1,0 +1,41 @@
+﻿{
+  "Description": "クイックコントロール", 
+  "Name": "クイックコントロール", 
+  "Category": "クイックコントロール",  
+  "com.hotspot.streamdock.quicktool.calculator": {
+    "Name": "電卓", 
+    "Tooltip": "電卓をクリックします"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.emoticons": {
+    "Name": "絵文字", 
+    "Tooltip": "絵文字をクリックします"
+  },
+  "com.hotspot.streamdock.quicktool.mail": {
+    "Name": "メール ", 
+    "Tooltip": "メールをクリックします"
+  },
+  "com.hotspot.streamdock.quicktool.music": {
+    "Name": "音楽", 
+    "Tooltip": "音楽をクリックします"
+  },
+  "com.hotspot.streamdock.quicktool.homepage": {
+    "Name": "ホームページ", 
+    "Tooltip": "ホームページをクリックします"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.notification": {
+    "Name": "通知", 
+    "Tooltip": "通知をクリックします"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.taskmanager": {
+    "Name": "タスクマネージャ", 
+    "Tooltip": "タスクマネージャーをクリックします"
+  },
+  "com.hotspot.streamdock.quicktool.controlpanel": {
+    "Name": "コントロールパネル", 
+    "Tooltip": "コントロールパネルをクリックします"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.searchbar": {
+    "Name": "検索バー", 
+    "Tooltip": "検索バーをクリックします"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "Description": "Lettore audio", 
+  "Name": "Lettore audio", 
+  "com.hotspot.streamdock.soundboard.playaudio": {
+    "Name": "Riproduci audio", 
+    "Tooltip": "Riprodurre file audio come clip audio, clip musicali o effetti sonori"
+  }, 
+  "com.hotspot.streamdock.soundboard.stopaudioplay": {
+    "Name": "Interrompi audio", 
+    "Tooltip": "Interrompere la riproduzione di tutti i file audio"
+  }
+}

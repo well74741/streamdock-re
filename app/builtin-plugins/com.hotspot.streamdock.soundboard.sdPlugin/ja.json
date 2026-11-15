@@ -1,0 +1,12 @@
+﻿{
+  "Description": "オーディオプレーヤー", 
+  "Name": "オーディオプレーヤー", 
+  "com.hotspot.streamdock.soundboard.playaudio": {
+    "Name": "オーディオを再生する", 
+    "Tooltip": "サウンドバイト、音響効果またはミュージッククリップを再生します"
+  }, 
+  "com.hotspot.streamdock.soundboard.stopaudioplay": {
+    "Name": "オーディオを停止する", 
+    "Tooltip": "すべてのオーディオの再生を停止します"
+  }
+}

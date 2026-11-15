@@ -1,0 +1,104 @@
+{
+  "Description": "Touchbar وظيفة", 
+  "Name": "Touchbar", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "مركز الإرسال",
+    "Tooltip": "مركز الإرسال"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "ركز",
+    "Tooltip": "ركز"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "Siri",
+    "Tooltip": "استيقظSiri"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "مركز إعلام",
+    "Tooltip": "مركز إعلام"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "لا تزعج الوضع",
+    "Tooltip": "لا تزعج الوضع"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "لقطة شاشة",
+    "Tooltip": "لقطة شاشة"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "الإملاء",
+    "Tooltip": "الإملاء"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "مدخل",
+    "Tooltip": "مدخل"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "منصة الإطلاق",
+    "Tooltip": "منصة الإطلاق"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "أظهر سطح المكتب",
+    "Tooltip": "أظهر سطح المكتب"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "شاشة التوقف",
+    "Tooltip": "شاشة التوقف"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "قفل الشاشة",
+    "Tooltip": "قفل الشاشة"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "ينام",
+    "Tooltip": "ينام"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "زيادة سطوع الشاشة",
+    "Tooltip": "زيادة سطوع الشاشة"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "تقليل سطوع الشاشة",
+    "Tooltip": "تقليل سطوع الشاشة"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "القطعة السابقة",
+    "Tooltip": "القطعة السابقة"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "الترجيع",
+    "Tooltip": "الترجيع"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "تشغيل / إيقاف مؤقت",
+    "Tooltip": "تشغيل / إيقاف مؤقت"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "سريع إلى الأمام",
+    "Tooltip": "سريع إلى الأمام"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "الأغنية التالية",
+    "Tooltip": "الأغنية التالية"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "علي الصوت",
+    "Tooltip": "علي الصوت"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "خفض حجم", 
+    "Tooltip": "خفض حجم"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "صامت", 
+    "Tooltip": "صامت"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "حجم", 
+    "Tooltip": "حجم السيطرة"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "سطوع الشاشة", 
+    "Tooltip": "ضبط سطوع الشاشة"
+  }
+}

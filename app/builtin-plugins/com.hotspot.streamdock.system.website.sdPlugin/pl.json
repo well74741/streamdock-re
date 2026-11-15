@@ -1,0 +1,8 @@
+{
+  "Description": "Otwórz skonfigurowaną stronę internetową", 
+  "Name": "Strona internetowa", 
+  "com.hotspot.streamdock.system.website": {
+    "Name": "Strona internetowa", 
+    "Tooltip": "Otwórz URL"
+  }
+}

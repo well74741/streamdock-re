@@ -1,0 +1,32 @@
+{
+  "Description": "멀티 액션",
+  "Name": "멀티 액션",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "멀티 액션",
+    "Tooltip": "다중 작업"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "随机操作",
+    "Tooltip": "执行一项随机操作"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "딜레이",
+    "Tooltip": "액션사이에 딜레이 추가"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "액션 캐러셀",
+    "Tooltip": "플러그인과 모듈 간 자동 전환"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "액션 사이클",
+    "Tooltip": "한 단계로 플러그인과 플러그인 간 전환"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "조작 바퀴",
+    "Tooltip": "다이얼의 여러 작업 반복 실행"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "조작 트리거",
+    "Tooltip": "작동을 위해 회전 손잡이"
+  }
+}

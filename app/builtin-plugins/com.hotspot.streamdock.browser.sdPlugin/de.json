@@ -1,0 +1,21 @@
+{
+  "Description": "Kontrollieren Sie den Browser", 
+  "Name": "Browser", 
+  "Category": "Browser",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "Rückgabe", 
+    "Tooltip": "Zurück zur vorherigen Seite"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "Vorrücken", 
+    "Tooltip": "Gehe zur nächsten Seite"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "Gerötet", 
+    "Tooltip": "Aktualisieren Sie die aktuelle Seite"
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "Sammlung", 
+    "Tooltip": "Setzen Sie ein Lesezeichen für die aktuelle Seite"
+  }
+}

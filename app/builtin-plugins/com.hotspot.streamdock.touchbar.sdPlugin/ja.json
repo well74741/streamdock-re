@@ -1,0 +1,104 @@
+﻿{
+  "Description": "タッチバー機能", 
+  "Name": "タッチバー", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "配属センター",
+    "Tooltip": "配属センター"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "検索にフォーカスします",
+    "Tooltip": "検索にフォーカスします"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "シリ",
+    "Tooltip": "シリを起こします"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "通知センター",
+    "Tooltip": "通知センター"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "サイレントモード",
+    "Tooltip": "サイレントモード"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "スクリーンショットを撮ります",
+    "Tooltip": "スクリーンショットを撮ります"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "ディクテーション",
+    "Tooltip": "ディクテーション"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "方式を入力します",
+    "Tooltip": "方式を入力します"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "ランチパッド",
+    "Tooltip": "ランチパッド"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "デスクトップを表示します",
+    "Tooltip": "デスクトップを表示します"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "デスクトップセーバー",
+    "Tooltip": "デスクトップセーバー"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "画面ロック",
+    "Tooltip": "画面ロック"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "スリープ",
+    "Tooltip": "スリープ"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "画面の明るさを上げます",
+    "Tooltip": "画面の明るさを上げます"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "画面の明るさを下げる",
+    "Tooltip": "画面の明るさを下げる"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "前の曲",
+    "Tooltip": "前の曲"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "早戻し",
+    "Tooltip": "早戻し"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "再生/一時停止",
+    "Tooltip": "再生/一時停止"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "早送り",
+    "Tooltip": "早送り"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "次の曲",
+    "Tooltip": "次の曲"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "ボリュームアップ",
+    "Tooltip": "ボリュームアップ"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "ボリュームダウン", 
+    "Tooltip": "ボリュームダウン"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "ミュート", 
+    "Tooltip": "ミュート"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "音量", 
+    "Tooltip": "おんりょうせいぎょ"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "スクリーンの輝度", 
+    "Tooltip": "画面の明るさを調整する"
+  }
+}

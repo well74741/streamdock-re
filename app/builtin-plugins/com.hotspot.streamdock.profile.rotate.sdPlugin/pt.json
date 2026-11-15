@@ -1,0 +1,8 @@
+{
+  "Description": "Navegue até a cena seguinte/anterior", 
+  "Name": "Comutação de cena", 
+  "com.hotspot.streamdock.profile.rotate": {
+    "Name": "Comutação de cena", 
+    "Tooltip": "Alternar para outra cena pré-configurada"
+  }
+}

@@ -264,6 +264,10 @@ def main() -> int:
         "--paths", APP,
         "--add-data", f"{os.path.join(APP, 'ui')}{SEP}ui",
         "--add-data", f"{os.path.join(APP, 'assets', 'wallpaper.jpg')}{SEP}assets",
+        # 官方内置插件（com.hotspot.streamdock.*）随包带走：对方没装官方驱动也能用
+        "--add-data", f"{os.path.join(APP, 'builtin-plugins')}{SEP}builtin-plugins",
+        # 默认场景（音乐控制台 / 相册1 + 相册图片）：首次运行时装进用户数据目录
+        "--add-data", f"{os.path.join(APP, 'presets')}{SEP}presets",
         "--add-data", f"{os.path.join(APP, 'icon.ico')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'icon.png')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'config.example.json')}{SEP}.",

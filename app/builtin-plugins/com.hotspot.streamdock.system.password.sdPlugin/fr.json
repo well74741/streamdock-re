@@ -1,0 +1,8 @@
+{
+  "Description": "Entrez une chaîne de mot de passe pré-éditée", 
+  "Name": "Mot de passe", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "Mot de passe", 
+    "Tooltip": "Entrez une chaîne de mot de passe pré-éditée"
+  }
+}

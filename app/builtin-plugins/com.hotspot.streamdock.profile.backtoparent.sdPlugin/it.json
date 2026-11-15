@@ -1,0 +1,8 @@
+{
+  "Description": "Torna alla schermata precedente", 
+  "Name": "Indietro", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "Indietro", 
+    "Tooltip": "Torna alla schermata precedente"
+  }
+}

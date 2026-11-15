@@ -1,0 +1,9 @@
+{
+    "Description": "Introduzca una cadena de contraseña preeditada", 
+    "Name": "Contraseña", 
+    "com.hotspot.streamdock.system.password": {
+      "Name": "Contraseña", 
+      "Tooltip": "Introduzca una cadena de contraseña preeditada"
+    }
+}
+  

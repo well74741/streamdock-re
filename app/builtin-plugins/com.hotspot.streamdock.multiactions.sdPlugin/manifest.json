@@ -1,0 +1,88 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/multiAction",
+      "Name": "Multi Action",
+      "States": [
+        {
+          "Image": "Images/btn_multiAction"
+        }
+      ], 
+      "Tooltip": "Execute multiple actions",
+      "UUID": "com.hotspot.streamdock.multiactions.routine",
+	    "SupportedInMultiActions": false
+    },
+    {
+      "Icon": "Images/multiActionLunBo",
+      "Name": "Action Carousel",
+      "States": [
+        {
+          "Image": "Images/btn_multiAction_lunBo"
+        }
+      ], 
+      "Tooltip": "Execute multiple actions",
+      "UUID": "com.hotspot.streamdock.multiactions.LunBo",
+	    "SupportedInMultiActions": false
+    },{
+      "Icon": "Images/multiActionToggle",
+      "Name": "Action Cycle",
+      "States": [
+        {
+          "Image": "Images/btn_multiAction_toggle"
+        }
+      ], 
+      "Tooltip": "Execute multiple actions",
+      "UUID": "com.hotspot.streamdock.multiactions.toggle",
+	    "SupportedInMultiActions": false
+    },
+    {
+      "Icon": "Images/ActionWheel",
+      "Name": "Multi Action ActionWheel",
+      "Controllers": [
+        "Knob"
+      ],
+      "States": [
+        {
+          "Image": "Images/btn_multiAction_ActionWheel"
+        }
+      ], 
+      "Tooltip": "Execute multiple actions",
+      "UUID": "com.hotspot.streamdock.multiactions.ActionWheel",
+	    "SupportedInMultiActions": false
+    },
+    {
+      "Icon": "Images/ActionTrigger",
+      "Name": "Multi Action ActionTrigger",
+      "States": [
+        {
+          "Image": "Images/btn_multiAction_ActionTrigger"
+        }
+      ], 
+      "Controllers": [
+        "Knob"
+      ],
+      "Tooltip": "Execute multiple actions",
+      "UUID": "com.hotspot.streamdock.multiactions.ActionTrigger",
+	    "SupportedInMultiActions": false
+    },
+    {
+      "Icon": "Images/delay",
+      "Name": "Delay",
+      "States": [
+        {
+          "Image": "Images/btn_duration"
+        }
+      ], 
+      "Tooltip": "Pause the actions sequence",
+      "UUID": "com.hotspot.streamdock.multiactions.delay",
+	    "SupportedInMultiActions": true,
+      "OnlySupportedInMultiActions": true
+    }
+  ],
+  "Author": "Hotspot", 
+  "Description": "Multi Action",
+  "Name": "Multi Action",
+  "URL": "http://www.hotspotek.com.cn/",
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

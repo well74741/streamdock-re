@@ -1,0 +1,8 @@
+﻿{
+  "Description": "次/前のシーンに移動します",
+  "Name": "シーンシフト",
+  "com.hotspot.streamdock.profile.rotate": {
+    "Name": "シーンシフト",
+    "Tooltip": "別の設定済みのシーンに切り替えます"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "Вернуться к предыдущему интерфейсу", 
+  "Name": "возвращаться", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "возвращаться", 
+    "Tooltip": "Вернуться к предыдущему интерфейсу"
+  }
+}

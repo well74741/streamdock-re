@@ -1,0 +1,23 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/text_white", 
+      "Name": "Text", 
+      "SupportTutorial": true,
+  "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-text-function-on-streamdock",
+      "States": [
+        {
+          "Image": "Images/btn_text"
+        }
+      ], 
+      "Tooltip": "Type a precomposed text string", 
+      "UUID": "com.hotspot.streamdock.system.text"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Type a precomposed text string", 
+  "Name": "Text", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

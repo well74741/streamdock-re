@@ -1,0 +1,10 @@
+{
+  "Description": "تمكين مجموعة عمل المقبض", 
+  "Category": "مجموعة إجراءات المقبض",
+  "Name": "مجموعة إجراءات المقبض", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "مجموعة إجراءات المقبض", 
+    "Tooltip": "تمكين مجموعة عمل المقبض"
+  }
+  
+}

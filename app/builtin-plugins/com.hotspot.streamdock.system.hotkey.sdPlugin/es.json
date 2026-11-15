@@ -1,0 +1,9 @@
+{
+    "Description": "Activar un comando de tecla", 
+    "Name": "Hotkey", 
+    "com.hotspot.streamdock.system.hotkey": {
+      "Name": "Hotkey", 
+      "Tooltip": "Activar un comando de tecla"
+    }
+}
+  

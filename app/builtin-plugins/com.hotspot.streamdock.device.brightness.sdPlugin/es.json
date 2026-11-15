@@ -1,0 +1,12 @@
+{
+  "Description": "Ajusta el brillo de tu dispositivo",
+  "Name": "Brillo",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "Brillo",
+    "Tooltip": "Ajusta el brillo de tu dispositivo"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "Apagar la pantalla",
+    "Tooltip": "Apagar la pantalla del dispositivo"
+  }
+}

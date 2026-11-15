@@ -1,0 +1,8 @@
+{
+  "Description": "Activer une commande de touche", 
+  "Name": "HotkeySwitch", 
+  "com.hotspot.streamdock.system.hotkeySwitch": {
+    "Name": "HotkeySwitch", 
+    "Tooltip": "Activer une commande de touche"
+  }
+}

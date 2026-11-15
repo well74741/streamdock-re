@@ -1,0 +1,37 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/play_white", 
+      "Name": "Play Audio", 
+      "States": [
+        {
+          "Image": "Images/btn_play"
+        },
+        {
+          "Image": "Images/btn_playing"
+        }
+      ], 
+      "Tooltip": "Play a sound bite, audio effect or music clip", 
+      "UUID": "com.hotspot.streamdock.soundboard.playaudio"
+    },
+	  {
+      "Icon": "Images/stop_play_white", 
+      "Name": "Stop Audio", 
+      "States": [
+        {
+          "Image": "Images/btn_stop_play"
+        }
+      ], 
+      "Tooltip": "Stop all Soundboard playback", 
+      "UUID": "com.hotspot.streamdock.soundboard.stopaudioplay"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Soundboard", 
+  "Name": "Soundboard", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "SupportTutorial": true,
+  "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-the-audio-player-feature-on-streamdock",
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "أدخل سلسلة نصية تم تحريرها مسبقًا", 
+  "Name": "نص", 
+  "com.hotspot.streamdock.system.text": {
+    "Name": "نص", 
+    "Tooltip": "أدخل سلسلة نصية تم تحريرها مسبقًا"
+  }
+}

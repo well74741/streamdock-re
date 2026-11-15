@@ -1,0 +1,12 @@
+{
+  "Description": "ضبط سطوع الجهاز",
+  "Name": "سطوع",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "سطوع",
+    "Tooltip": "ضبط سطوع الجهاز"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "إيقاف تشغيل الشاشة",
+    "Tooltip": "إيقاف تشغيل الجهاز"
+  }
+}

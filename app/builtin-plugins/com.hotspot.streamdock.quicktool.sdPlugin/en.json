@@ -1,0 +1,41 @@
+{
+  "Description": "Quick Control", 
+  "Name": "Quick Control", 
+  "Category": "Quick Control",  
+  "com.hotspot.streamdock.quicktool.calculator": {
+    "Name": "Calculator", 
+    "Tooltip": "Open the calculator"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.emoticons": {
+    "Name": "Emoticons", 
+    "Tooltip": "Open the emoticons"
+  },
+  "com.hotspot.streamdock.quicktool.mail": {
+    "Name": "Mail", 
+    "Tooltip": "Open the mail"
+  },
+  "com.hotspot.streamdock.quicktool.music": {
+    "Name": "Music", 
+    "Tooltip": "Turn on the music"
+  },
+  "com.hotspot.streamdock.quicktool.homepage": {
+    "Name": "Home page", 
+    "Tooltip": "Open the home page"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.notification": {
+    "Name": "Notification", 
+    "Tooltip": "Open notification"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.taskmanager": {
+    "Name": "Task Manager", 
+    "Tooltip": "Open the task manager"
+  },
+  "com.hotspot.streamdock.quicktool.controlpanel": {
+    "Name": "Control panel", 
+    "Tooltip": "Open the Control panel"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.searchbar": {
+    "Name": "Search bar", 
+    "Tooltip": "Open the search bar"
+  }
+}

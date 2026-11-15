@@ -1,0 +1,92 @@
+{
+  "gap": 27,
+  "flip": false,
+  "ledOffset": 20,
+  "ledReverse": false,
+  "rotation": 0,
+  "effectReverse": false,
+  "fit": "cover",
+  "zoom": 1.0,
+  "ox": 0,
+  "oy": 0,
+  "page": 0,
+  "standby": 300,
+  "standbyBrightness": 60,
+  "lightingOnly": false,
+  "wallpaperEnabled": true,
+  "customScene": "自定义",
+  "activeScene": "音乐控制台",
+  "pages": [
+    {
+      "id": "43ffd9164b",
+      "name": "音乐控制台",
+      "images": {
+        "11": "sd_652de61e9ae4c6a4.gif",
+        "7": "sd_c324ffd1337c8925.gif",
+        "3": "sd_3b0bcb5a6f49b2ee.gif",
+        "8": "sd_fd3fc814eae4e494.png",
+        "13": "sd_533e076189094161.gif",
+        "9": "sd_7fe3fccb7a85985b.gif",
+        "5": "sd_4e0b71ce5b55491f.gif",
+        "15": "sd_d0e1ce526753892c.png"
+      },
+      "actions": {
+        "11": {
+          "type": "media",
+          "action": "stop"
+        },
+        "7": {
+          "type": "media",
+          "action": "prev"
+        },
+        "3": {
+          "type": "media",
+          "action": "voldown"
+        },
+        "8": {
+          "type": "media",
+          "action": "playpause"
+        },
+        "13": {
+          "type": "media",
+          "action": "volup"
+        },
+        "9": {
+          "type": "media",
+          "action": "next"
+        },
+        "5": {
+          "type": "nav",
+          "name": "下一场景"
+        },
+        "15": {
+          "type": "media",
+          "action": "mute"
+        },
+        "16": {
+          "type": "nav",
+          "name": "上一页"
+        },
+        "17": {
+          "type": "nav",
+          "name": "主页"
+        },
+        "18": {
+          "type": "nav",
+          "name": "下一页"
+        }
+      },
+      "styles": {},
+      "gestures": {
+        "17": {
+          "long": {
+            "type": "console",
+            "op": "screen"
+          }
+        }
+      }
+    }
+  ],
+  "wallpaper": "assets/wallpaper.jpg",
+  "officialSource": "E2K9M71C-5521-2T0Q-1NTA-II0QV114FERJ.sdProfile"
+}

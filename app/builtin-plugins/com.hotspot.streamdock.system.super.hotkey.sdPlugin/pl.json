@@ -1,0 +1,8 @@
+{
+  "Description": "Przypisz przycisk do skrótu klawiszowego", 
+  "Name": "Super skróty klawiszy", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "Super skróty klawiszy", 
+    "Tooltip": "Może ominąć blokowanie gier"
+  }
+}

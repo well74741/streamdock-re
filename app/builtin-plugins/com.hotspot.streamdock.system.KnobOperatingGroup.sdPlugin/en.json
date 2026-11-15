@@ -1,0 +1,9 @@
+{
+  "Description": "Activate the knob operation group", 
+  "Category": "Knob Action Group", 
+  "Name": "Knob Action Group", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "Knob Action Group", 
+    "Tooltip": "Activate the knob operation group"
+  }
+}

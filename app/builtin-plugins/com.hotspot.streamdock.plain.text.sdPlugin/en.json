@@ -1,0 +1,8 @@
+{
+  "Description": "Plain text display", 
+  "Name": "Text", 
+  "com.hotspot.streamdock.plain.text": {
+    "Name": "Text", 
+    "Tooltip": "Plain text display"
+  }
+}

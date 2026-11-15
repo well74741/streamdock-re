@@ -1,0 +1,21 @@
+{
+  "Description": "Браузер управления", 
+  "Name": "Браузер", 
+  "Category": "Браузер",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "возвращаться", 
+    "Tooltip": "Вернуться на предыдущую страницу"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "вперед, продолжать", 
+    "Tooltip": "Перейти на следующую страницу"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "обновить", 
+    "Tooltip": "Обновить текущую страницу"
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "собирать", 
+    "Tooltip": "Добавить в закладки текущую страницу"
+  }
+}

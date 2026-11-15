@@ -1,0 +1,9 @@
+{
+  "Description": "Knopfbedienungsgruppe ausführen", 
+  "Category": "Drehknopf-Aktionsgruppe", 
+  "Name": "Drehknopf-Aktionsgruppe", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "Drehknopf-Aktionsgruppe", 
+    "Tooltip": "Knopfbedienungsgruppe ausführen"
+  }
+}

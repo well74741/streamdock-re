@@ -1,0 +1,9 @@
+{
+    "Description": "Activar un comando de tecla", 
+    "Name": "Súper tecla caliente", 
+    "com.hotspot.streamdock.system.super.hotkey": {
+      "Name": "Súper tecla caliente", 
+      "Tooltip": "Puede evitar el bloqueo del juego"
+    }
+}
+  

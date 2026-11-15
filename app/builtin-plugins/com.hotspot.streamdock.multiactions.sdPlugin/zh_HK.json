@@ -1,0 +1,32 @@
+{
+  "Description": "操作流",
+  "Name": "操作流",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "操作流",
+    "Tooltip": "執行多項操作"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "隨機操作",
+    "Tooltip": "執行一項隨機操作"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "延遲",
+    "Tooltip": "在操作和操作之間添加延遲"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "輪播",
+    "Tooltip": "在插件和模組之間自動切換"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "單步",
+    "Tooltip": "在插件和插件之間單步切換"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "操作輪",
+    "Tooltip": "旋鈕上多個操作循環執行"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "操作觸發器",
+    "Tooltip": "轉動旋鈕來執行操作"
+  }
+}

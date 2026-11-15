@@ -1,0 +1,37 @@
+{
+  "Description": "Obsługa PC", 
+  "Name": "Obsługa PC", 
+  "Category": "Obsługa PC",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "Uśpij", 
+    "Tooltip": "Usypia komputer"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "Zmiana ekranu", 
+    "Tooltip": "Zmiana ekranu"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "Rozpoznawanie głosu", 
+    "Tooltip": "Włącz rozpoznawanie głosu"
+  }, 
+  "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop": {
+    "Name": "Pokaż pulpit", 
+    "Tooltip": "Kliknij aby przejść na pulpit"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "Wycisz", 
+    "Tooltip": "Wycisza wszystkie dźwięki"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "Głośność -", 
+    "Tooltip": "Zmniejsza głośność"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "Głośność +", 
+    "Tooltip": "Zwiększa głośność"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "Mikrofon",
+    "Tooltip": "Włącza/wyłącza wyciszenie mikrofonu"
+  }
+}

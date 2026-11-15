@@ -1,0 +1,33 @@
+{
+  "Description": "Schnelle Kontrolle", 
+  "Name": "Schnelle Kontrolle", 
+  "Category": "Schnelle Kontrolle",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "Schlafen", 
+    "Tooltip": "Versetzen Sie Ihren PC in den Ruhezustand oder in den Ruhezustand, wenn Ihr PC den Ruhezustand unterstützt"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "Bildschirm wechseln", 
+    "Tooltip": "Bildschirm wechseln"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "Spracherkennung", 
+    "Tooltip": "Spracherkennung aktivieren"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "Stumm", 
+    "Tooltip": "Stumm"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "Verringern Sie die Lautstärke", 
+    "Tooltip": "Verringern Sie die Lautstärke"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "Erhöhen Sie die Lautstärke", 
+    "Tooltip": "Erhöhen Sie die Lautstärke"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "Mikrofon", 
+    "Tooltip": "Stummschalten/Aufheben der Stummschaltung des Mikrofons"
+  }
+}

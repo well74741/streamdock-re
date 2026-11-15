@@ -1,0 +1,33 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/youtube_post_message_white", 
+      "Name": "Chat Message", 
+      "States": [
+        {
+          "Image": "Images/btn_youtube_post_message"
+        }
+      ], 
+      "Tooltip": "Post a precomposed YouTube chat message", 
+      "UUID": "com.hotspot.streamdock.youtube.chatmessage"
+    },
+    {
+      "Icon": "Images/youtube_show_viewers_white", 
+      "Name": "Viewers", 
+      "States": [
+        {
+          "Image": "Images/btn_youtube_show_viewers"
+        }
+      ], 
+      "Tooltip": "Show number of YouTube live stream viewers", 
+      "UUID": "com.hotspot.streamdock.youtube.viewers",
+	    "SupportedInMultiActions": false
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Control YouTube.", 
+  "Name": "YouTube", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

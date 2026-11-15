@@ -1,0 +1,8 @@
+{
+  "Description": "미리 지정된 텍스트", 
+  "Name": "텍스트", 
+  "com.hotspot.streamdock.system.text": {
+    "Name": "텍스트", 
+    "Tooltip": "미리 지정된 텍스트"
+  }
+}

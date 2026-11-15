@@ -1,0 +1,32 @@
+{
+  "Description": "Akcja wielokrotna", 
+  "Name": "Akcja wielokrotna", 
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "Akcja wielokrotna", 
+    "Tooltip": "Przeprowadź ciąg akcji"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "Losowa akcja", 
+    "Tooltip": "Przeprowadź losową akcję"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "Opóźnienie",
+    "Tooltip": "Dodaj opóźnienie między akcjami"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "Karuzela akcji",
+    "Tooltip": "Automatycznie przełączaj między wtyczkami i modułami"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "Cykl akcji",
+    "Tooltip": "Przełączaj się między wtyczkami i wtyczkami w jednym kroku"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "Koło robocze",
+    "Tooltip": "Wiele operacji na pokręcie są wykonywane w pętli"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "Wyzwalacz operacji",
+    "Tooltip": "Pokrętło transferu do wykonywania operacji"
+  }
+}

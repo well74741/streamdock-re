@@ -1,0 +1,12 @@
+﻿{
+  "Description": "ユーチューブをコントロールします。", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "チャットメッセージ", 
+    "Tooltip": "事前に作成された YouTube チャットメッセージを投稿します"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "視聴者数", 
+    "Tooltip": "YouTube のライブ視聴者数を表示します。"
+  }
+}

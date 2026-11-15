@@ -1,0 +1,12 @@
+{
+  "Description": "Medien-Playback steuern", 
+  "Name": "Multimedia", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "Multimedia", 
+    "Tooltip": "Medien-Playback steuern"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "Systemlautstärke", 
+    "Tooltip": "Kontrollieren Sie die Systemlautstärke"
+  }
+}

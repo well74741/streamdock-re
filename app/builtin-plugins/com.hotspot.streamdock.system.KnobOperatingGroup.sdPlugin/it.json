@@ -1,0 +1,9 @@
+{
+  "Description": "Attiva il gruppo di operazioni tramite manopola", 
+  "Category": "Gruppo azioni manopola", 
+  "Name": "Gruppo azioni manopola", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "Gruppo azioni manopola", 
+    "Tooltip": "Attiva il gruppo di operazioni tramite manopola"
+  }
+}

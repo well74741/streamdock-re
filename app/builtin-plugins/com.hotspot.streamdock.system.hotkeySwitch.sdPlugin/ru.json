@@ -1,0 +1,8 @@
+{
+  "Description": "Активировать горячую клавишу", 
+  "Name": "Тепловой переключение", 
+  "com.hotspot.streamdock.system.hotkeySwitch": {
+    "Name": "Тепловой переключение", 
+    "Tooltip": "Активировать горячую клавишу"
+  }
+}

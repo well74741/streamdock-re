@@ -1,0 +1,8 @@
+{
+  "Description": "Simulation d’un événement de souris", 
+  "Name": "Événement de souris", 
+  "com.hotspot.streamdock.mouse.event": {
+    "Name": "Événement de souris", 
+    "Tooltip": "Simulation d’un événement de souris"
+  }
+}

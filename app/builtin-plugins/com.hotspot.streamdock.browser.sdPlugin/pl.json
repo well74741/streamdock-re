@@ -1,0 +1,21 @@
+{
+  "Description": "Zarządzanie przeglądarką", 
+  "Name": "Przeglądarka", 
+  "Category": "Przeglądarka",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "Wstecz", 
+    "Tooltip": "Przejdź do poprzedniej strony"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "Dalej", 
+    "Tooltip": "Przejdź do następnej strony"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "Odśwież", 
+    "Tooltip": "Odśwież stronę"
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "Dodaj do zakładek", 
+    "Tooltip": "Dodaje aktualną stronę do zakładek"
+  }
+}

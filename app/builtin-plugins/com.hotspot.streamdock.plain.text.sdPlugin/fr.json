@@ -1,0 +1,8 @@
+{
+  "Description": "Affichage en texte brut",
+  "Name": "Texte",
+  "com.hotspot.streamdock.plain.text": {
+    "Name": "Texte",
+    "Tooltip": "Affichage en texte brut"
+  }
+}

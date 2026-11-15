@@ -1,0 +1,12 @@
+{
+  "Description": "Passen Sie die Helligkeit Ihres Geräts an",
+  "Name": "Helligkeit",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "Helligkeit",
+    "Tooltip": "Passen Sie die Helligkeit Ihres Geräts an"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "Bildschirm ausschalten",
+    "Tooltip": "Das Gerät ausschalten"
+  }
+}

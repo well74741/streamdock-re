@@ -1,0 +1,22 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/create_folder_white", 
+      "Name": "Create Folder", 
+      "States": [
+        {
+          "Image": "Images/btn_custom_folder"
+        }
+      ], 
+      "Tooltip": "Create a folder", 
+      "UUID": "com.hotspot.streamdock.profile.openchild",
+	  "SupportedInMultiActions": false
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Create Folder", 
+  "Name": "Create Folder", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

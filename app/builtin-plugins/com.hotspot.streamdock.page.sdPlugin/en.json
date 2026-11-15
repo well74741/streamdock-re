@@ -1,0 +1,20 @@
+{
+  "Description": "Pages navigation", 
+  "Name": "Pages",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "Previous Page", 
+    "Tooltip": "Switch to previous Page"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "Next Page", 
+    "Tooltip": "Switch to next Page"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "Go to Page", 
+    "Tooltip": "Switch to specified page number"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "Page Indicator",
+    "Tooltip": "Displays the page number of the current profile"
+  }
+}

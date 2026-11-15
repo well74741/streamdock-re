@@ -1,0 +1,8 @@
+{
+  "Description": "Einen Tastenbefehl ausführen", 
+  "Name": "HotkeySwitch", 
+  "com.hotspot.streamdock.system.hotkeySwitch": {
+    "Name": "HotkeySwitch", 
+    "Tooltip": "Einen Tastenbefehl ausführen"
+  }
+}

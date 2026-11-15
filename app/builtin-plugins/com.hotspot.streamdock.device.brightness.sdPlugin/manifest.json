@@ -1,0 +1,38 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/brightness",
+      "Name": "Brightness", 
+      "SupportTutorial": true,
+  "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-adjust-device-brightness-and-light-brightness",
+      "States": [
+        {
+          "Image": ""
+        }
+      ], 
+      "Controllers": [ "Keypad", "Knob" ],
+      "Tooltip": "Adjust the brightness of your device", 
+      "UUID": "com.hotspot.streamdock.device.brightness"
+    },
+    {
+      "Icon": "Images/Sleep.png",
+      "Name": "devsleep", 
+      "States": [
+        {
+          "Image": "Images/Sleep"
+        }
+      ], 
+      "SupportTutorial": true,
+      "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-page-switching-scene-sw",
+      "Controllers": [ "Keypad"],
+      "Tooltip": "control device to sleep screen", 
+      "UUID": "com.hotspot.streamdock.device.devsleep"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Adjust the brightness of your device", 
+  "Name": "Brightness", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

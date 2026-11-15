@@ -1,0 +1,119 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/browserBackAction", 
+      "Name": "Back", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": true,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 37,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/browserBackDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Return to the previous page", 
+      "UUID": "com.hotspot.streamdock.hotkey.browser.back"
+    },
+    {
+      "Icon": "Images/browserForwardAction", 
+      "Name": "Forward", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": true,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 39,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/browserForwardDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Go to the next page", 
+      "UUID": "com.hotspot.streamdock.hotkey.browser.forward"
+    },
+    {
+      "Icon": "Images/browserRefreshAction", 
+      "Name": "Refresh", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": true,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 82,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/browserRefreshDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Refresh the current page", 
+      "UUID": "com.hotspot.streamdock.hotkey.browser.refresh"
+    },
+    {
+      "Icon": "Images/browserCollectAction", 
+      "Name": "Collect", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": true,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 68,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/browserCollectDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Bookmark the current page", 
+      "UUID": "com.hotspot.streamdock.hotkey.browser.collect"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Category": "Browser",
+  "Description": "Control browser", 
+  "Name": "Browser", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

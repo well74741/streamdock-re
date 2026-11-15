@@ -1,0 +1,32 @@
+{
+  "Description": "إجراءات متعددة",
+  "Name": "إجراءات متعددة",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "إجراءات متعددة",
+    "Tooltip": "تنفيذ عمليات متعددة"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "عملية عشوائية",
+    "Tooltip": "تنفيذ عملية عشوائية"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "تأخر",
+    "Tooltip": "إضافة تأخير بين العمليات"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "دوّار الإجراءات",
+    "Tooltip": "التبديل تلقائيًا بين المكونات الإضافية والوحدات"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "دورة الإجراءات",
+    "Tooltip": "التبديل بين المكونات الإضافية والمكونات الإضافية في خطوة واحدة"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "تشغيل عجلة",
+    "Tooltip": "حلقة تنفيذ عمليات متعددة على مقبض الباب"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "عملية الزناد",
+    "Tooltip": "نقل مقبض الباب لتنفيذ العملية"
+  }
+}

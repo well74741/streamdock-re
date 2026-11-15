@@ -1,0 +1,12 @@
+{
+  "Description": "Control YouTube.", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "Chat Message", 
+    "Tooltip": "Post a precomposed YouTube chat message"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "Viewers", 
+    "Tooltip": "Show number of YouTube live stream viewers"
+  }
+}

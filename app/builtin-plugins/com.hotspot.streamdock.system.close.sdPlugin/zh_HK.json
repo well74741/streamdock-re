@@ -1,0 +1,8 @@
+{
+  "Description": "打開應用、文件或文件夾", 
+  "Name": "關閉", 
+  "com.hotspot.streamdock.system.close": {
+    "Name": "關閉", 
+    "Tooltip": "打開應用、文件或文件夾"
+  }
+}

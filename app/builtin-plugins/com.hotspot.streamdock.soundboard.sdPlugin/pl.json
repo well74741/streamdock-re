@@ -1,0 +1,12 @@
+{
+  "Description": "Soundboard", 
+  "Name": "Soundboard", 
+  "com.hotspot.streamdock.soundboard.playaudio": {
+    "Name": "Odtwórz dźwięk", 
+    "Tooltip": "Odtwórz dźwięk, efekt audio lub utwór muzyczny"
+  }, 
+  "com.hotspot.streamdock.soundboard.stopaudioplay": {
+    "Name": "Zatrzymaj dźwięk", 
+    "Tooltip": "Zatrzymaj odtwarzany dźwięk"
+  }
+}

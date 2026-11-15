@@ -1,0 +1,26 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/text_white", 
+      "Name": "Text", 
+      "States": [
+        {
+          "Image": "Images/btn_text",
+          "Title": "请输入文本",
+          "FontSize": 12
+        }
+      ], 
+      "Controllers": [
+        "SecondaryScreen"
+			],
+      "Tooltip": "Plain text display", 
+      "UUID": "com.hotspot.streamdock.plain.text"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Plain text display", 
+  "Name": "Text", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

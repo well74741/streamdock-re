@@ -1,0 +1,8 @@
+{
+  "Description": "輸入預編輯的文本字符串", 
+  "Name": "文本", 
+  "com.hotspot.streamdock.system.text": {
+    "Name": "文本", 
+    "Tooltip": "輸入預編輯的文本字符串"
+  }
+}

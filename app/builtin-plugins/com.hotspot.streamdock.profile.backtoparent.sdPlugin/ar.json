@@ -1,0 +1,8 @@
+{
+  "Description": "العودة إلى الواجهة السابقة", 
+  "Name": "يعود", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "يعود", 
+    "Tooltip": "العودة إلى الواجهة السابقة"
+  }
+}

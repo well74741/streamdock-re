@@ -1,0 +1,41 @@
+{
+  "Description": "التحكم السريع",
+  "Name": "التحكم السريع",
+  "Category": "التحكم السريع",
+  "com.hotspot.streamdock.quicktool.calculator": {
+    "Name": "آلة حاسبة",
+    "Tooltip": "آلة حاسبة مفتوحة"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.emoticons": {
+    "Name": "الرموز الانفعالية",
+    "Tooltip": "افتح حزمة التعبيرات"
+  },
+  "com.hotspot.streamdock.quicktool.mail": {
+    "Name": "بريد",
+    "Tooltip": "بريد مفتوح"
+  },
+  "com.hotspot.streamdock.quicktool.music": {
+    "Name": "موسيقى",
+    "Tooltip": "تشغيل الموسيقى"
+  },
+  "com.hotspot.streamdock.quicktool.homepage": {
+    "Name": "الصفحة الرئيسية",
+    "Tooltip": "افتح الصفحة الرئيسية"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.notification": {
+    "Name": "يخطر",
+    "Tooltip": "قم بتشغيل الإشعارات"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.taskmanager": {
+    "Name": "مدير المهام",
+    "Tooltip": "افتح مدير المهام"
+  },
+  "com.hotspot.streamdock.quicktool.controlpanel": {
+    "Name": "لوحة التحكم",
+    "Tooltip": "افتح لوحة التحكم"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.searchbar": {
+    "Name": "شريط البحث",
+    "Tooltip": "افتح شريط البحث"
+  }
+}

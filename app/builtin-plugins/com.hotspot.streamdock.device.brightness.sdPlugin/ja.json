@@ -1,0 +1,12 @@
+﻿{
+  "Description": "画面の明るさを調整します",
+  "Name": "明るさ",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "明るさ",
+    "Tooltip": "画面の明るさを調整します"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "画面をオフにする",
+    "Tooltip": "デバイスの画面をオフにする"
+  }
+}

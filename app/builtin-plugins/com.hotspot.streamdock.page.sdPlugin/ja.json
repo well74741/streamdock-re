@@ -1,0 +1,24 @@
+﻿{
+  "Description": "ページナビゲーション",
+  "Name": "ページ",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "前のページ",
+    "Tooltip": "前のページに移動します"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "次のページ",
+    "Tooltip": "次のページに移動します"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "ページシフト",
+    "Tooltip": "特定のページに移動します"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "ページインジケーター",
+    "Tooltip": "現在のプロファイルのページ番号を表示します"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "ページの切り替え",
+    "Tooltip": "左右のページを回転切り替え"
+  }
+}

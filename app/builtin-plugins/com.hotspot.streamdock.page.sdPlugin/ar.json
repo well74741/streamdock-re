@@ -1,0 +1,24 @@
+{
+  "Description": "التنقل في صفحة الويب",
+  "Name": "صفحة",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "الصفحة السابقة",
+    "Tooltip": "التبديل إلى الصفحة السابقة"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "الصفحة التالية",
+    "Tooltip": "التبديل إلى الصفحة التالية"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "انتقل إلى صفحة",
+    "Tooltip": "قم بالتبديل إلى رقم الصفحة المحدد"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "مربع مؤشر الصفحة",
+    "Tooltip": "عرض رقم الصفحة لملف التكوين الحالي"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "تبديل الصفحة",
+    "Tooltip": "تناوب اليسار واليمين الصفحة"
+  }
+}

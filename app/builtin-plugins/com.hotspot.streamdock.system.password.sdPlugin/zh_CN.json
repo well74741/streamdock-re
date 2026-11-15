@@ -1,0 +1,8 @@
+{
+  "Description": "输入预编辑的密码字符串", 
+  "Name": "密码", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "密码", 
+    "Tooltip": "输入预编辑的密码字符串"
+  }
+}

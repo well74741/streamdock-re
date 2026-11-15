@@ -1,0 +1,12 @@
+{
+  "Description": "Audio-Abspielgerät", 
+  "Name": "Audio-Abspielgerät", 
+  "com.hotspot.streamdock.soundboard.playaudio": {
+    "Name": "Audio abspielen", 
+    "Tooltip": "Wiedergeben von Audiodateien wie Soundclips, Musikclips oder Soundeffekten"
+  }, 
+  "com.hotspot.streamdock.soundboard.stopaudioplay": {
+    "Name": "Audio stoppen", 
+    "Tooltip": "Wiedergabe aller Audiodateien beenden"
+  }
+}

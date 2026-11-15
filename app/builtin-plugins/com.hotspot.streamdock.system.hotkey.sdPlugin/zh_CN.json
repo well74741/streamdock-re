@@ -1,0 +1,8 @@
+{
+  "Description": "激活热键", 
+  "Name": "热键", 
+  "com.hotspot.streamdock.system.hotkey": {
+    "Name": "热键", 
+    "Tooltip": "激活热键"
+  }
+}

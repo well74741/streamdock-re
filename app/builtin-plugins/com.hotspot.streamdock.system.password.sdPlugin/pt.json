@@ -1,0 +1,9 @@
+{
+    "Description": "Introduza uma cadeia de senha pré-editada", 
+    "Name": "Senha", 
+    "com.hotspot.streamdock.system.password": {
+      "Name": "Senha", 
+      "Tooltip": "Introduza uma cadeia de senha pré-editada"
+    }
+}
+  

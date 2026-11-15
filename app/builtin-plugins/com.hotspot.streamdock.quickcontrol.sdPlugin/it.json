@@ -1,0 +1,37 @@
+{
+  "Description": "Controllo rapido", 
+  "Name": "Controllo rapido", 
+  "Category": "Controllo rapido",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "Dormire", 
+    "Tooltip": "Mettere il PC in stato di stop o ibernare se il PC supporta la modalità di sospensione"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "Cambia schermata", 
+    "Tooltip": "Cambia schermata"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "Riconoscimento vocale", 
+    "Tooltip": "Attivare il riconoscimento vocale"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop": {
+    "Name": "Visualizzare il desktop", 
+    "Tooltip": "Visualizzare il desktop"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "Muto", 
+    "Tooltip": "Muto"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "Abbassare il volume", 
+    "Tooltip": "Abbassare il volume"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "Aumentare il volume", 
+    "Tooltip": "Aumentare il volume"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "Microfono", 
+    "Tooltip": "Disattivare/riattivare il microfono"
+  }
+}

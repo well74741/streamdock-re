@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261116n" />
+  <link rel="stylesheet" href="style.css?v=20261116o" />
 </head>
 <body>
 <div class="app">
@@ -428,6 +428,16 @@
               <span class="spacer"></span>
               <button class="switch on" id="wallpaper-toggle" role="switch" aria-checked="true" title="闲置一段时间后自动显示待机画面"><span></span></button>
             </div>
+            <!-- 自动息屏：和待机画面二选一（开一个另一个自动关） -->
+            <div class="set-row" id="autoblank-toggle-row">
+              <span>自动息屏</span>
+              <button class="switch" id="autoblank-toggle" role="switch" aria-checked="false" title="闲置一段时间后把屏幕刷黑，按任意键唤醒"><span></span></button>
+            </div>
+            <div class="slider-row tight" id="autoblank-row" hidden>
+              <span>时长</span>
+              <input id="autoblank-sec" type="range" min="15" max="1800" step="15" value="300" />
+              <b id="autoblank-val">300 秒</b>
+            </div>
             <div class="seg-group tabs" id="standby-tabs">
               <button class="seg on" data-tab="wallpaper">壁纸</button>
               <button class="seg" data-tab="album">幻灯片 <em id="album-count">0</em></button>
@@ -594,6 +604,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261119e"></script>
+<script src="app.js?v=20261119h"></script>
 </body>
 </html>

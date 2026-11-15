@@ -1,0 +1,12 @@
+{
+  "Description": "장치의 밝기 조정",
+  "Name": "밝기",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "밝기",
+    "Tooltip": "장치의 밝기 조정"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "화면 OFF",
+    "Tooltip": "장치를 꺼주다"
+  }
+}

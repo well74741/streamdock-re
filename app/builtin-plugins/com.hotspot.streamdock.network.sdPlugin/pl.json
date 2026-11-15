@@ -1,0 +1,8 @@
+{
+  "Description": "Komunikacja sieciowa", 
+  "Name": "Sieć", 
+  "com.hotspot.streamdock.network.udp": {
+    "Name": "UDP", 
+    "Tooltip": "Komunikacja UDP"
+  }
+}

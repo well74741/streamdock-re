@@ -1,0 +1,25 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/switchProfile",
+      "Name": "Scene Shift", 
+      "States": [
+        {
+          "Image": ""
+        }
+      ], 
+      "SupportTutorial": true,
+      "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-page-switching-scene-switching-on-streamdock",
+      "Controllers": [ "Keypad", "Knob" ],
+      "Tooltip": "Switch to another preconfigured scenario", 
+      "UUID": "com.hotspot.streamdock.profile.rotate",
+	    "SupportedInMultiActions": true
+    }
+  ], 
+  "Author": "HotSpot", 
+  "Description": "Navigate to next/previous scene", 
+  "Name": "Scene Shift", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

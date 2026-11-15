@@ -1,0 +1,9 @@
+{
+    "Description": "Ativar a chave quente", 
+    "Name": "Super Teclas de Atalhos", 
+    "com.hotspot.streamdock.system.super.hotkey": {
+      "Name": "Super Teclas de Atalhos", 
+      "Tooltip": "Pode ignorar o bloqueio do jogo"
+    }
+}
+  

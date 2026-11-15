@@ -1105,29 +1105,20 @@ function bindIconDrag(container) {
       }
       if (img.dataset.name.startsWith("plugin:")) {
         const m = img.dataset.name.slice(7).match(/^(.*)\/(\d+)$/);
-        const r = m ? await post("/api/key/plugin", { key, plugin: m[1], index: Number(m[2]) }) : { ok: false };
-        const name = img.closest(".pl-act")?.querySelector("span")?.textContent || "插件动作";
-        if (!r.ok) {
-          toast(r.error || "绑定失败", 2600);
-          return;
-        }
-        await refreshState();
-        if (r.native) {
-          // 官方内置功能换成了控制台原生动作；要填值的直接选中这个键去编辑
-          if (r.needsInput) {
-            selectKey(key);
-            $("#key-editor")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-          }
-          toast(r.needsInput ? `「${name}」已换成控制台的「${r.label}」动作，请在下方补充内容后点「保存」`
-            : `按键 ${key}：${r.label}`, r.needsInput ? 3600 : 1800);
-        } else {
-          toast(`按键 ${key} 已绑定「${name}」，按下由插件处理`, 2200);
-        }
+        if (!m) return;
+        const label = img.closest(".pl-act")?.querySelector("span")?.textContent || "插件动作";
+        if (key !== selectedKey) selectKey(key);
+        setPendingIcon(key, editGesture, {
+          kind: "plugin", plugin: m[1], index: Number(m[2]), src: img.src, label,
+        });
+        toast(`临时预览：按键 ${key} →「${label}」，点「保存」才生效`, 2600);
         return;
       }
-      const ok = await post("/api/key/icon", { key, name: img.dataset.name });
-      toast(ok.ok ? `图标已应用到按键 ${key}` : "应用失败", 1300);
-      if (ok.ok) await refreshState();
+      if (key !== selectedKey) selectKey(key);
+      setPendingIcon(key, editGesture, {
+        kind: "icon", name: img.dataset.name, src: img.src, label: "图标",
+      });
+      toast(`临时预览：按键 ${key} 换这张图，点「保存」才生效`, 2400);
     };
     document.addEventListener("pointermove", onMove, true);
     document.addEventListener("pointerup", onUp, true);
@@ -1687,6 +1678,55 @@ document.addEventListener("pointerdown", (e) => {
   if (!e.target.closest?.(".key-menu")) hideKeyMenu();
 }, true);
 
+/* 相册图片右键菜单：打开图片所在位置（资源管理器里选中） */
+function closeImageMenu() {
+  document.querySelectorAll(".img-menu").forEach((n) => n.remove());
+}
+
+function imageMenu(x, y, opts) {
+  closeImageMenu();
+  const box = document.createElement("div");
+  box.className = "img-menu";
+  box.innerHTML = `<button data-act="reveal">打开图片位置</button>`;
+  document.body.appendChild(box);
+  const r = box.getBoundingClientRect();
+  box.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + "px";
+  box.style.top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + "px";
+  box.querySelector('[data-act="reveal"]').addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    closeImageMenu();
+    const r2 = await post("/api/album/reveal", { scene: opts.scene || "", index: opts.index });
+    if (!r2?.ok) toast("打不开这张图片（文件可能已被移走）", 2000);
+  });
+  return box;
+}
+
+document.addEventListener("contextmenu", (e) => {
+  const box = e.target.closest?.("#as-strip, #album-strip, #as-preview, #album-preview");
+  if (!box) { closeImageMenu(); return; }
+  const thumb = e.target.closest(".album-thumb");
+  let index = thumb ? Number(thumb.dataset.i) : NaN;
+  if (!Number.isFinite(index)) {
+    const on = box.querySelector?.(".album-thumb.on") || document.querySelector(
+      `${box.id === "as-strip" ? "#as-strip" : "#album-strip"} .album-thumb.on`);
+    index = on ? Number(on.dataset.i) : 0;
+  }
+  e.preventDefault();
+  const scene = box.closest("#album-editor") || box.id === "as-strip" || box.id === "as-preview"
+    ? (activeAlbumScene() || "") : "";
+  imageMenu(e.clientX, e.clientY, { scene, index });
+});
+
+document.addEventListener("pointerdown", (e) => {
+  if (!e.target.closest?.(".img-menu")) closeImageMenu();
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeImageMenu();
+    if (pendingIcon) clearPendingIcon();      // Esc 也撤销临时预览
+  }
+});
+
 function confirmDialog(message) {
   return new Promise((resolve) => {
     const box = document.createElement("div");
@@ -1882,6 +1922,7 @@ async function appsDialog(name, current) {
 }
 
 function selectKey(n) {
+  if (pendingIcon && pendingIcon.key !== n) clearPendingIcon();   // 换键：上一个键的临时预览作废
   if (n !== selectedKey) {
     editGesture = "press";                          // 换键时回到「短按」
     formDrafts = {};                                // 上一个键没保存的草稿丢弃
@@ -1901,6 +1942,49 @@ let sceneNames = [];
 let sceneItems = [];          // 场景列表原始数据（含 sceneType / albumScene）
 let sceneDragEndedAt = 0;     // 拖动排序刚结束，别把这一下当成单击
 let selectedScene = null;     // 列表里选中的场景（编辑区按它决定显示相册还是按键）
+// 从图标库点图标 / 插件动作时先只做「临时预览」，点「保存」才真正写进按键
+let pendingIcon = null;       // {key, gesture, kind, name?, plugin?, index?, src?, label}
+
+function clearPendingIcon() {
+  if (!pendingIcon) return;
+  const k = pendingIcon.key;
+  pendingIcon = null;
+  document.querySelector(`.ring-board .cell[data-key="${k}"]`)?.classList.remove("pending-icon");
+  refreshCells();
+  renderEditor();
+}
+
+function setPendingIcon(key, gesture, info) {
+  pendingIcon = { key, gesture, ...info };
+  paintPendingIcon();
+}
+
+/* 点空白处（既不是按键、也不在编辑区/图标库/插件面板里）就撤销临时预览 */
+document.addEventListener("pointerdown", (e) => {
+  if (!pendingIcon) return;
+  const t = e.target;
+  if (t.closest(".cell, .ring-btn, #key-editor, #icon-groups, #plugin-list, .icon-group, details.plugin, .img-menu, .confirm-modal, .toast")) return;
+  clearPendingIcon();
+}, true);
+
+function paintPendingIcon() {
+  if (!pendingIcon) return;
+  const { key, gesture, src, label } = pendingIcon;
+  const cell = document.querySelector(`.ring-board .cell[data-key="${key}"]`);
+  if (cell) {
+    const imgEl = $(".cell-img", cell);
+    if (imgEl && src) {
+      imgEl.src = src;
+      imgEl.dataset.v = "";
+      imgEl.hidden = false;
+    }
+    cell.classList.add("pending-icon");
+  }
+  if (selectedKey === key && editGesture === gesture) {
+    const act = $("#sel-action");
+    if (act) act.textContent = `临时预览：${label}（点保存生效）`;
+  }
+}
 const VALUE_TYPES = {
   launch: "程序 / 文件 / 文件夹路径（可点「选择文件…」）",
   url: "网址，如 https://example.com",
@@ -2476,6 +2560,18 @@ function applyState(s) {
     wpBtn.classList.toggle("on", on);
     wpBtn.setAttribute("aria-checked", on ? "true" : "false");
   }
+  const abSec = s.autoBlank ?? 0;
+  const abBtn = $("#autoblank-toggle");
+  if (abBtn) {
+    abBtn.classList.toggle("on", abSec > 0);
+    abBtn.setAttribute("aria-checked", abSec > 0 ? "true" : "false");
+    const row = $("#autoblank-row");
+    if (row) row.hidden = !(abSec > 0);
+    if (abSec > 0) {
+      $("#autoblank-sec").value = abSec;
+      $("#autoblank-val").textContent = `${abSec} 秒`;
+    }
+  }
   setSwitch($("#sleep-btn"), !s.screenOff);
 
   const view = s.view || { fit: "cover", zoom: 1, ox: 0, oy: 0 };
@@ -2811,7 +2907,56 @@ function bindUI() {
     btn.classList.toggle("on", !!r.value);
     btn.setAttribute("aria-checked", r.value ? "true" : "false");
     if (state) state.wallpaper = { ...(state.wallpaper || {}), enabled: r.value };
-    toast(r.value ? "待机壁纸已启用" : "待机壁纸已停用", 1400);
+    if (v) {                                   // 二选一：开待机画面 -> 关自动息屏
+      if (state) state.autoBlank = 0;
+      const ab = $("#autoblank-toggle");
+      if (ab) {
+        ab.classList.remove("on");
+        ab.setAttribute("aria-checked", "false");
+      }
+      const row = $("#autoblank-row");
+      if (row) row.hidden = true;
+    }
+    toast(r.value ? "待机壁纸已启用（自动息屏已关闭）" : "待机壁纸已停用", 1600);
+  });
+
+  const autoblankSec = () => Number($("#autoblank-sec")?.value || 300);
+  const paintAutoblank = (sec) => {
+    const on = sec > 0;
+    const btn = $("#autoblank-toggle");
+    if (btn) {
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    }
+    const row = $("#autoblank-row");
+    if (row) row.hidden = !on;
+    if (on) {
+      $("#autoblank-sec").value = sec;
+      $("#autoblank-val").textContent = `${sec} 秒`;
+    }
+    if (state) state.autoBlank = sec;
+  };
+  $("#autoblank-toggle")?.addEventListener("click", async () => {
+    const on = !((state?.autoBlank ?? 0) > 0);
+    const r = await post("/api/autoblank", { enabled: on, sec: autoblankSec() });
+    paintAutoblank(r.autoBlank ?? 0);
+    if (state) state.wallpaper = { ...(state.wallpaper || {}), enabled: r.wallpaperEnabled !== false };
+    const wp = $("#wallpaper-toggle");
+    if (wp) {
+      const wpOn = r.wallpaperEnabled !== false;
+      wp.classList.toggle("on", wpOn);
+      wp.setAttribute("aria-checked", wpOn ? "true" : "false");
+    }
+    toast(on ? `自动息屏已开启：空闲 ${r.autoBlank} 秒后关屏（待机画面已关闭）` : "自动息屏已关闭", 1800);
+  });
+  const pushAutoblank = throttle(async (sec) => {
+    const r = await post("/api/autoblank", { enabled: true, sec });
+    paintAutoblank(r.autoBlank ?? sec);
+  }, 400);
+  $("#autoblank-sec")?.addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    $("#autoblank-val").textContent = `${v} 秒`;
+    pushAutoblank(v);
   });
 
   const goPage = async (delta) => {
@@ -2973,6 +3118,29 @@ function bindUI() {
 
   $("#sel-save-top").addEventListener("click", async () => {
     if (!selectedKey) return;
+    // 图标库点过来的「临时预览」：点保存才真正写进去
+    if (pendingIcon) {
+      const p = pendingIcon;
+      pendingIcon = null;
+      document.querySelector(`.ring-board .cell[data-key="${p.key}"]`)?.classList.remove("pending-icon");
+      const r = p.kind === "plugin"
+        ? await post("/api/key/plugin", { key: p.key, plugin: p.plugin, index: p.index })
+        : await post("/api/key/icon", { key: p.key, name: p.name });
+      if (!r?.ok) {
+        toast(r?.error || "应用失败", 2600);
+        refreshCells();
+        renderEditor();
+        return;
+      }
+      await refreshState();
+      if (p.kind === "plugin" && r.native && r.needsInput) {
+        selectKey(p.key);
+        $("#key-editor")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        toast(`已换成控制台的「${r.label}」动作，请在下方补充内容后再点一次「保存」`, 3400);
+      } else {
+        toast(`按键 ${p.key} 已应用`, 1600);
+      }
+    }
     const n = selectedKey;
     // 当前页签的内容也进草稿，这样三种触发方式可以一起提交
     formDrafts[editGesture] = readFormDraft();

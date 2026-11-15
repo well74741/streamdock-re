@@ -1,0 +1,8 @@
+{
+  "Description": "شبكة الاتصالات", 
+  "Name": "شبكة", 
+  "com.hotspot.streamdock.network.udp": {
+    "Name": "UDP", 
+    "Tooltip": "UDP الاتصالات"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "التحكم في vMix الخاص بك", 
+  "Name": "vMix", 
+  "com.hotspot.streamdock.vmix.shortcut": {
+    "Name": "مفتاح الاختصار", 
+    "Tooltip": "التحكم في vMix الخاص بك"
+  }
+}

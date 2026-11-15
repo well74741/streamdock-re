@@ -1,0 +1,8 @@
+{
+    "Description": "Fechar aplicativo", 
+    "Name": "encerramento", 
+    "com.hotspot.streamdock.system.close": {
+      "Name": "encerramento", 
+      "Tooltip": "Fechar aplicativo"
+    }
+}

@@ -1,0 +1,12 @@
+{
+  "Description": "Zarządzaj YouTube.", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "Wiadomość czatu", 
+    "Tooltip": "Opublikuj na czacie skonfigurowaną wiadomość"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "Publiczność", 
+    "Tooltip": "Pokazuje ilość widzów podczas livestreamu."
+  }
+}

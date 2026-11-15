@@ -1,0 +1,8 @@
+﻿{
+  "Description": "キーコマンドを有効化します", 
+  "Name": "ホットキー切り替えです", 
+  "com.hotspot.streamdock.system.hotkeySwitch": {
+    "Name": "ホットキー切り替えです", 
+    "Tooltip": "キーコマンドを有効化します"
+  }
+}

@@ -1,0 +1,8 @@
+﻿{
+  "Description": "プレーンテキストを表示します", 
+  "Name": "テキスト", 
+  "com.hotspot.streamdock.plain.text": {
+    "Name": "テキスト", 
+    "Tooltip": "プレーンテキストを表示します"
+  }
+}

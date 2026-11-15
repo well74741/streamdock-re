@@ -1,0 +1,12 @@
+{
+    "Description": "Reproductor de audio", 
+    "Name": "Reproductor de audio", 
+    "com.hotspot.streamdock.soundboard.playaudio": {
+      "Name": "Reproducir audio", 
+      "Tooltip": "Reproducir archivos de audio como clips de sonido, clips de música o efectos de sonido"
+    }, 
+    "com.hotspot.streamdock.soundboard.stopaudioplay": {
+      "Name": "Detener audio", 
+      "Tooltip": "Detener la reproducción de todos los archivos de audio"
+    }
+}

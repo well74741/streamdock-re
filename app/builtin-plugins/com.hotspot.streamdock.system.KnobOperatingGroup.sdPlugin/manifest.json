@@ -1,0 +1,25 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/trigger_hotkey_white", 
+      "Name": "Knob Action Group", 
+      "States": [
+        {
+          "Image": "Images/btn_KnobOperatingGroup"
+        }
+      ],
+      "Controllers": ["Knob" ],
+      "Tooltip": "Activate a key command", 
+      "UUID": "com.hotspot.streamdock.system.KnobOperatingGroup",
+      "SupportedInMultiActions": false
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Activate a key command", 
+  "Category": "Knob Action Group",
+  "CategoryIcon": "Images/categoryIcon",
+  "Name": "Knob Action Group", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

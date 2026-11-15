@@ -1,0 +1,46 @@
+{
+  "sceneType": "album",
+  "album": {
+    "items": [
+      "preset-album1-01.jpg",
+      "preset-album1-02.jpg",
+      "preset-album1-03.jpg",
+      "preset-album1-04.jpg",
+      "preset-album1-05.jpg",
+      "preset-album1-06.jpg",
+      "preset-album1-07.jpg",
+      "preset-album1-08.jpg",
+      "preset-album1-09.jpg",
+      "preset-album1-10.jpg",
+      "preset-album1-11.jpg",
+      "preset-album1-12.jpg"
+    ],
+    "index": 0,
+    "slideshow": false,
+    "interval": 8,
+    "transition": "mosaic",
+    "fit": "cover",
+    "gap": 27
+  },
+  "pages": [
+    {
+      "name": "场景 2026-11-15",
+      "images": {},
+      "actions": {
+        "16": {
+          "type": "nav",
+          "name": "上一页"
+        },
+        "17": {
+          "type": "nav",
+          "name": "主页"
+        },
+        "18": {
+          "type": "nav",
+          "name": "下一页"
+        }
+      }
+    }
+  ],
+  "page": 0
+}

@@ -1,0 +1,41 @@
+{
+  "Description": "快捷控制",
+  "Name": "快捷控制",
+  "Category": "快捷控制",
+  "com.hotspot.streamdock.quicktool.calculator": {
+    "Name": "計算器",
+    "Tooltip": "打開計算器"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.emoticons": {
+    "Name": "表情包",
+    "Tooltip": "打開表情包"
+  },
+  "com.hotspot.streamdock.quicktool.mail": {
+    "Name": "郵件",
+    "Tooltip": "打開郵件"
+  },
+  "com.hotspot.streamdock.quicktool.music": {
+    "Name": "音樂",
+    "Tooltip": "打開音樂"
+  },
+  "com.hotspot.streamdock.quicktool.homepage": {
+    "Name": "主頁",
+    "Tooltip": "打開主頁"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.notification": {
+    "Name": "通知",
+    "Tooltip": "打開通知"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.taskmanager": {
+    "Name": "任務管理器",
+    "Tooltip": "打開任務管理器"
+  },
+  "com.hotspot.streamdock.quicktool.controlpanel": {
+    "Name": "控制面板",
+    "Tooltip": "打開控制面板"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.searchbar": {
+    "Name": "搜索欄",
+    "Tooltip": "打開搜索欄"
+  }
+}

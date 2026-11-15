@@ -1,0 +1,9 @@
+{
+  "Description": "Zamknij aplikację", 
+  "Name": "zamknięcie", 
+  "com.hotspot.streamdock.system.close": {
+    "Name": "zamknięcie", 
+    "Tooltip": "Zamknij aplikację"
+  }
+}
+

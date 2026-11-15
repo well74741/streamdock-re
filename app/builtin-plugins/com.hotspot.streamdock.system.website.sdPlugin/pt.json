@@ -1,0 +1,8 @@
+{
+    "Description": "Abra o site", 
+    "Name": "Site", 
+    "com.hotspot.streamdock.system.website": {
+      "Name": "Site", 
+      "Tooltip": "Abra o site"
+    }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "Wpisz skonfigurowane hasło", 
+  "Name": "Hasło", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "Hasło", 
+    "Tooltip": "Wpisz skonfigurowane hasło"
+  }
+}

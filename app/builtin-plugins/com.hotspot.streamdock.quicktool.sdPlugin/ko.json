@@ -1,0 +1,41 @@
+{
+  "Description": "가젯또는 어플리케이션 열기", 
+  "Name": "빠른 도구", 
+  "Category": "빠른 도구",
+  "com.hotspot.streamdock.quicktool.calculator": {
+    "Name": "달력", 
+    "Tooltip": "달력 열기"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.emoticons": {
+    "Name": "이모티콘", 
+    "Tooltip": "이모티콘 열기"
+  },
+  "com.hotspot.streamdock.quicktool.mail": {
+    "Name": "메일", 
+    "Tooltip": "메일열기"
+  },
+  "com.hotspot.streamdock.quicktool.music": {
+    "Name": "노래", 
+    "Tooltip": "노래켜기"
+  },
+  "com.hotspot.streamdock.quicktool.homepage": {
+    "Name": "홈페이지", 
+    "Tooltip": "홈페이지 열기"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.notification": {
+    "Name": "메모장", 
+    "Tooltip": "메모장 열기"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.taskmanager": {
+    "Name": "작업관리자", 
+    "Tooltip": "작업관리자 열기"
+  },
+  "com.hotspot.streamdock.quicktool.controlpanel": {
+    "Name": "제어판", 
+    "Tooltip": "제어판 열기"
+  },
+  "com.hotspot.streamdock.hotkey.quicktool.searchbar": {
+    "Name": "검색창", 
+    "Tooltip": "검색창 열기"
+  }
+}

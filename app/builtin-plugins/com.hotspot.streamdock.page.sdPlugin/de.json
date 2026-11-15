@@ -1,0 +1,24 @@
+{
+  "Description": "Seitennavigation",
+  "Name": "Seiten",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "Vorige Seite",
+    "Tooltip": "Zur vorigen Seite wechseln"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "Nächste Seite",
+    "Tooltip": "Zur nächsten Seite wechseln"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "Gehe zu Seite",
+    "Tooltip": "Zur angegebenen Seite wechseln"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "Seitenzahlanzeige",
+    "Tooltip": "Zeigt die Seitenzahl des aktuellen Profils an"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "Seiten wechseln",
+    "Tooltip": "Drehen, um linke und rechte Seiten zu wechseln"
+  }
+}

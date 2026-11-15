@@ -1,0 +1,21 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/password_white", 
+      "Name": "Password", 
+      "States": [
+        {
+          "Image": "Images/btn_password"
+        }
+      ], 
+      "Tooltip": "Type a precomposed password string", 
+      "UUID": "com.hotspot.streamdock.system.password"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Type a precomposed password string", 
+  "Name": "Password", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

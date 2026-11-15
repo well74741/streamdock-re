@@ -1,0 +1,24 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/trigger_hotkey_white", 
+      "Name": "Super Hotkeys", 
+      "SupportTutorial": true,
+  "Tutorial": "https://mirabox.net/blogs/tutorial/hotkey-vs-super-hotkey-what-s-the-difference",
+      "States": [
+        {
+          "Image": "Images/btn_custom_trigger_hotkey"
+        }
+      ],
+      "Controllers": [ "Keypad", "Knob" ],
+      "Tooltip": "Activate a key command", 
+      "UUID": "com.hotspot.streamdock.system.super.hotkey"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Activate a key command", 
+  "Name": "Super Hotkeys", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

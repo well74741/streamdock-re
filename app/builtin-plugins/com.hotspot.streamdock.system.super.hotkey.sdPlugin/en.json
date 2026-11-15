@@ -1,0 +1,8 @@
+{
+  "Description": "Activate a key command", 
+  "Name": "Super Hotkeys", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "Super Hotkeys", 
+    "Tooltip": "Avoid game key blocking"
+  }
+}

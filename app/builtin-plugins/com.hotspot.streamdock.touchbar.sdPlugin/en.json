@@ -1,0 +1,104 @@
+{
+  "Description": "Touchbar 功能", 
+  "Name": "Touchbar", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "Dispatch Center",
+    "Tooltip": "Dispatch Center"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "Focus On Search",
+    "Tooltip": "Focus on search"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "Siri",
+    "Tooltip": "Wake up Siri"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "Notification Center",
+    "Tooltip": "Notification Center"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "DND Mode",
+    "Tooltip": "Do not disturb mode"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "Screenshot",
+    "Tooltip": "Screenshot"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "Dictation",
+    "Tooltip": "Dictation"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "Input Method",
+    "Tooltip": "Input Method"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "Launchpad",
+    "Tooltip": "Launchpad"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "Show Desktop",
+    "Tooltip": "Show Desktop"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "Desktop Saver",
+    "Tooltip": "Desktop Saver"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "Screen Lock",
+    "Tooltip": "Screen Lock"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "Sleep",
+    "Tooltip": "Sleep"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "Increase screen brightness",
+    "Tooltip": "Increase screen brightness"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "Decrease screen brightness",
+    "Tooltip": "Decrease screen brightness"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "Previous Track",
+    "Tooltip": "Previous Track"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "Fast Rewind",
+    "Tooltip": "Fast Rewind"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "Play/Pause",
+    "Tooltip": "Play/Pause"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "Fast Forward",
+    "Tooltip": "Fast Forward"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "Next Track",
+    "Tooltip": "Next Track"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "Volume up",
+    "Tooltip": "Volume up"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "Volume down", 
+    "Tooltip": "Volume down"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "Mute", 
+    "Tooltip": "Mute"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "Volume", 
+    "Tooltip": "Volume control"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "Screen brightness", 
+    "Tooltip": "Adjusting screen brightness"
+  }
+}

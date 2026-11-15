@@ -1,0 +1,26 @@
+{
+  "Description": "頁面導航",
+  "Name": "頁面",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "上一頁",
+    "Tooltip": "切換到上一頁"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "下一頁",
+    "Tooltip": "切換到下一頁"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "前往頁面",
+    "Tooltip": "切換到指定頁碼"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "頁面訓示框",
+    "Tooltip": "顯示當前配置文件的頁碼"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "切换页面",
+    "Tooltip": "旋轉切換左右頁面"
+  }
+
+  
+}

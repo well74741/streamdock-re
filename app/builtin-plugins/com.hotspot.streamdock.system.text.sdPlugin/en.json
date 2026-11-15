@@ -1,0 +1,8 @@
+{
+  "Description": "Type a precomposed text string", 
+  "Name": "Text", 
+  "com.hotspot.streamdock.system.text": {
+    "Name": "Text", 
+    "Tooltip": "Type a precomposed text string"
+  }
+}

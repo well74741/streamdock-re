@@ -1,0 +1,8 @@
+{
+  "Description": "Активировать горячую клавишу", 
+  "Name": "горячая клавиша", 
+  "com.hotspot.streamdock.system.hotkey": {
+    "Name": "горячая клавиша", 
+    "Tooltip": "Активировать горячую клавишу"
+  }
+}

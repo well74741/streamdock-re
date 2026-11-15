@@ -1,0 +1,37 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/media_play_pause_white",
+      "Name": "Multimedia",
+      "States": [
+        {
+          "Image": ""
+        }
+      ],
+      "SupportTutorial": true,
+      "Tutorial": "https://mirabox.net/blogs/tutorial/how-to-use-multimedia-function-on-streamdock",
+      "Controllers": [ "Keypad", "Knob" ],
+      "Tooltip": "Control your media playback",
+      "UUID": "com.hotspot.streamdock.system.multimedia",
+      "SingleStateWithMultipleActionsIndexKey": "actionIdx"
+    },{
+      "Icon": "Images/btn_media_volume",
+      "Name": "SystemVolume",
+      "States": [
+        {
+          "Image": ""
+        }
+      ],
+      "Controllers": [ "Knob" ],
+      "SupportedInMultiActions":false,
+      "Tooltip": "Control your system volume",
+      "UUID": "com.hotspot.streamdock.system.volume"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Control your media playback", 
+  "Name": "Multimedia", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

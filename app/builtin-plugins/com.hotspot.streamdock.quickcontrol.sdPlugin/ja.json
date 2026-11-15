@@ -1,0 +1,37 @@
+﻿{
+  "Description": "クイックコントロール", 
+  "Name": "クイックコントロール", 
+  "Category": "クイックコントロール",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "スリープ", 
+    "Tooltip": "PC をスリープ状態にするまたは休止状態をサポートする場合、休止状態にします。"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "画面シフト", 
+    "Tooltip": "画面シフト"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "音声認識", 
+    "Tooltip": "音声認識をオンします"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop": {
+    "Name": "デスクトップを表示する", 
+    "Tooltip": "デスクトップを表示する"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "ミュート", 
+    "Tooltip": "ミュート"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "音量を下げる", 
+    "Tooltip": "音量を下げる"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "音量を上げる", 
+    "Tooltip": "音量を上げる"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "マイクロフォン", 
+    "Tooltip": "マイクロフォンのミュート/ミュートを解除します"
+  }
+}

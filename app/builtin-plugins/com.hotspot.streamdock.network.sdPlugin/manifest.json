@@ -1,0 +1,22 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/icon", 
+      "Name": "UDP", 
+      "States": [
+        {
+          "Image": "Images/defaultImage"
+        }
+      ], 
+      "SupportedInMultiActions": false,
+      "Tooltip": "UDP communication", 
+      "UUID": "com.hotspot.streamdock.network.udp"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Network communication", 
+  "Name": "Network", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

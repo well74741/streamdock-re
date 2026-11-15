@@ -1,0 +1,8 @@
+{
+  "Description": "Nawiguj między konfiguracjami", 
+  "Name": "Przełącz konfigurację", 
+  "com.hotspot.streamdock.profile.rotate": {
+    "Name": "Przełącz konfigurację", 
+    "Tooltip": "Przełącz na następną konfigurację"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "Description": "Prendi il controllo di YouTube.", 
+  "Name": "YouTube", 
+  "com.hotspot.streamdock.youtube.chatmessage": {
+    "Name": "Messaggi di chat", 
+    "Tooltip": "Pubblicare un messaggio di chat di YouTube pre-orchestrato"
+  },
+  "com.hotspot.streamdock.youtube.viewers": {
+    "Name": "Spettatore", 
+    "Tooltip": "Mostra il numero di spettatori live di YouTube"
+  }
+}

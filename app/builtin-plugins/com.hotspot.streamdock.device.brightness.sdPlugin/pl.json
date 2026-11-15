@@ -1,0 +1,12 @@
+{
+  "Description": "Dostosuj jasność urządzenia", 
+  "Name": "Jasność", 
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "Jasność", 
+    "Tooltip": "Dostosuj jasność urządzenia"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "wyłącz ekran",
+    "Tooltip": "Pozwól urządzeniu wyłączyć ekran"
+  }
+}

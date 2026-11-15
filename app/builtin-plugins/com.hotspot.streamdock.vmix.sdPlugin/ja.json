@@ -1,0 +1,8 @@
+﻿{
+  "Description": "vMix をコントロールします", 
+  "Name": "vMix", 
+  "com.hotspot.streamdock.vmix.shortcut": {
+    "Name": "ショートカットキー", 
+    "Tooltip": "vMix をコントロールします"
+  }
+}

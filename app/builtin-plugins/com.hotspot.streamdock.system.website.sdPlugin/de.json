@@ -1,0 +1,8 @@
+{
+  "Description": "Webseite öffnen", 
+  "Name": "Website", 
+  "com.hotspot.streamdock.system.website": {
+    "Name": "Website", 
+    "Tooltip": "Webseite öffnen"
+  }
+}

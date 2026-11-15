@@ -169,9 +169,14 @@ PLUGIN_DATA = os.path.join(DATA_DIR, "plugin-data")          # 插件全局设�
 CUSTOM_PLUGIN_DIR = os.path.join(DATA_DIR, "custom-plugins")  # 自制插件（标准 .sdPlugin 目录）
 CUSTOM_PREFIX = "com.m18.custom."
 MIRROR_DIR = os.path.join(DATA_DIR, "official-mirror")   # 官方图标包 / 插件 / Node 的本地备份
+# 随包内置的官方插件（com.hotspot.streamdock.*，PrivateAPI 那批）：不装官方驱动也能用
+BUILTIN_PLUGIN_DIR = os.path.join(HERE, "builtin-plugins")
 official.EXTRA_PLUGIN_ROOTS.extend([os.path.join(MIRROR_DIR, "plugins"), CUSTOM_PLUGIN_DIR])
+if os.path.isdir(BUILTIN_PLUGIN_DIR):
+    official.EXTRA_PLUGIN_ROOTS.insert(0, BUILTIN_PLUGIN_DIR)   # 内置的排最前
 official.CUSTOM_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
 official.EXTRA_ICON_ROOTS.append(os.path.join(MIRROR_DIR, "icons"))
+PRESET_DIR = os.path.join(HERE, "presets")   # 首次运行载入的默认场景（音乐控制台 / 相册1）
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # 源码版和安装版可以装在同一台电脑上：端口共用（谁先开谁生效），数据目录各自独立。
 EDITION = "安装版" if getattr(sys, "frozen", False) else "源码版"
@@ -194,6 +199,7 @@ DEFAULT_LIGHTING = {"mode": "chase", "color": "#00aaff", "speed": 1.0, "brightne
 CONSOLE_LABELS = {"screen": "屏幕开关", "mute": "屏蔽按键开关",
                   "light": "灯光开关", "lightfx": "灯光效果切换"}
 STANDBY_MIN, STANDBY_MAX = 3, 300          # 待机等待秒数
+AUTOBLANK_MIN, AUTOBLANK_MAX = 15, 1800    # 自动息屏：空闲多少秒后刷黑屏（15 秒 ~ 30 分钟）
 ALBUM_TRANSITIONS = ("none", "fade", "slide", "wipe", "mosaic")
 LEGACY_ALBUM_NAMES = ("相册", "幻灯片")      # 旧配置里可能把待机相册记成当前场景，读进来要纠正
 
@@ -957,6 +963,7 @@ class App:
         self.keep_awake = True       # 默认保活：设备自己睡过去后，WS SDK 叫不醒它（黑屏、收不到按键）
         self.close_to_tray = True    # 关掉界面窗口后留在托盘后台（关掉这个开关就是直接退出）
         self.standby_sec = 300
+        self.autoblank_sec = 0         # 自动息屏：0 = 关；>0 = 空闲多少秒后刷黑屏（和待机画面二选一）
         self.standby_brightness = 60
         self.in_standby = False
         self.selected_key = 0
@@ -984,6 +991,7 @@ class App:
         self._identify = None
         self._pushing = False
         self._migrate_official_plugins()
+        self._seed_presets()
         self._load_config()
         self.device.image_rotation = self.rotation
         if self._convert_builtin_plugins():
@@ -1616,6 +1624,14 @@ class App:
                 if self.album_active():
                     if self.device.connected and time.time() - self._last_paint > 25:
                         self._push_album()       # 定期补一帧，避免设备自己睡过去
+                elif (self.autoblank_sec > 0 and not self.screen_off and not self.in_standby
+                        and self.device.connected and not self.quiet and not self.yielded
+                        and time.time() - self._last_activity > self.autoblank_sec):
+                    # 自动息屏：空闲够久就把 15 个键刷黑 + 背光 0（按键通道还在，按任意键唤醒）
+                    self.screen_off = True
+                    self.blank_screen()
+                    self.broadcast({"type": "status", "screenOff": True})
+                    log(f"自动息屏：空闲 {self.autoblank_sec} 秒，屏幕已关闭（按任意键唤醒）")
                 elif (self.wallpaper_enabled and self.standby_sec > 0
                         and not self.in_standby and not self.screen_off
                         and self.device.connected and not self.quiet
@@ -2108,6 +2124,13 @@ class App:
             if self.active_scene in LEGACY_ALBUM_NAMES:   # 旧版把待机相册当成场景用
                 self.active_scene = self.custom_scene_name
             self.wallpaper_enabled = bool(cfg.get("wallpaperEnabled", self.wallpaper_enabled))
+            try:
+                ab = int(cfg.get("autoBlank", 0) or 0)
+            except (TypeError, ValueError):
+                ab = 0
+            self.autoblank_sec = 0 if ab <= 0 else max(AUTOBLANK_MIN, min(AUTOBLANK_MAX, ab))
+            if self.autoblank_sec and self.wallpaper_enabled:
+                self.wallpaper_enabled = False    # 二选一：自动息屏开着就不用待机画面
             self.keep_awake = bool(cfg.get("keepAwake", True))
             self.close_to_tray = bool(cfg.get("closeToTray", True))
             pages = cfg.get("pages")
@@ -2241,6 +2264,7 @@ class App:
             "customScene": self.custom_scene_name,
             "activeScene": self.active_scene,
             "wallpaperEnabled": self.wallpaper_enabled,
+            "autoBlank": self.autoblank_sec,
             "keepAwake": self.keep_awake,
             "closeToTray": self.close_to_tray,
             "lighting": {k: self.lighting[k] for k in ("mode", "color", "speed", "brightness", "custom")},
@@ -4533,6 +4557,41 @@ class App:
             f"{r['name']}（{r['supported']}/{r['total']} 键可执行，{r['pages']} 页）" for r in report))
         return {"scenes": report}
 
+    def _seed_presets(self) -> None:
+        """首次运行：把随包带的默认场景（音乐控制台 / 相册1）装进用户数据目录。
+
+        只在用户还没有任何场景文件时做一次；相册图片同时拷进上传目录（场景里记的是文件名）。
+        """
+        try:
+            preset_scenes = os.path.join(PRESET_DIR, "scenes")
+            if not os.path.isdir(preset_scenes):
+                return
+            existing = []
+            if os.path.isdir(SCENE_DIR):
+                existing = [n for n in os.listdir(SCENE_DIR)
+                            if n.endswith(".json") and not n.startswith(".") and n != "__custom__.json"]
+            if existing:
+                return
+            os.makedirs(SCENE_DIR, exist_ok=True)
+            album_src = os.path.join(PRESET_DIR, "album1")
+            if os.path.isdir(album_src):
+                os.makedirs(UPLOAD_DIR, exist_ok=True)
+                for name in sorted(os.listdir(album_src)):
+                    src = os.path.join(album_src, name)
+                    dst = os.path.join(UPLOAD_DIR, name)
+                    if os.path.isfile(src) and not os.path.exists(dst):
+                        shutil.copy2(src, dst)
+            names = []
+            for name in sorted(os.listdir(preset_scenes)):
+                if not name.endswith(".json"):
+                    continue
+                shutil.copy2(os.path.join(preset_scenes, name), os.path.join(SCENE_DIR, name))
+                names.append(os.path.splitext(name)[0])
+            if names:
+                log(f"已载入默认场景：{' / '.join(names)}")
+        except Exception as exc:  # noqa: BLE001
+            log(f"载入默认场景失败：{exc}")
+
     def _migrate_official_plugins(self) -> None:
         """已同步过的官方场景里，插件控件（时钟 / 天气等）当时没接上：一次性补上插件动作。
         只补「没有动作」的键，不覆盖用户改过的内容；当前正在用的场景也同步改 config.json。"""
@@ -6791,6 +6850,8 @@ __CODE__
                 "lightingOnly": self.lighting_only,
                 "standby": self.standby_sec,
                 "standbyBrightness": self.standby_brightness,
+                "wallpaperEnabled": self.wallpaper_enabled,
+                "autoBlank": self.autoblank_sec,
                 "screenOff": self.screen_off,
                 "customScene": self.custom_scene_name,
                 "activeScene": self.active_scene,
@@ -7486,8 +7547,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": bool(ok), "value": APP.standby_brightness})
         elif path == "/api/standby":
             APP.standby_sec = max(STANDBY_MIN, min(STANDBY_MAX, int(body.get("sec", 300))))
+            APP.autoblank_sec = 0             # 二选一：打开待机画面就关掉自动息屏
             APP._save_config()
-            self._json({"ok": True, "sec": APP.standby_sec})
+            self._json({"ok": True, "sec": APP.standby_sec, "autoBlank": 0})
+        elif path == "/api/autoblank":
+            sec = max(AUTOBLANK_MIN, min(AUTOBLANK_MAX, int(body.get("sec", 300))))
+            on = bool(body.get("enabled", True))
+            APP.autoblank_sec = sec if on else 0
+            if APP.autoblank_sec:
+                APP.wallpaper_enabled = False     # 二选一：开自动息屏就关掉待机画面
+                if APP.in_standby:
+                    APP._wake_from_standby()
+            APP._last_activity = time.time()
+            APP._save_config()
+            APP.broadcast({"type": "status", "autoBlank": APP.autoblank_sec,
+                           "wallpaperEnabled": APP.wallpaper_enabled})
+            self._json({"ok": True, "autoBlank": APP.autoblank_sec,
+                        "wallpaperEnabled": APP.wallpaper_enabled})
         elif path == "/api/wallpaper":
             changed = False
             if "flip" in body:
@@ -7621,10 +7697,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": bool(picked), "path": picked})
         elif path == "/api/wallpaper/toggle":
             APP.wallpaper_enabled = bool(body.get("value"))
+            if APP.wallpaper_enabled:
+                APP.autoblank_sec = 0        # 二选一：开待机画面就关掉自动息屏
+            APP._last_activity = time.time()
             APP._save_config()
             if not APP.wallpaper_enabled and APP.in_standby:
                 threading.Thread(target=APP.apply_keys, daemon=True).start()
-            self._json({"ok": True, "value": APP.wallpaper_enabled})
+            self._json({"ok": True, "value": APP.wallpaper_enabled, "autoBlank": APP.autoblank_sec})
         elif path == "/api/wallpaper/default":
             self._json({"ok": APP.restore_default_wallpaper()})
         elif path == "/api/lighting/reverse":
@@ -7692,6 +7771,18 @@ class Handler(BaseHTTPRequestHandler):
             sc = str(body.get("scene") or "")
             APP.album_settings(body, sc)
             self._json(APP.album_state(scene=sc))
+        elif path == "/api/album/reveal":
+            sc = str(body.get("scene") or "")
+            fp = APP._album_path_for(sc, int(body.get("index", -1)))
+            ok = False
+            if fp:
+                try:
+                    subprocess.Popen(["explorer", f"/select,{os.path.normpath(fp)}"])
+                    ok = True
+                    log(f"打开图片位置：{fp}")
+                except Exception as exc:  # noqa: BLE001
+                    log(f"打开图片位置失败：{exc}")
+            self._json({"ok": ok, "path": fp or ""})
         elif path == "/api/album/play":
             idx = body.get("index")
             self._json({"ok": APP.album_play(None if idx is None else int(idx)), **APP.album_state()})

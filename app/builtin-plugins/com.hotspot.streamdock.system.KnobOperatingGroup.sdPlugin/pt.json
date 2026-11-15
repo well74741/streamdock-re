@@ -1,0 +1,10 @@
+{
+    "Description": "Habilitar grupo de ação de botão", 
+    "Category": "Grupo de ações do botão giratório", 
+    "Name": "Grupo de ações do botão giratório", 
+    "com.hotspot.streamdock.system.KnobOperatingGroup": {
+      "Name": "Grupo de ações do botão giratório", 
+      "Tooltip": "Habilitar grupo de ação de botão"
+    }
+}
+  

@@ -1,0 +1,8 @@
+{
+  "Description": "Type a precomposed password string", 
+  "Name": "Password", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "Password", 
+    "Tooltip": "Type a precomposed password string"
+  }
+}

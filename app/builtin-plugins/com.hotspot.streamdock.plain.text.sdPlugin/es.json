@@ -1,0 +1,9 @@
+{
+  "Description": "Visualización de texto sin formato",
+  "Name": "Texto",
+    "com.hotspot.streamdock.plain.text": {
+      "Name": "Texto",
+      "Tooltip": "Visualización de texto sin formato"
+    }
+  }
+  

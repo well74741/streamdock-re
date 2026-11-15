@@ -1,0 +1,21 @@
+{
+  "Actions": [
+    {
+      "Name": "Go back", 
+      "States": [
+        {
+          "Image": "Images/btn_back"
+        }
+      ], 
+      "Tooltip": "Go back to previous screen", 
+      "UUID": "com.hotspot.streamdock.profile.backtoparent",
+	  "SupportedInMultiActions": false
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Go back to previous screen", 
+  "Name": "Go back", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

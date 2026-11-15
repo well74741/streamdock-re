@@ -1,0 +1,26 @@
+{
+  "Description": "页面导航",
+  "Name": "页面",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "上一页",
+    "Tooltip": "切换到上一页"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "下一页",
+    "Tooltip": "切换到下一页"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "前往页面",
+    "Tooltip": "切换到指定页码"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "页面指示框",
+    "Tooltip": "显示当前配置文件的页码"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "切换页面",
+    "Tooltip": "旋转切换左右页面"
+  }
+
+  
+}

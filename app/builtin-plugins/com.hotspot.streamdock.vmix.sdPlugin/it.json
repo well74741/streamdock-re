@@ -1,0 +1,8 @@
+{
+  "Description": "Controlla il tuo vMix", 
+  "Name": "vMix", 
+  "com.hotspot.streamdock.vmix.shortcut": {
+    "Name": "Scorciatoia", 
+    "Tooltip": "Controlla il tuo vMix"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "Description": "Introducir un texto escrito de antemano",
+  "Name": "Texto",
+    "com.hotspot.streamdock.system.text": {
+      "Name": "Texto",
+      "Tooltip": "Introducir un texto escrito de antemano"
+    }
+  }
+  

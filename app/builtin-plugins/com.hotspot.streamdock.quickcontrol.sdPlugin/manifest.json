@@ -1,0 +1,198 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/sleepAction", 
+      "Name": "Sleep", 
+      "States": [
+        {
+          "Image": "Images/sleepDefaultImage"
+        }
+      ], 
+      "SupportedInMultiActions": true,
+      "Tooltip": "Put your PC to sleep, or hibernate if your PC supports hibernation", 
+      "UUID": "com.hotspot.streamdock.quickcontrol.sleep"
+    },
+    {
+      "Icon": "Images/switchscreenAction", 
+      "Name": "Switch screen", 
+      "Settings": {
+        "KeyCmd": true,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 80,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/switchscreenDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Switch screen", 
+      "UUID": "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen"
+    },
+    {
+      "Icon": "Images/speechrecognitionAction", 
+      "Name": "Speech recognition", 
+      "Settings": {
+        "KeyCmd": true,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 72,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/speechrecognitionDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Turn on speech recognition", 
+      "UUID": "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition"
+    },
+    {
+      "Icon": "Images/WinDAction", 
+      "Name": "Display desktop", 
+      "Settings": {
+        "KeyCmd": true,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 68,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/WinDDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Display the desktop", 
+      "UUID": "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop"
+    },
+    {
+      "Icon": "Images/volumeMuteAction", 
+      "Name": "Mute", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 173,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/volumeMuteDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Mute", 
+      "UUID": "com.hotspot.streamdock.hotkey.quickcontrol.mute"
+    },
+    {
+      "Icon": "Images/volumeLowAction", 
+      "Name": "Lower the volume", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 174,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/volumeLowDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Lower the volume", 
+      "UUID": "com.hotspot.streamdock.hotkey.quickcontrol.volumedown"
+    },
+    {
+      "Icon": "Images/volumeHighAction", 
+      "Name": "Increase the volume", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 175,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/volumeHighDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Increase the volume", 
+      "UUID": "com.hotspot.streamdock.hotkey.quickcontrol.volumeup"
+    },
+    {
+      "Icon": "Images/micAction",
+      "Name": "Microphone",
+      "States": [
+        {
+          "Image": "Images/micMuteDefaultAction"
+        }
+      ],
+      "Controllers": [ "Keypad", "Knob" ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Mute/unmute the microphone", 
+      "UUID": "com.hotspot.streamdock.quickcontrol.microphone"
+    }
+  ], 
+  "Author": "Hotspot",
+  "Category": "Quick Control",
+  "Description": "Quick Control", 
+  "Name": "Quick Control", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

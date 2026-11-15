@@ -1,0 +1,8 @@
+{
+  "Description": "導航至下一個/上一個場景",
+  "Name": "場景切換",
+  "com.hotspot.streamdock.profile.rotate": {
+    "Name": "場景切換",
+    "Tooltip": "切換至另一個預配寘的場景"
+  }
+}

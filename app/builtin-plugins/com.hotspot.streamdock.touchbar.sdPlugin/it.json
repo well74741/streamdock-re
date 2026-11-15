@@ -1,0 +1,104 @@
+{
+  "Description": "Funzionalità della touchbar", 
+  "Name": "Barra di contatto", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "Centro spedizioni",
+    "Tooltip": "Centro spedizioni"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "Fuoco",
+    "Tooltip": "Fuoco"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "Siri",
+    "Tooltip": "Riattiva Siri"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "Hub di notifica",
+    "Tooltip": "Hub di notifica"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "Modalità Non disturbare",
+    "Tooltip": "Modalità Non disturbare"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "Fai uno screenshot",
+    "Tooltip": "Fai uno screenshot"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "Dettato",
+    "Tooltip": "Dettato"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "Immissione",
+    "Tooltip": "Immissione"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "Launchpad",
+    "Tooltip": "Launchpad"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "Visualizzare il desktop",
+    "Tooltip": "Visualizzare il desktop"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "Salvaschermo",
+    "Tooltip": "Salvaschermo"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "Blocco schermo",
+    "Tooltip": "Blocco schermo"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "Dormire",
+    "Tooltip": "Dormire"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "Luminosità+",
+    "Tooltip": "Aumentare la luminosità dello schermo"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "Luminosità-",
+    "Tooltip": "Ridurre la luminosità dello schermo"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "Brano precedente",
+    "Tooltip": "Brano precedente"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "Indietro veloce",
+    "Tooltip": "Indietro veloce"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "Play/Pausa",
+    "Tooltip": "Play/Pausa"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "Avanti veloce",
+    "Tooltip": "Avanti veloce"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "Brano prossimo",
+    "Tooltip": "Brano prossimo"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "Aumenta il volume",
+    "Tooltip": "Aumenta il volume"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "Abbassa il volume", 
+    "Tooltip": "Abbassa il volume"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "Muto", 
+    "Tooltip": "Muto"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "Volume", 
+    "Tooltip": "Controllo del volume"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "Luminosità dello schermo", 
+    "Tooltip": "Regolazione della luminosità dello schermo"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "تفعيل مفتاح التشغيل السريع", 
+  "Name": "مفتاح الاختصار", 
+  "com.hotspot.streamdock.system.hotkey": {
+    "Name": "مفتاح الاختصار", 
+    "Tooltip": "تفعيل مفتاح التشغيل السريع"
+  }
+}

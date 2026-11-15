@@ -1,0 +1,8 @@
+{
+  "Description": "打開網站", 
+  "Name": "網站", 
+  "com.hotspot.streamdock.system.website": {
+    "Name": "網站", 
+    "Tooltip": "打開網站"
+  }
+}

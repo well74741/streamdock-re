@@ -1,0 +1,8 @@
+{
+  "Description": "返回上一界麵", 
+  "Name": "返回", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "返回", 
+    "Tooltip": "返回上一界麵"
+  }
+}

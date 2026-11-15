@@ -1,0 +1,12 @@
+﻿{
+  "Description": "メディアの再生をコントロールします", 
+  "Name": "マルチメディア", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "マルチメディア", 
+    "Tooltip": "メディアの再生をコントロールします"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "システムボリューム", 
+    "Tooltip": "コントロールシステムボリューム"
+  }
+}

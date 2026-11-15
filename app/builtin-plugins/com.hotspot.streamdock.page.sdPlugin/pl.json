@@ -1,0 +1,24 @@
+{
+  "Description": "Nawigacja między stronami", 
+  "Name": "Strony",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "Poprzednia strona", 
+    "Tooltip": "Przejdź do poprzedniej strony"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "Następna strona", 
+    "Tooltip": "Przejdź do następnej strony"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "Idź do strony", 
+    "Tooltip": "Przejdź do ustalonej strony"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "Numer strony",
+    "Tooltip": "Wyświetla numer strony aktualnego profilu"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "Przełącz strony",
+    "Tooltip": "Obróć, aby przełączyć lewą i prawą stronę"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "Description": "Adjust the brightness of your device", 
+  "Name": "Brightness", 
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "Brightness", 
+    "Tooltip": "Adjust the brightness of your device"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "devsleep",
+    "Tooltip": "control device to sleep screen"
+  }
+}

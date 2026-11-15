@@ -1,0 +1,12 @@
+{
+  "Description": "التحكم في تشغيل الوسائط", 
+  "Name": "الوسائط المتعددة", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "الوسائط المتعددة", 
+    "Tooltip": "التحكم في تشغيل الوسائط"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "حجم النظام", 
+    "Tooltip": "حجم نظام التحكم"
+  }
+}

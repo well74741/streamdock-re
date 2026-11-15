@@ -1,0 +1,21 @@
+{
+  "Description": "السيطرة على المتصفح", 
+  "Name": "متصفحات", 
+  "Category": "متصفحات",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "رد : .", 
+    "Tooltip": "العودة إلى الصفحة السابقة"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "تقدم", 
+    "Tooltip": "انتقل إلى الصفحة التالية"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "منعش", 
+    "Tooltip": "تحديث الصفحة الحالية"
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "جمع", 
+    "Tooltip": "الصفحة الحالية"
+  }
+}

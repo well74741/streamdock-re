@@ -1,0 +1,8 @@
+{
+  "Description": "Geben Sie eine vorbearbeitete Kennwortzeichenfolge ein", 
+  "Name": "Passwort", 
+  "com.hotspot.streamdock.system.password": {
+    "Name": "Passwort", 
+    "Tooltip": "Geben Sie eine vorbearbeitete Kennwortzeichenfolge ein"
+  }
+}

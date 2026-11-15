@@ -1,0 +1,24 @@
+{
+  "Description": "Navigazione tra le pagine",
+  "Name": "Pagina",
+  "com.hotspot.streamdock.page.previous": {
+    "Name": "Precedente",
+    "Tooltip": "Passare alla pagina precedente"
+  },
+  "com.hotspot.streamdock.page.next": {
+    "Name": "Prossimo",
+    "Tooltip": "Passare alla pagina successiva"
+  },
+  "com.hotspot.streamdock.page.goto": {
+    "Name": "Vai alla pagina",
+    "Tooltip": "Passa al numero di pagina specificato"
+  },
+  "com.hotspot.streamdock.page.indicator": {
+    "Name": "Casella indicatore pagina",
+    "Tooltip": "Visualizza il numero di pagina del file di configurazione corrente"
+  },
+  "com.hotspot.streamdock.page.change": {
+    "Name": "Cambia pagina",
+    "Tooltip": "Ruota per cambiare pagina sinistra e destra"
+  }
+}

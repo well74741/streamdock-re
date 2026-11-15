@@ -1,0 +1,8 @@
+﻿{
+  "Description": "前の画面に戻ります", 
+  "Name": "戻ります", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "戻ります", 
+    "Tooltip": "前の画面に戻ります"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "Vordefinierten Text-String eingeben",
+  "Name": "Text",
+  "com.hotspot.streamdock.system.text": {
+    "Name": "Text",
+    "Tooltip": "Vordefinierten Text-String eingeben"
+  }
+}

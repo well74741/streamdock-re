@@ -1,0 +1,8 @@
+{
+  "Description": "Przejdź do poprzedniego ekranu", 
+  "Name": "Wstecz", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "Wstecz",
+    "Tooltip": Przejdź do poprzedniego ekranu"
+  }
+}

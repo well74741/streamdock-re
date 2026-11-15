@@ -1,0 +1,9 @@
+{
+  "Description": "激活热键", 
+  "Categorye": "旋钮操作组", 
+  "Name": "旋钮操作组", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "旋钮操作组", 
+    "Tooltip": "激活旋钮操作组"
+  }
+}

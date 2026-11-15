@@ -1,0 +1,11 @@
+{
+  "Description": "Aprire un'app, un file o una cartella", 
+  "Name": "Aprilo", 
+  "com.hotspot.streamdock.system.open": {
+    "Name": "Aprilo", 
+    "Tooltip": "Aprire un'app, un file o una cartella"
+  },"com.hotspot.streamdock.system.openApps": {
+    "Name": "Aprire un'app", 
+    "Tooltip": "Aprire un'app"
+  }
+}

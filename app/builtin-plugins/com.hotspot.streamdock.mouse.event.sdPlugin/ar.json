@@ -1,0 +1,8 @@
+{
+  "Description": "محاكاة الماوس الحدث", 
+  "Name": "الماوس الحدث", 
+  "com.hotspot.streamdock.mouse.event": {
+    "Name": "الماوس الحدث", 
+    "Tooltip": "محاكاة الماوس الحدث"
+  }
+}

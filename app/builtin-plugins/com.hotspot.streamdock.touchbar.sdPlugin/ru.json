@@ -1,0 +1,104 @@
+{
+  "Description": "Touchbar Функция", 
+  "Name": "Touchbar", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "диспетчерский центр",
+    "Tooltip": "диспетчерский центр"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "фокус",
+    "Tooltip": "фокус"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "Siri",
+    "Tooltip": "будить Siri"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "Центр уведомлений",
+    "Tooltip": "Центр уведомлений"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "режим не беспокоить",
+    "Tooltip": "режим не беспокоить"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "Скриншот",
+    "Tooltip": "Скриншот"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "диктант",
+    "Tooltip": "диктант"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "Вход",
+    "Tooltip": "Вход"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "стартовая площадка",
+    "Tooltip": "стартовая площадка"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "Показать рабочий стол",
+    "Tooltip": "Показать рабочий стол"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "заставка",
+    "Tooltip": "заставка"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "блокировка экрана",
+    "Tooltip": "блокировка экрана"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "спать",
+    "Tooltip": "спать"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "Увеличьте яркость экрана",
+    "Tooltip": "Увеличьте яркость экрана"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "Уменьшите яркость экрана",
+    "Tooltip": "Уменьшите яркость экрана"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "предыдущая часть",
+    "Tooltip": "предыдущая часть"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "Перемотка назад",
+    "Tooltip": "Перемотка назад"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "воспроизведение/пауза",
+    "Tooltip": "воспроизведение/пауза"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "перемотка вперед",
+    "Tooltip": "перемотка вперед"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "следующий трек",
+    "Tooltip": "следующий трек"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "Увеличьте громкость",
+    "Tooltip": "Увеличьте громкость"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "уменьшить громкость", 
+    "Tooltip": "уменьшить громкость"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "немой", 
+    "Tooltip": "немой"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "Громкость", 
+    "Tooltip": "Регулирование громкости"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "Яркость экрана", 
+    "Tooltip": "Изменить яркость экрана"
+  }
+}

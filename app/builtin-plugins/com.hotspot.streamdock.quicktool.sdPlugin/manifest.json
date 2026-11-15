@@ -1,0 +1,179 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/calculatorAction", 
+      "Name": "Calculator", 
+      "States": [
+        {
+          "Image": "Images/calculatorDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the calculator", 
+      "UUID": "com.hotspot.streamdock.quicktool.calculator"
+    },
+    {
+      "Icon": "Images/emoticonsAction", 
+      "Name": "Emoticons", 
+      "Settings": {
+        "KeyCmd": true,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 190,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/emoticonsDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the emoticons", 
+      "UUID": "com.hotspot.streamdock.hotkey.quicktool.emoticons"
+    },
+    {
+      "Icon": "Images/mailAction", 
+      "Name": "Mail", 
+      "States": [
+        {
+          "Image": "Images/mailDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the mail", 
+      "UUID": "com.hotspot.streamdock.quicktool.mail"
+    },
+    {
+      "Icon": "Images/musicAction", 
+      "Name": "Music", 
+      "States": [
+        {
+          "Image": "Images/musicDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Turn on the music", 
+      "UUID": "com.hotspot.streamdock.quicktool.music"
+    },
+    {
+      "Icon": "Images/homepageAction", 
+      "Name": "Home page", 
+      "States": [
+        {
+          "Image": "Images/homepageDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the home page", 
+      "UUID": "com.hotspot.streamdock.quicktool.homepage"
+    },
+    {
+      "Icon": "Images/notificationAction", 
+      "Name": "Notification", 
+      "Settings": {
+        "KeyCmd": true,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 65,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/notificationDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open notification", 
+      "UUID": "com.hotspot.streamdock.hotkey.quicktool.notification"
+    },
+    {
+      "Icon": "Images/taskmanagerAction", 
+      "Name": "Task Manager", 
+      "Settings": {
+        "KeyCmd": false,
+        "KeyCtrl": true,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": true,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 27,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/taskmanagerDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the task manager", 
+      "UUID": "com.hotspot.streamdock.hotkey.quicktool.taskmanager"
+    },
+    {
+      "Icon": "Images/controlpanelAction", 
+      "Name": "Control panel", 
+      "States": [
+        {
+          "Image": "Images/controlpanelDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the Control panel", 
+      "UUID": "com.hotspot.streamdock.quicktool.controlpanel"
+    },
+    {
+      "Icon": "Images/searchBarAction", 
+      "Name": "Search bar", 
+      "Settings": {
+        "KeyCmd": true,
+        "KeyCtrl": false,
+        "KeyModifiers": 65536,
+        "KeyOption": false,
+        "KeyShift": false,
+        "NativeCode": -1,
+        "QTKeyCode": -1,
+        "RKeyCmd": false,
+        "RKeyCtrl": false,
+        "RKeyOption": false,
+        "RKeyShift": false,
+        "VKeyCode": 81,
+        "VKeyCode_Mac": -1
+      },
+      "States": [
+        {
+          "Image": "Images/searchBarDefaultImage"
+        }
+      ],
+      "SupportedInMultiActions": true,
+      "Tooltip": "Open the search bar", 
+      "UUID": "com.hotspot.streamdock.hotkey.quicktool.searchbar"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Category": "Quick Control",
+  "Description": "Quick Control", 
+  "Name": "Quick Control", 
+  "URL": "http://www.hotspotek.com.cn/",
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

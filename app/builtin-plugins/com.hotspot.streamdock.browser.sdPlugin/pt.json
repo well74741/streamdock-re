@@ -1,0 +1,21 @@
+{
+  "Description": "Controle o navegador", 
+  "Name": "Navegador", 
+  "Category": "Navegador",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "Regresso", 
+    "Tooltip": "Voltar à página anterior"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "Adiantamento", 
+    "Tooltip": "Ir para a página seguinte"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "Rubor", 
+    "Tooltip": "Atualizar a página atual"
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "Coleção", 
+    "Tooltip": "Marcar a página atual"
+  }
+}

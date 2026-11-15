@@ -1,0 +1,13 @@
+{
+    "Description": "Abra uma aplicação, ficheiro ou pasta", 
+    "Name": "Abre", 
+    "com.hotspot.streamdock.system.open": {
+      "Name": "Abre", 
+      "Tooltip": "Abra uma aplicação, ficheiro ou pasta"
+    },
+    "com.hotspot.streamdock.system.openApps": {
+      "Name": "Abra uma aplicação", 
+      "Tooltip": "Abra uma aplicação"
+    }
+}
+  

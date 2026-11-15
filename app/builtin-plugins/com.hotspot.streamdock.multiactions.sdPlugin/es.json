@@ -1,0 +1,32 @@
+{
+  "Description": "Acción múltiple",
+  "Name": "Acción múltiple",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "Acción múltiple",
+    "Tooltip": "Realizar varias acciones"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "Acción aleatoria",
+    "Tooltip": "Ejecuta una acción al azar"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "Demorar",
+    "Tooltip": "Agregar un retraso entre acciones y acciones"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "Carrusel de acciones",
+    "Tooltip": "Cambiar automáticamente entre complementos y módulos"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "Ciclo de acciones",
+    "Tooltip": "Cambie entre complementos y complementos en un solo paso"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "Rueda de operación",
+    "Tooltip": "Ejecución de varios ciclos de operación en la Perilla"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "Activación de la operación",
+    "Tooltip": "Perilla de transbordo para realizar la operación"
+  }
+}

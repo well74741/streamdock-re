@@ -1,0 +1,9 @@
+{
+    "Description": "Insira uma cadeia de texto pré-editada", 
+    "Name": "Texto", 
+    "com.hotspot.streamdock.system.text": {
+      "Name": "Texto", 
+      "Tooltip": "Insira uma cadeia de texto pré-editada"
+    }
+}
+  

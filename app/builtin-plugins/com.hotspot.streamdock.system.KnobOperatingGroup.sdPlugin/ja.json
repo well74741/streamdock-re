@@ -1,0 +1,9 @@
+﻿{
+  "Description": "ノブ操作グループを開く", 
+  "Category": "ノブアクショングループ", 
+  "Name": "ノブアクショングループ", 
+  "com.hotspot.streamdock.system.KnobOperatingGroup": {
+    "Name": "ノブアクショングループ", 
+    "Tooltip": "ノブ操作グループを開く"
+  }
+}

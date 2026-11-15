@@ -1,0 +1,8 @@
+﻿{
+  "Description": "キーコマンドを有効化します", 
+  "Name": "スーパーホットキー", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "スーパーホットキー", 
+    "Tooltip": "ゲームのブロックを回避できる"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "Description": "Управляйте своим vMix", 
+  "Name": "vMix", 
+  "com.hotspot.streamdock.vmix.shortcut": {
+    "Name": "быстрая клавиша", 
+    "Tooltip": "Управляйте своим vMix"
+  }
+}

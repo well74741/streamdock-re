@@ -1,0 +1,12 @@
+{
+  "Description": "Controlla la riproduzione multimediale", 
+  "Name": "Multimedia", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "Multimedia", 
+    "Tooltip": "Controlla la riproduzione multimediale"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "volume del sistema", 
+    "Tooltip": "Volume del sistema di controllo"
+  }
+}

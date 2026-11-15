@@ -1,0 +1,104 @@
+{
+  "Description": "Touchbar 功能", 
+  "Name": "Touchbar", 
+  "com.hotspot.streamdock.touchbar.dispatchcenter": {
+    "Name": "調度中心",
+    "Tooltip": "調度中心"
+  },
+  "com.hotspot.streamdock.touchbar.focusonsearch": {
+    "Name": "聚焦",
+    "Tooltip": "聚焦"
+  },
+  "com.hotspot.streamdock.touchbar.siri": {
+    "Name": "Siri",
+    "Tooltip": "喚醒Siri"
+  },
+  "com.hotspot.streamdock.touchbar.notificationcenter": {
+    "Name": "通知中心",
+    "Tooltip": "通知中心"
+  },
+  "com.hotspot.streamdock.touchbar.dndmode": {
+    "Name": "勿擾模式",
+    "Tooltip": "勿擾模式"
+  },
+  "com.hotspot.streamdock.touchbar.screenshot": {
+    "Name": "截屏",
+    "Tooltip": "截屏"
+  },
+  "com.hotspot.streamdock.touchbar.dictation": {
+    "Name": "聽寫",
+    "Tooltip": "聽寫"
+  },
+  "com.hotspot.streamdock.touchbar.inputmethod": {
+    "Name": "輸入法",
+    "Tooltip": "輸入法"
+  },
+  "com.hotspot.streamdock.touchbar.launchpad": {
+    "Name": "啟動臺",
+    "Tooltip": "啟動臺"
+  },
+  "com.hotspot.streamdock.touchbar.showdesktop": {
+    "Name": "顯示桌麵",
+    "Tooltip": "顯示桌麵"
+  },
+  "com.hotspot.streamdock.touchbar.desktopsaver": {
+    "Name": "屏幕保護程序",
+    "Tooltip": "屏幕保護程序"
+  },
+  "com.hotspot.streamdock.touchbar.screenlock": {
+    "Name": "屏幕鎖定",
+    "Tooltip": "屏幕鎖定"
+  },
+  "com.hotspot.streamdock.touchbar.sleep": {
+    "Name": "睡眠",
+    "Tooltip": "睡眠"
+  },
+  "com.hotspot.streamdock.touchbar.increasescreenbrightness": {
+    "Name": "提高屏幕亮度",
+    "Tooltip": "提高屏幕亮度"
+  },
+  "com.hotspot.streamdock.touchbar.decreasescreenbrightness": {
+    "Name": "降低屏幕亮度",
+    "Tooltip": "降低屏幕亮度"
+  },
+  "com.hotspot.streamdock.touchbar.previoustrack": {
+    "Name": "上一曲",
+    "Tooltip": "上一曲"
+  },
+  "com.hotspot.streamdock.touchbar.fastrewind": {
+    "Name": "快退",
+    "Tooltip": "快退"
+  },
+  "com.hotspot.streamdock.touchbar.playpause": {
+    "Name": "播放/暫停",
+    "Tooltip": "播放/暫停"
+  },
+  "com.hotspot.streamdock.touchbar.fastforward": {
+    "Name": "快進",
+    "Tooltip": "快進"
+  },
+  "com.hotspot.streamdock.touchbar.nexttrack": {
+    "Name": "下一曲",
+    "Tooltip": "下一曲"
+  },
+  "com.hotspot.streamdock.touchbar.volumeup": {
+    "Name": "提高音量",
+    "Tooltip": "提高音量"
+  },
+  "com.hotspot.streamdock.touchbar.volumedown": {
+    "Name": "降低音量", 
+    "Tooltip": "降低音量"
+  },
+  "com.hotspot.streamdock.touchbar.mute": {
+    "Name": "靜音", 
+    "Tooltip": "靜音"
+  },
+  "com.hotspot.streamdock.touchbar.volume": {
+    "Name": "音量", 
+    "Tooltip": "音量控制"
+  },
+  "com.hotspot.streamdock.touchbar.screen.brightness": {
+    "Name": "荧幕亮度", 
+    "Tooltip": "調整荧幕亮度"
+  }
+}

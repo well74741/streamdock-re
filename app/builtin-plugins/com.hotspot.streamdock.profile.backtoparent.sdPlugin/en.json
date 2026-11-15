@@ -1,0 +1,8 @@
+{
+  "Description": "Go back to previous screen", 
+  "Name": "Go back", 
+  "com.hotspot.streamdock.profile.backtoparent": {
+    "Name": "Go back",
+    "Tooltip": "Go back to previous screen"
+  }
+}

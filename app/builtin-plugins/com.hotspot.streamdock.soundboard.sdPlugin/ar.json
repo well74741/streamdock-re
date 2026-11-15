@@ -1,0 +1,12 @@
+{
+  "Description": "مشغل الصوت", 
+  "Name": "مشغل الصوت", 
+  "com.hotspot.streamdock.soundboard.playaudio": {
+    "Name": "تشغيل الملفات الصوتية", 
+    "Tooltip": "تشغيل الملفات الصوتية مثل مقاطع الصوت أو مقاطع الموسيقى أو المؤثرات الصوتية"
+  }, 
+  "com.hotspot.streamdock.soundboard.stopaudioplay": {
+    "Name": "توقف عن تشغيل الملف الصوتي", 
+    "Tooltip": "توقف عن تشغيل كافة الملفات الصوتية"
+  }
+}

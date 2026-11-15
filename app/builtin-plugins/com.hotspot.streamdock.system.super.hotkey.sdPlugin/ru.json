@@ -1,0 +1,8 @@
+{
+  "Description": "Активировать горячую клавишу", 
+  "Name": "Супер горячие клавиши", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "Супер горячие клавиши", 
+    "Tooltip": "Можно обойти блокировку игры"
+  }
+}

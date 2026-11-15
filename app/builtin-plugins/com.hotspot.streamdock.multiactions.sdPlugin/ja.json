@@ -1,0 +1,32 @@
+﻿{
+  "Description": "マルチアクション",
+  "Name": "マルチアクション",
+  "com.hotspot.streamdock.multiactions.routine": {
+    "Name": "マルチアクション",
+    "Tooltip": "いくつかのアクションを実行します"
+  },
+  "com.hotspot.streamdock.multiactions.random": {
+    "Name": "ランダムアクション",
+    "Tooltip": "ランダムアクションを実行します"
+  },
+  "com.hotspot.streamdock.multiactions.delay": {
+    "Name": "遅延",
+    "Tooltip": "連続アクションの間に遅延を追加します"
+  },
+  "com.hotspot.streamdock.multiactions.LunBo": {
+    "Name": "アクションカルーセル",
+    "Tooltip": "プラグインとモジュールの間を自動的に切り替えます"
+  },
+  "com.hotspot.streamdock.multiactions.toggle": {
+    "Name": "アクションサイクル",
+    "Tooltip": "ワンステップでプラグインとプラグインを切り替える"
+  },
+  "com.hotspot.streamdock.multiactions.ActionTrigger": {
+    "Name": "そうじゅうホイール",
+    "Tooltip": "ノブ上の複数の操作サイクル実行"
+  },
+  "com.hotspot.streamdock.multiactions.ActionWheel": {
+    "Name": "オペレーショントリガ",
+    "Tooltip": "ノブを回して操作を実行する"
+  }
+}

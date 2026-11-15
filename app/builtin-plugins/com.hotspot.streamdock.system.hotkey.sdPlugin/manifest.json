@@ -1,0 +1,22 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/trigger_hotkey_white", 
+      "Name": "Hotkey", 
+      "States": [
+        {
+          "Image": "Images/btn_custom_trigger_hotkey"
+        }
+      ],
+      "Controllers": [ "Keypad", "Knob" ],
+      "Tooltip": "Activate a key command", 
+      "UUID": "com.hotspot.streamdock.system.hotkey"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Activate a key command", 
+  "Name": "Hotkey", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

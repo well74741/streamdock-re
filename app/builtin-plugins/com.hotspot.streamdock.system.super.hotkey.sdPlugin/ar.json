@@ -1,0 +1,8 @@
+{
+  "Description": "تفعيل مفتاح التشغيل السريع", 
+  "Name": "سوبر هوتكي", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "سوبر هوتكي", 
+    "Tooltip": "يمكن تجاوز حظر اللعبة"
+  }
+}

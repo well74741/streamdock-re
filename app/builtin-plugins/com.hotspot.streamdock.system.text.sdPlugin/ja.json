@@ -1,0 +1,8 @@
+﻿{
+  "Description": "事前に作成されたテキスト文字列を入力します", 
+  "Name": "テキスト", 
+  "com.hotspot.streamdock.system.text": {
+    "Name": "テキスト", 
+    "Tooltip": "事前に作成されたテキスト文字列を入力します"
+  }
+}

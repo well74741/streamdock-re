@@ -1,0 +1,12 @@
+{
+  "Description": "控制媒体播放", 
+  "Name": "多媒体", 
+  "com.hotspot.streamdock.system.multimedia": {
+    "Name": "多媒体", 
+    "Tooltip": "控制媒体播放"
+  },
+  "com.hotspot.streamdock.system.volume": {
+    "Name": "系统音量", 
+    "Tooltip": "控制系统音量"
+  }
+}

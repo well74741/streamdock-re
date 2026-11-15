@@ -1,0 +1,21 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/open_website_white", 
+      "Name": "Website", 
+      "States": [
+        {
+          "Image": "Images/btn_custom_open_website"
+        }
+      ], 
+      "Tooltip": "Open URL", 
+      "UUID": "com.hotspot.streamdock.system.website"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Open a Website", 
+  "Name": "Website", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

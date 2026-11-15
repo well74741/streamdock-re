@@ -1,0 +1,9 @@
+{
+    "Description": "Volver a la pantalla anterior", 
+    "Name": "Devolución", 
+    "com.hotspot.streamdock.profile.backtoparent": {
+      "Name": "Devolución", 
+      "Tooltip": "Volver a la pantalla anterior"
+    }
+}
+  

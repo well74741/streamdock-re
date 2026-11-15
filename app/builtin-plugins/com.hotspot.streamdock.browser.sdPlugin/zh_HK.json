@@ -1,0 +1,21 @@
+{
+  "Description": "控制瀏覽器", 
+  "Name": "瀏覽器", 
+  "Category": "瀏覽器",
+  "com.hotspot.streamdock.hotkey.browser.back": {
+    "Name": "返回", 
+    "Tooltip": "返回上一個頁面"
+  },
+  "com.hotspot.streamdock.hotkey.browser.forward": {
+    "Name": "前進", 
+    "Tooltip": "前往下一個頁面"
+  },
+  "com.hotspot.streamdock.hotkey.browser.refresh": {
+    "Name": "刷新", 
+    "Tooltip": "重繪當前頁面"
+  },
+  "com.hotspot.streamdock.hotkey.browser.collect": {
+    "Name": "收藏", 
+    "Tooltip": "收藏當前頁面"
+  }
+}

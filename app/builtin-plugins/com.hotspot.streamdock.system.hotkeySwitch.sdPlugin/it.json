@@ -1,0 +1,8 @@
+{
+  "Description": "Attivare il tasto di scelta rapida", 
+  "Name": "HotkeySwitch", 
+  "com.hotspot.streamdock.system.hotkeySwitch": {
+    "Name": "HotkeySwitch", 
+    "Tooltip": "Attivare il tasto di scelta rapida"
+  }
+}

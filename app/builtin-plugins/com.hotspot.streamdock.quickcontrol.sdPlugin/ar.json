@@ -1,0 +1,37 @@
+{
+  "Description": "التحكم السريع", 
+  "Name": "التحكم السريع", 
+  "Category": "التحكم السريع",  
+  "com.hotspot.streamdock.quickcontrol.sleep": {
+    "Name": "ينام", 
+    "Tooltip": "ضع الكمبيوتر في حالة السكون. إذا كان الكمبيوتر يدعم وضع السبات، فسوف يدخل في حالة السبات."
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.switchscreen": {
+    "Name": "تبديل الشاشة", 
+    "Tooltip": "تبديل الشاشة"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.speechrecognition": {
+    "Name": "التعرف على الكلام", 
+    "Tooltip": "قم بتشغيل التعرف على الكلام"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.displaydesktop": {
+    "Name": "أظهر سطح المكتب", 
+    "Tooltip": "أظهر سطح المكتب"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.mute": {
+    "Name": "صامت", 
+    "Tooltip": "صامت"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumedown": {
+    "Name": "خفض حجم", 
+    "Tooltip": "خفض حجم"
+  },
+  "com.hotspot.streamdock.hotkey.quickcontrol.volumeup": {
+    "Name": "علي الصوت", 
+    "Tooltip": "علي الصوت"
+  },
+  "com.hotspot.streamdock.quickcontrol.microphone": {
+    "Name": "ميكروفون", 
+    "Tooltip": "كتم/إلغاء كتم صوت الميكروفون"
+  }
+}

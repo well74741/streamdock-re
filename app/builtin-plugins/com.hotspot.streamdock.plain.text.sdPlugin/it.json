@@ -1,0 +1,8 @@
+{
+  "Description": "Visualizzazione del testo in chiaro", 
+  "Name": "Testo", 
+  "com.hotspot.streamdock.plain.text": {
+    "Name": "Testo", 
+    "Tooltip": "Visualizzazione del testo in chiaro"
+  }
+}

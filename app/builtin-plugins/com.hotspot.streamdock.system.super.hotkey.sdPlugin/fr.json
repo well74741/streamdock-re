@@ -1,0 +1,8 @@
+{
+  "Description": "Activer une commande de touche", 
+  "Name": "Super hotkey", 
+  "com.hotspot.streamdock.system.super.hotkey": {
+    "Name": "Super hotkey", 
+    "Tooltip": "Peut contourner le blocage du jeu"
+  }
+}

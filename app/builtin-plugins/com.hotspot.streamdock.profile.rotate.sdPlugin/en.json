@@ -1,0 +1,8 @@
+{
+  "Description": "Navigate to next/previous scene", 
+  "Name": "Scene Shift", 
+  "com.hotspot.streamdock.profile.rotate": {
+    "Name": "Scene Shift", 
+    "Tooltip": "Switch to another preconfigured scenario"
+  }
+}

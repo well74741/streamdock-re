@@ -1,0 +1,57 @@
+{
+  "Actions": [
+    {
+      "Icon": "Images/action20", 
+      "Name": "Shortcut", 
+      "States": [
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        },
+        {
+          "Image": "Images/logo"
+        }
+      ], 
+      "Tooltip": "Control your vmix", 
+      "UUID": "com.hotspot.streamdock.vmix.shortcut"
+    }
+  ], 
+  "Author": "Hotspot", 
+  "Description": "Control your vmix", 
+  "Name": "vMix", 
+  "URL": "http://www.hotspotek.com.cn/", 
+  "PrivateAPI": true,
+  "Version": "1.0"
+}

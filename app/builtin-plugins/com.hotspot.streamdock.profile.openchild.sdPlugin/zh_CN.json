@@ -1,0 +1,8 @@
+{
+  "Description": "创建文件夹", 
+  "Name": "创建文件夹", 
+  "com.hotspot.streamdock.profile.openchild": {
+    "Name": "创建文件夹", 
+    "Tooltip": "创建文件夹"
+  }
+}

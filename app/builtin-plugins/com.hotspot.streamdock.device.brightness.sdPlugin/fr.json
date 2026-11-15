@@ -1,0 +1,12 @@
+{
+  "Description": "Régler la luminosité de votre appareil",
+  "Name": "Luminosité",
+  "com.hotspot.streamdock.device.brightness": {
+    "Name": "Luminosité",
+    "Tooltip": "Régler la luminosité de votre appareil"
+  },
+  "com.hotspot.streamdock.device.devsleep": {
+    "Name": "Éteindre l'écran",
+    "Tooltip": "Mettre l'appareil en veille"
+  }
+}
