@@ -547,12 +547,25 @@ function iconTile(pack, file) {
     + ` src="${packIconUrl(pack, file)}" title="${escHtml(label)}" alt="" />`;
 }
 
+/* 裁图包里的第 n 张（1 起，按屏幕从左到右、从上到下）对应哪个键 */
+const cropKeyOfIndex = (n) => {
+  const col = (n - 1) % 5;
+  const row = Math.floor((n - 1) / 5);      // 0 = 屏幕上排
+  return (2 - row) * 5 + col + 1;
+};
+
 function fillPackTiles(details) {
   const tiles = details.querySelector(".tiles");
   if (!tiles || tiles.dataset.filled) return;
   const pack = iconPacks.find((p) => p.id === details.dataset.pack);
   if (!pack) return;
   tiles.innerHTML = pack.files.map((f) => iconTile(pack.id, f)).join("");
+  if (pack.crop) {
+    // 裁图包的文件名按屏幕顺序补零，顺序就是屏幕顺序；顺手标上它属于哪个键，拖的时候不会搞错
+    tiles.querySelectorAll("img").forEach((im, i) => {
+      im.title = `键 ${cropKeyOfIndex(i + 1)}`;
+    });
+  }
   tiles.dataset.filled = "1";
 }
 
@@ -609,7 +622,7 @@ async function loadIcons(refresh = false) {
           + `<div class="side-empty small">还没有：点控制台右下角「裁图工具」，把一张图裁成 15 张就存到这里。</div>`
         : "") + `<div class="lib-sec">官方图标包</div>`;
     }
-    return head + `<details class="icon-group" data-pack="${escHtml(p.id)}"${open ? " open" : ""}>`
+    return head + `<details class="icon-group" data-pack="${escHtml(p.id)}"${p.crop ? ' data-crop="1"' : ""}${open ? " open" : ""}>`
       + `<summary>${cover}<span class="g-name" title="${escHtml(p.author ? `${p.name} · ${p.author}` : p.name)}">${escHtml(p.name)}</span><em>${p.count}</em></summary>`
       + `<div class="tiles"></div></details>`;
   }).join("");

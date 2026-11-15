@@ -5067,6 +5067,7 @@ class App:
         packs = [{
             "id": p["id"], "name": p["name"], "author": p["author"],
             "count": len(p["files"]), "mine": bool(p.get("mine")),
+            "crop": bool(p.get("mine")),
             "files": [os.path.basename(f) for f in p["files"]],
         } for p in self._catalog(refresh)["packs"].values()]
         packs.sort(key=lambda p: (0 if p["mine"] else 1, p["name"].lower()))
