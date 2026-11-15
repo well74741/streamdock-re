@@ -288,6 +288,11 @@ function renderWpGrid() {
   grid.innerHTML = html;
 }
 
+/* 切场景后强制下一次刷新重拉所有按键图（同名文件也能换过来） */
+function forceBoardReload() {
+  document.querySelectorAll(".ring-board .cell-img").forEach((el) => { el.dataset.v = ""; });
+}
+
 function refreshBoard() {
   const stamp = Date.now();
   const img = $("#wp-preview");
@@ -347,7 +352,7 @@ function refreshCells() {
         // 用原始文件（GIF 会实时播放），和控制台"所见即所得"
         // 按图片版本判断：切场景 / 翻页后同一个键换了图，也要重新加载
         // 按图片版本判断：切场景 / 翻页后同一个键换了图，也要重新加载
-        const rev = `${state?.sceneRev || 0}-${n}-${state?.keyImageRev?.[n] || imgs[n]}`;
+        const rev = `${state?.sceneRev || 0}-${state?.page || 0}-${n}-${state?.keyImageRev?.[n] || imgs[n]}`;
         if (imgEl.dataset.v !== rev) {
           imgEl.src = `/api/key/${n}/raw?v=${stamp}`;
           imgEl.dataset.v = rev;
@@ -651,7 +656,6 @@ async function loadIcons(refresh = false) {
       saveSideState();
     });
   });
-  renderLibrary(box);
 }
 
 /* ---------------------------------------------------- 图标库「相册」分类 */
@@ -661,23 +665,18 @@ function libraryTile(it) {
   const name = escHtml(it.name);
   return `<span class="lib-cell" title="${name}" data-file="${name}">`
     + `<img loading="lazy" draggable="false" data-name="lib:${name}"`
-    + ` src="/api/library/${encodeURIComponent(it.name)}?v=${it.mtime || 0}" alt="" /></span>`;
+    + ` src="/api/library/thumb/${encodeURIComponent(it.name)}?v=${it.mtime || 0}" alt="" /></span>`;
 }
 
-function renderLibrary(box) {
+function renderLibrary() {
+  const box = $("#lib-album");
   if (!box) return;
-  box.querySelector(".lib-sec-album")?.remove();
-  box.querySelector("#lib-album")?.remove();
   const items = libraryItems || [];
-  const html = `<div class="lib-sec lib-sec-album"><span>相册</span><em>${items.length}</em>`
-    + `<button class="seg small" id="lib-add" title="把图片加进相册">＋ 添加</button></div>`
-    + `<div class="lib-album" id="lib-album">`
-    + (items.length
-      ? items.map(libraryTile).join("")
-      : `<div class="side-empty small">空的：点「＋ 添加」，或者在壁纸/幻灯片里选过的图会自动收进来。</div>`)
-    + `</div>`;
-  box.insertAdjacentHTML("beforeend", html);
-  bindLibrary(box);
+  const cnt = $("#lib-count");
+  if (cnt) cnt.textContent = String(items.length);
+  box.innerHTML = items.length
+    ? items.map(libraryTile).join("")
+    : `<div class="side-empty small">空的：点右上角「＋ 添加」，或者在壁纸/幻灯片里选过的图会自动收进来。</div>`;
 }
 
 async function loadLibrary() {
@@ -686,15 +685,14 @@ async function loadLibrary() {
   } catch (_) {
     libraryItems = [];
   }
-  renderLibrary($("#icon-groups"));
+  renderLibrary();
 }
 
-function bindLibrary(box) {
-  if (!box || box.dataset.libBound) return;
-  box.dataset.libBound = "1";
-  box.addEventListener("click", async (e) => {
-    const add = e.target.closest("#lib-add");
-    if (!add) return;
+function bindLibrary() {
+  const add = $("#lib-add");
+  if (!add || add.dataset.bound) return;
+  add.dataset.bound = "1";
+  add.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     const input = document.createElement("input");
@@ -715,7 +713,7 @@ function bindLibrary(box) {
         const r = await post("/api/library/add", { files: rels });
         toast(`已收进相册 ${r.added || 0} 张`, 1600);
         libraryItems = r.items || [];
-        renderLibrary($("#icon-groups"));
+        renderLibrary();
       }
     });
     input.click();
@@ -760,7 +758,7 @@ function bindLibraryMenu() {
         if (!(await confirmDialog(`从相册里删掉「${escHtml(file)}」？<br><small>只删相册里的这份，原来的文件不动。</small>`))) return;
         const r = await post("/api/library/remove", { name: file });
         libraryItems = r.items || [];
-        renderLibrary($("#icon-groups"));
+        renderLibrary();
         toast("已从相册删除", 1400);
       }
     });
@@ -2478,6 +2476,22 @@ async function handleFile(key, file) {
     if (!r.ok) toast("图片设置失败");
     return;
   }
+  // 程序 / 快捷方式：浏览器只给文件内容、拿不到真实路径，改成在控制台里弹窗选
+  if (/\.(exe|lnk|bat|cmd|com|msi|appref-ms|ps1|vbs)$/i.test(file.name)) {
+    const go = await confirmDialog(
+      `「${escHtml(file.name)}」是程序 / 快捷方式。<br><small>浏览器拿不到本机的完整路径（只能拿到文件内容），`
+      + `点「确定」后会弹出一个选择窗口，在里面选它一次就能绑定，按键会显示这个程序的图标。</small>`);
+    if (!go) return;
+    const picked = await post("/api/key/pick-program", {});
+    if (!picked.ok) {
+      toast("没选程序，绑定取消", 1600);
+      return;
+    }
+    const r = await post("/api/key/bind-program", { key, path: picked.path });
+    if (!r.ok) toast(r.error || "绑定失败", 2200);
+    else toast(`已绑定程序：${r.name}${r.icon ? "（已用程序图标）" : ""}`, 2200);
+    return;
+  }
   // 快捷方式类：解析出网址，类型自动设为「打开网页」
   if (/\.(url|webloc|website)$/i.test(file.name)) {
     let url = "";
@@ -3680,7 +3694,7 @@ function bindUI() {
           selectedScene = name;
           renderEditor();
           if (row.classList.contains("active")) {
-            toast(`相册场景「${name}」正在播放`, 2000);
+            toast(`「${name}」已经是当前场景`, 1800);
             return;
           }
           const r = await post("/api/scenes", { apply: name });
@@ -3691,7 +3705,8 @@ function bindUI() {
           }
           renderScenes(r.items || []);
           renderEditor();
-          toast(`相册场景「${name}」正在播放`, 2200);
+          forceBoardReload();
+          toast(`已切换到相册场景「${name}」`, 1800);
           await refreshState();
           return;
         }
@@ -3706,6 +3721,7 @@ function bindUI() {
           toast(r.reason || "切换失败", 2800);
           return;
         }
+        forceBoardReload();
         toast(`已切换到「${name}」`, 1200);
         await refreshState();
         await reloadScenes();
@@ -4406,7 +4422,7 @@ function connectEvents() {
       refreshState();
     } else if (msg.type === "library") {
       libraryItems = msg.items || [];
-      renderLibrary($("#icon-groups"));
+      renderLibrary();
     } else if (msg.type === "lighting") {
       if (state) state.lighting = { ...(state.lighting || {}), ...(msg.lighting || {}) };
       applyLighting(msg.lighting);

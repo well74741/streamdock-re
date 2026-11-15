@@ -131,7 +131,8 @@ CONFIG_BAK_DIR = os.path.join(DATA_DIR, "config-backups")
 ICON_DIR = os.path.join(DATA_DIR, "assets", "icons")
 MY_ICON_DIR = os.path.join(DATA_DIR, "assets", "myicons")   # 「我的图标」：裁图工具存进来的图标包
 CROP_CACHE = os.path.join(DATA_DIR, "cache", "crop")        # 裁图工具预览用的临时目录
-LIBRARY_DIR = os.path.join(DATA_DIR, "assets", "library")   # 图标库的「相册」分类：收进来的图片
+LIBRARY_DIR = os.path.join(DATA_DIR, "assets", "library")   # 「相册」分类：收进来的图片
+LIB_THUMB_DIR = os.path.join(DATA_DIR, "cache", "lib-thumb")  # 相册缩略图缓存（侧栏只加载小图，省内存）
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 _STILL_CACHE: dict = {}                                     # 动图缩略图首帧缓存：(路径, mtime) -> PNG 字节
 SCENE_DIR = os.path.join(DATA_DIR, "scenes")
@@ -2991,6 +2992,31 @@ class App:
         fp = os.path.join(LIBRARY_DIR, safe)
         return fp if os.path.isfile(fp) else None
 
+    def library_thumb(self, name: str, size: int = 168) -> str | None:
+        """相册缩略图：侧栏只加载小图，避免十几张十几 MB 的原图把界面拖卡。"""
+        src = self.library_path(name)
+        if not src:
+            return None
+        try:
+            mtime = int(os.path.getmtime(src))
+        except OSError:
+            mtime = 0
+        stem = os.path.splitext(os.path.basename(src))[0]
+        os.makedirs(LIB_THUMB_DIR, exist_ok=True)
+        dst = os.path.join(LIB_THUMB_DIR, f"{stem}-{mtime}-{size}.jpg")
+        if os.path.isfile(dst):
+            return dst
+        try:
+            with Image.open(src) as im:
+                im.seek(0)
+                im = im.convert("RGB")
+                im.thumbnail((size, size), Image.LANCZOS)
+                im.save(dst, "JPEG", quality=84)
+            return dst
+        except Exception as exc:  # noqa: BLE001
+            log(f"生成相册缩略图失败：{exc}")
+            return None
+
     def library_collect(self, paths) -> int:
         """把图片收进「相册」分类：复制一份到 LIBRARY_DIR，重名自动加序号。"""
         n = 0
@@ -3035,6 +3061,128 @@ class App:
                 paths.append(p)
         n = self.library_collect(paths)
         return {"ok": bool(n), "added": n, "items": self.library_items()}
+
+    def pick_program(self) -> str:
+        """弹一个「选择程序」窗口（服务端在本机弹，浏览器拿不到真实路径）。"""
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "Add-Type -AssemblyName System.Drawing;"
+            "$o=New-Object System.Windows.Forms.Form;"
+            "$o.TopMost=$true; $o.ShowInTaskbar=$false; $o.FormBorderStyle='None';"
+            "$o.StartPosition='CenterScreen'; $o.Size=New-Object System.Drawing.Size(1,1);"
+            "$o.Show();"
+            "$d=New-Object System.Windows.Forms.OpenFileDialog;"
+            "$d.Title='选择要绑定的程序（.exe / 快捷方式）';"
+            "$d.Filter='程序 (*.exe;*.lnk;*.bat;*.cmd)|*.exe;*.lnk;*.bat;*.cmd|所有文件 (*.*)|*.*';"
+            "$d.CheckFileExists=$true;"
+            "if($d.ShowDialog($o) -eq 'OK'){ $d.FileName };"
+            "$o.Close()"
+        )
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", script],
+                                 capture_output=True, text=True, timeout=300)
+            return (out.stdout or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            log(f"打开选择程序窗口失败：{exc}")
+            return ""
+
+    def program_icon(self, path: str, size: int = 64) -> str | None:
+        """取程序 / 快捷方式的图标，存成 PNG 缓存。"""
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+        except Exception:  # noqa: BLE001
+            return None
+        try:
+            mtime = int(os.path.getmtime(path))
+        except OSError:
+            mtime = 0
+        stem = "".join(ch for ch in os.path.basename(path) if ch.isalnum() or ch in ".-_")[:40]
+        os.makedirs(LIB_THUMB_DIR, exist_ok=True)
+        dst = os.path.join(LIB_THUMB_DIR, f"icon-{stem}-{mtime}-{size}.png")
+        if os.path.isfile(dst):
+            return dst
+
+        class SHFILEINFO(ctypes.Structure):
+            _fields_ = [("hIcon", ctypes.c_void_p), ("iIcon", ctypes.c_int),
+                        ("dwAttributes", wintypes.DWORD),
+                        ("szDisplayName", wintypes.WCHAR * 260),
+                        ("szTypeName", wintypes.WCHAR * 80)]
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", ctypes.c_long),
+                        ("biHeight", ctypes.c_long), ("biPlanes", wintypes.WORD),
+                        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", ctypes.c_long),
+                        ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", wintypes.DWORD),
+                        ("biClrImportant", wintypes.DWORD)]
+
+        class BITMAPINFO(ctypes.Structure):
+            _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
+
+        hicon = None
+        try:
+            shell32 = ctypes.windll.shell32
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+            info = SHFILEINFO()
+            SHGFI_ICON, SHGFI_LARGEICON = 0x100, 0x0
+            if not shell32.SHGetFileInfoW(ctypes.c_wchar_p(path), 0, ctypes.byref(info),
+                                          ctypes.sizeof(info), SHGFI_ICON | SHGFI_LARGEICON):
+                return None
+            hicon = info.hIcon
+            if not hicon:
+                return None
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = size
+            bmi.bmiHeader.biHeight = -size
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0
+            hdc = user32.GetDC(None)
+            memdc = gdi32.CreateCompatibleDC(hdc)
+            bits = ctypes.c_void_p()
+            hbmp = gdi32.CreateDIBSection(hdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+            old = gdi32.SelectObject(memdc, hbmp)
+            ctypes.memset(bits, 0, size * size * 4)
+            user32.DrawIconEx(memdc, 0, 0, hicon, size, size, 0, None, 3)
+            raw = ctypes.string_at(bits, size * size * 4)
+            gdi32.SelectObject(memdc, old)
+            gdi32.DeleteObject(hbmp)
+            gdi32.DeleteDC(memdc)
+            user32.ReleaseDC(None, hdc)
+            im = Image.frombuffer("RGBA", (size, size), raw, "raw", "BGRA", 0, 1)
+            if im.getchannel("A").getextrema()[1] == 0:
+                im = im.convert("RGB").convert("RGBA")
+            bg = Image.new("RGBA", (size, size), (0, 0, 0, 255))
+            bg.alpha_composite(im)
+            bg.convert("RGB").save(dst, "PNG")
+            return dst
+        except Exception as exc:  # noqa: BLE001
+            log(f"取程序图标失败：{exc}")
+            return None
+        finally:
+            try:
+                if hicon:
+                    ctypes.windll.user32.DestroyIcon(hicon)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def bind_program(self, key: int, path: str) -> dict:
+        """把程序 / 快捷方式绑到按键上，并尽量用它的图标当按键画面。"""
+        p = (path or "").strip().strip('"')
+        if not p or not os.path.isfile(p):
+            return {"ok": False, "error": "找不到这个文件"}
+        if not self.set_key_action(key, {"type": "launch", "path": p}):
+            return {"ok": False, "error": "绑定失败"}
+        icon = self.program_icon(p)
+        if icon:
+            self.set_key_image(key, icon)
+        self._save_config()
+        return {"ok": True, "name": os.path.basename(p), "icon": bool(icon)}
 
     def library_remove(self, name: str) -> bool:
         fp = self.library_path(name)
@@ -3492,15 +3640,16 @@ class App:
     # -- 外部输入 ---------------------------------------------------------- #
     def _on_input(self, key: int, state: int) -> None:
         self._last_input_seen = time.time()
+        if state == 1 and self.lighting.get("mode") == "ripple":
+            # 涟漪是纯灯光互动：屏蔽按键时也照常亮
+            self.add_ripple(key)
+            self._dirty = True
         if self.input_muted:
             # 屏蔽按键时，只有设了「控制台 → 屏蔽按键开关」的键还能用，否则关不回来
             acts = [self.key_actions.get(key) or {}]
             acts += [g for g in (self.key_gestures.get(key) or {}).values() if isinstance(g, dict)]
             if not any(a.get("type") == "console" and a.get("op") == "mute" for a in acts if isinstance(a, dict)):
                 return
-        if state == 1 and self.lighting.get("mode") == "ripple":
-            self.add_ripple(key)
-            self._dirty = True
         if self.screen_off and state == 1:
             # 息屏时按任何键（含三个导航键）只负责唤醒，不执行动作：
             # 否则「长按 = 屏幕开关」的那个键会在唤醒的同时又把自己关掉。
@@ -3600,6 +3749,11 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
             time.sleep(0.12)
+            # 唤醒后回到息屏前那个场景，而不是让闲置计时立刻又进待机
+            self._last_activity = time.time()
+            if self.in_standby:
+                self.in_standby = False
+                self.preview_mode = "wallpaper"
             self.apply_keys()
         except Exception as exc:  # noqa: BLE001
             log(f"唤醒屏幕失败：{exc}")
@@ -4227,6 +4381,18 @@ class App:
         if not name:
             return False
         self.scene_rev += 1
+        # 息屏状态下从控制台换场景：先亮屏，再切过去（否则会先补画旧场景、再被切走）
+        if self.screen_off:
+            self.screen_off = False
+            self._blanked = False
+            self.in_standby = False
+            self._last_activity = time.time()
+            try:
+                self.wake_panel()
+            except Exception:  # noqa: BLE001
+                pass
+            self.broadcast({"type": "status", "screenOff": False})
+            log("换场景时屏幕是关的，先亮屏")
         if self.is_album_scene(name):
             if self._play_album_scene(name):
                 return True
@@ -7315,6 +7481,14 @@ class Handler(BaseHTTPRequestHandler):
             self._image_file(fp, still=bool(query.get("still")))
         elif path == "/api/library":
             self._json({"ok": True, "items": APP.library_items()})
+        elif path.startswith("/api/library/thumb/"):
+            # 相册缩略图：/api/library/thumb/文件名
+            safe = urllib.parse.unquote(path[len("/api/library/thumb/"):])
+            fp = APP.library_thumb(safe)
+            if not fp:
+                self.send_error(404)
+                return
+            self._image_file(fp)
         elif path.startswith("/api/library/"):
             # 图标库「相册」里的图片：/api/library/文件名
             safe = urllib.parse.unquote(path[len("/api/library/"):])
@@ -7686,6 +7860,14 @@ class Handler(BaseHTTPRequestHandler):
                 target = info.get("source")
             self._json({"ok": bool(info.get("ok")) and APP.reveal_in_explorer(target or ""),
                         "path": target or ""})
+        elif path == "/api/key/pick-program":
+            # 浏览器拿不到拖进来的程序真实路径，只能由控制台在本机弹窗选
+            picked = APP.pick_program()
+            self._json({"ok": bool(picked), "path": picked,
+                        "name": os.path.basename(picked) if picked else ""})
+        elif path == "/api/key/bind-program":
+            self._json(APP.bind_program(int(body.get("key", 0)),
+                                        str(body.get("path") or "")))
         elif path == "/api/key/icon":
             self._json({"ok": APP.set_key_icon(int(body.get("key", 0)),
                                                str(body.get("name") or ""))})

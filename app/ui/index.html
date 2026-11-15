@@ -1,11 +1,11 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261116p" />
+  <link rel="stylesheet" href="style.css?v=20261116q" />
 </head>
 <body>
 <div class="app">
@@ -48,6 +48,19 @@
         </div>
         <div class="side-sec-body">
           <div class="icon-groups" id="icon-groups"></div>
+        </div>
+      </section>
+
+      <section class="side-sec" data-sec="library">
+        <div class="side-sec-head">
+          <button class="sec-toggle" type="button"><i class="chev"></i><span>相册</span><b id="lib-count">0</b></button>
+          <span class="side-sec-actions">
+            <button class="seg tiny" id="lib-add" title="把图片加进相册">＋ 添加</button>
+          </span>
+        </div>
+        <div class="side-sec-body">
+          <div class="lib-album" id="lib-album"></div>
+          <p class="side-note">放图片用的分类：壁纸、幻灯片、裁图源图都能收进来；右键可设为壁纸 / 加到幻灯片 / 打开位置 / 删除，也能拖到按键上。</p>
         </div>
       </section>
 
@@ -604,6 +617,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=20261119i"></script>
+<script src="app.js?v=20261119j"></script>
 </body>
 </html>

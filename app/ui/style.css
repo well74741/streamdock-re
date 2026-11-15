@@ -1731,14 +1731,9 @@ html, body { overflow: hidden; height: 100%; }
 #autoblank-row { margin-top: 2px; }
 #autoblank-row b { min-width: 56px; text-align: right; }
 
-/* ---- 图标库「相册」分类：收集起来的图片 ---- */
-.lib-sec-album {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 10px; padding-top: 10px; border-top: 1px solid #dbe2ec;
-}
-.lib-sec-album > span { flex: 0 0 auto; }
-.lib-sec-album em { font-style: normal; color: #8794a6; }
-.lib-sec-album #lib-add { margin-left: auto; padding: 3px 8px; font-size: 11px; }
+/* ---- 「相册」分类：收集起来的图片（侧栏独立分区） ---- */
+.side-sec[data-sec="library"] .side-sec-head #lib-add { padding: 3px 8px; font-size: 11px; }
+.side-sec[data-sec="library"] .side-sec-body { padding-bottom: 8px; }
 .lib-album {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
   gap: 6px; padding: 2px 2px 6px;
