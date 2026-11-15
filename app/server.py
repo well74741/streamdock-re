@@ -2450,9 +2450,12 @@ class App:
     def _after_resume(self) -> None:
         """电脑从休眠里醒过来之后收拾残局。
 
-        休眠后 SDK 的连接经常变成「能发不能收」：写图、写灯照常（所以灯还是亮着、
-        显示也正常），但按键读回来的那条通道停了 —— 界面上看着「已连接」，按了却没反应。
-        先探一次活，活着就重发 read 把输入通道拉回来，再把画面和动图重推一遍；
+        休眠后有两个坑：
+        1. SDK 连接常常变成「能发不能收」—— 灯效照写（灯还是对的），但按键读不回来，
+           界面上看着「已连接」，按了却没反应；
+        2. 设备自己那块屏也睡了 —— 再写图会被丢掉，看着就是「屏幕卡在醒之前那一帧」。
+        所以先探活，活着就重发 read 拉回输入通道，再把背光关一下开一下强制重新初始化面板，
+        然后整版重推一次、1.5 秒后再补推一次（刚醒的头几帧容易被设备丢掉）。
         探不通（半死连接）就整条断开，交给热插拔线程重连并重推。
         """
         try:
@@ -2466,7 +2469,16 @@ class App:
                 self.broadcast({"type": "status", "connected": False})
                 return
             dev.resubscribe_input()
-            time.sleep(0.3)
+            if not self.screen_off:
+                # 背光 0 → 原亮度：把设备面板从休眠里蹬一脚，否则推过去的图不刷新
+                try:
+                    dev.wakeup()
+                    dev.set_screen_brightness(0)
+                    time.sleep(0.12)
+                    dev.set_screen_brightness(self.screen_brightness)
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(0.25)
             if self.screen_off:
                 self._blanked = False
                 self.blank_screen()
@@ -2476,8 +2488,20 @@ class App:
                 self.apply_keys()
             self._gif_start_all()
             self._frame_hash = None
+            self._dirty = True
             self._last_activity = time.time()
             self._last_input_seen = time.time()
+            # 补推：设备刚醒时前面的图可能被吞掉，1.5 秒后再来一遍（不动「上一次画」的时间）
+            time.sleep(1.5)
+            if self.device.connected and not self.screen_off:
+                try:
+                    if self.in_standby:
+                        self.apply_standby()
+                    else:
+                        self.apply_keys()
+                    self._gif_start_all()
+                except Exception:  # noqa: BLE001
+                    pass
             log("休眠恢复：按键通道已重新订阅，画面和动图已重推")
         except Exception as exc:  # noqa: BLE001
             log(f"休眠恢复处理失败：{exc}")
