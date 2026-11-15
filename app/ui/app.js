@@ -1967,6 +1967,14 @@ function draftLabel(d) {
 }
 
 // 草稿状态即时反馈：保存按钮、页签小条、标题行
+// 切换页签时判断：表单里填的和已存的到底一不一样（一样就别当成「未保存」）
+function draftDiffersFromSaved(n, g) {
+  if (!n) return false;
+  const now = specFromDraft(readFormDraft(), n, g);
+  const was = specFromDraft(viewToDraft(gestureView(n, g)), n, g);
+  return JSON.stringify(now || null) !== JSON.stringify(was || null);
+}
+
 function paintDraftMarks() {
   const dirtyBtn = $("#sel-save-top");
   if (dirtyBtn) dirtyBtn.classList.toggle("dirty", Object.keys(formDrafts).length > 0);
@@ -2880,7 +2888,7 @@ function bindUI() {
   document.querySelectorAll("#sel-gesture button").forEach((b) => {
     b.addEventListener("click", () => {
       // 切页签前把当前表单存成草稿，换回来时还在（不再依赖服务端）
-      if (selectedKey) formDrafts[editGesture] = readFormDraft();
+      if (selectedKey && draftDiffersFromSaved(selectedKey, editGesture)) formDrafts[editGesture] = readFormDraft();
       editGesture = b.dataset.g;
       renderEditor();
     });
