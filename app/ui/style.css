@@ -1252,6 +1252,14 @@ html, body { overflow: hidden; height: 100%; }
   width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px;
   object-fit: cover; background: #0e131a; pointer-events: none;
 }
+/* 裁图包封面：15 格按 5×3 拼成整图，直接对着键位看排布 */
+.icon-group summary .crop-cover {
+  display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(3, 1fr);
+  gap: 0; padding: 0; overflow: hidden; background: #0e131a;
+}
+.icon-group summary .crop-cover img {
+  width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none;
+}
 .icon-group summary .g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-group summary em { font-size: 10.5px; }
 .icon-group[open] summary { background: rgba(47, 111, 224, .10); }

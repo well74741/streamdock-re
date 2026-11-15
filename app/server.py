@@ -5106,10 +5106,17 @@ class App:
         return cat
 
     def icon_packs(self, refresh: bool = False) -> list:
+        def _rev(p: dict) -> int:
+            """包目录的修改时间：同名重裁后让前端不会拿浏览器旧缓存显示。"""
+            try:
+                return int(os.path.getmtime(p.get("folder") or ""))
+            except (OSError, TypeError):
+                return 0
+
         packs = [{
             "id": p["id"], "name": p["name"], "author": p["author"],
             "count": len(p["files"]), "mine": bool(p.get("mine")),
-            "crop": bool(p.get("mine")),
+            "crop": bool(p.get("mine")), "rev": _rev(p),
             "files": [os.path.basename(f) for f in p["files"]],
         } for p in self._catalog(refresh)["packs"].values()]
         packs.sort(key=lambda p: (0 if p["mine"] else 1, p["name"].lower()))

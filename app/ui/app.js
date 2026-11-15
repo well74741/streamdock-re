@@ -537,8 +537,11 @@ function saveSideState() {
 
 const escHtml = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const packIconUrl = (pack, file) =>
-  `/api/iconpack/${encodeURIComponent(pack)}/${encodeURIComponent(file)}`;
+const packIconUrl = (pack, file) => {
+  // 带上包的版本号：重名重裁（例如删掉再裁一个同名包）时浏览器不会拿旧缓存显示
+  const rev = (iconPacks || []).find((p) => p && p.id === pack)?.rev || "";
+  return `/api/iconpack/${encodeURIComponent(pack)}/${encodeURIComponent(file)}${rev ? `?v=${rev}` : ""}`;
+};
 const pluginIconUrl = (id, idx) => `/api/plugin-icon/${encodeURIComponent(id)}/${idx}`;
 
 function iconTile(pack, file) {
@@ -615,7 +618,11 @@ async function loadIcons(refresh = false) {
   let seenMine = false, seenOfficial = false;
   box.innerHTML = iconPacks.map((p) => {
     const open = sideState.openPacks.includes(p.id);
-    const cover = p.files[0] ? `<img class="cover" src="${packIconUrl(p.id, p.files[0])}" alt="" />` : "";
+    // 裁图包：封面拼成 5×3 的整图缩略，一眼就能看出排布对不对
+    const cover = !p.files.length ? ""
+      : (p.crop && p.files.length >= 5
+        ? `<span class="cover crop-cover">${p.files.slice(0, 15).map((f) => `<img src="${packIconUrl(p.id, f)}" alt="" />`).join("")}</span>`
+        : `<img class="cover" src="${packIconUrl(p.id, p.files[0])}" alt="" />`);
     let head = "";
     if (p.mine && !seenMine) {
       seenMine = true;
