@@ -6773,9 +6773,12 @@ __CODE__
 APP: App | None = None
 TRAY = None          # 系统托盘图标（见 tray.py），关掉界面窗口后靠它重新打开
 PORT = 8642
+SHUTTING_DOWN = False   # 正在退出：新实例探测到这个标记就别再当成「已有实例在运行」
 
 
 def _shutdown() -> None:
+    global SHUTTING_DOWN
+    SHUTTING_DOWN = True    # 先立牌子，后面 1 秒内新启动的实例就不会误判成「已有实例」
     log("正在退出控制台…")
 
     def _hard_exit() -> None:
@@ -6785,6 +6788,12 @@ def _shutdown() -> None:
 
     threading.Thread(target=_hard_exit, daemon=True).start()
     time.sleep(0.25)
+    # 把界面窗口一起关掉：否则那个标签页还停在这个地址上，重新打开时浏览器会
+    # 直接切回去，看到的是一张「连不上」的死页面，像是不启动一样。
+    try:
+        _close_app_windows()
+    except Exception:  # noqa: BLE001
+        pass
     try:
         if TRAY is not None:
             TRAY.stop()
@@ -6808,11 +6817,38 @@ def running_instance(port: int) -> dict | None:
         if b"m18-console" not in data:
             return None
         try:
-            return json.loads(data.decode("utf-8"))
+            info = json.loads(data.decode("utf-8"))
         except ValueError:
             return {"app": "m18-console"}
+        if info.get("shuttingDown"):
+            return None          # 正在退出：别当成「已在运行」，否则新窗口开到一半就断了
+        return info
     except Exception:  # noqa: BLE001
         return None
+
+
+def _port_busy(port: int) -> bool:
+    with socket.socket() as sock:
+        sock.settimeout(0.3)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def wait_previous(port: int, seconds: float = 8.0) -> dict | None:
+    """等上一个实例退干净：它还活着就返回它的信息，端口空出来就返回 None。
+
+    刚点「退出」又马上重新打开时，旧进程还要 1 秒左右才真正退掉；这里等它一下，
+    免得新进程误判成「已有实例在运行」，只开个窗口就退出去（浏览器随后就空白了）。
+    """
+    deadline = time.time() + seconds
+    while True:
+        info = running_instance(port)
+        if info:
+            return info
+        if not _port_busy(port):
+            return None
+        if time.time() > deadline:
+            return None
+        time.sleep(0.35)
 
 
 # --------------------------------------------------------------------------- #
@@ -6883,7 +6919,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(APP.snapshot())
         elif path == "/api/health":
             self._json({"app": "m18-console", "url": f"http://127.0.0.1:{PORT}/", "edition": EDITION,
-                        "dataDir": DATA_DIR, "pid": os.getpid()})
+                        "dataDir": DATA_DIR, "pid": os.getpid(), "shuttingDown": SHUTTING_DOWN})
         elif path == "/api/events":
             self._sse()
         elif path == "/api/wallpaper/preview.png":
@@ -7896,7 +7932,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # 单实例：已有控制台在跑就只开窗口，避免两个进程同时写设备
-    other = None if args.port else running_instance(PORT)
+    other = None if args.port else wait_previous(PORT)
     if other:
         url = f"http://127.0.0.1:{PORT}/"
         running = other.get("edition") or "旧版本"
