@@ -1519,6 +1519,30 @@ html, body { overflow: hidden; height: 100%; }
 #album-editor .hint-line { margin: 4px 0 0; }
 #album-editor .seg-group.compact { flex-wrap: wrap; }
 
+/* 相册场景：预览下面的铺放 / 间隙 */
+#album-editor .as-fit-row { margin: 2px 0 2px; }
+#album-editor .as-fit-row #as-fit { flex: 1 1 auto; display: flex; gap: 6px; }
+#album-editor .as-fit-row #as-fit .seg { flex: 1 1 0; min-width: 0; font-size: 12px; padding: 6px 4px; text-align: center; }
+#album-editor .as-gap-row { margin: 0; }
+#album-editor .as-gap-row > span { width: 64px; flex: 0 0 auto; color: #46536a; font-size: 12.5px; }
+
+/* 过渡的 5 个按钮在窄卡片里一行放不下：独占一行、放不下就换行 */
+#album-editor .kv-line.tr-row { flex-wrap: wrap; row-gap: 6px; }
+#album-editor .kv-line.tr-row > span:first-child { width: auto; }
+#album-editor .kv-line.tr-row #as-transition {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#album-editor .kv-line.tr-row #as-transition .seg {
+  flex: 1 1 56px;
+  min-width: 0;
+  padding: 6px 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* 场景列表：长按拖动排序 */
 .scene-row.dragging {
   background: rgba(47, 111, 224, .18);

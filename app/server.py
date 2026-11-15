@@ -2305,11 +2305,13 @@ class App:
                 self.device.refresh()
                 last_refresh = now
 
-    def _gap(self) -> int:
-        return max(0, min(64, int(self.wallpaper_gap)))
+    def _gap(self, gap: int | None = None) -> int:
+        """键间缝隙；相册场景可以有自己的缝隙，传 gap 就按它算（None = 全局设置）。"""
+        g = self.wallpaper_gap if gap is None else gap
+        return max(0, min(64, int(g)))
 
-    def _canvas_size(self) -> tuple[int, int]:
-        gap = self._gap()
+    def _canvas_size(self, gap: int | None = None) -> tuple[int, int]:
+        gap = self._gap(gap)
         cols, rows = (GRID_ROWS, GRID_COLS) if self.rotation % 180 else (GRID_COLS, GRID_ROWS)
         return (
             cols * KEY_SIZE + (cols - 1) * gap,
@@ -2527,8 +2529,20 @@ class App:
 
     def _alb_fit(self) -> str:
         if self.album_scene_name:
-            return "contain" if self._album_scene.get("fit") == "contain" else "cover"
+            fit = str(self._album_scene.get("fit") or "cover")
+            return fit if fit in ("cover", "contain", "fill") else "cover"
         return self.album_fit
+
+    def _alb_gap(self) -> int | None:
+        """相册场景自己的键间缝隙；没单独设过就返回 None（跟全局设置走）。"""
+        if self.album_scene_name:
+            g = self._album_scene.get("gap")
+            return None if g is None else self._gap(g)
+        return None
+
+    def _alb_gap_eff(self) -> int:
+        g = self._alb_gap()
+        return self._gap() if g is None else g
 
     def _alb_set_index(self, index: int) -> None:
         n = len(self._alb_items())
@@ -2607,16 +2621,21 @@ class App:
         if scene:
             alb = self._album_scene_data(scene) or {}
             items = [str(n) for n in (alb.get("items") or []) if str(n)]
+            fit = str(alb.get("fit") or "cover")
+            gap = alb.get("gap")
             return {"items": items, "index": int(alb.get("index") or 0), "active": False,
                     "slideshow": bool(alb.get("slideshow", True)),
                     "interval": max(2, min(600, int(alb.get("interval") or 8))),
                     "transition": str(alb.get("transition") or "fade"),
-                    "fit": "contain" if alb.get("fit") == "contain" else "cover",
+                    "fit": fit if fit in ("cover", "contain", "fill") else "cover",
+                    "gap": self._gap() if gap is None else self._gap(gap),
+                    "gapOwn": gap is not None,
                     "source": "album-scene", "scene": scene}
         return {"items": list(self._alb_items()), "index": self._alb_index(),
                 "active": self.album_active() if active is None else active,
                 "slideshow": self._alb_slideshow(), "interval": int(self._alb_interval()),
                 "transition": self._alb_transition(), "fit": self._alb_fit(),
+                "gap": self._alb_gap_eff(), "gapOwn": self._alb_gap() is not None,
                 "source": self.standby_source, "scene": self.album_scene_name}
 
     def _album_file(self, index: int) -> str | None:
@@ -2707,8 +2726,10 @@ class App:
                     alb["interval"] = max(2, min(600, int(body["interval"])))
                 if body.get("transition") in ALBUM_TRANSITIONS:
                     alb["transition"] = body["transition"]
-                if body.get("fit") in ("cover", "contain"):
+                if body.get("fit") in ("cover", "contain", "fill"):
                     alb["fit"] = body["fit"]
+                if "gap" in body:
+                    alb["gap"] = max(0, min(64, int(body["gap"])))
                 return True
             if self._album_scene_edit(scene, change):
                 self._album_last = time.time()
@@ -2725,7 +2746,7 @@ class App:
             self.album_interval = max(2, min(600, int(body["interval"])))
         if body.get("transition") in ALBUM_TRANSITIONS:
             self.album_transition = body["transition"]
-        if body.get("fit") in ("cover", "contain"):
+        if body.get("fit") in ("cover", "contain", "fill"):
             self.album_fit = body["fit"]
             if self.album_active() and not self.album_scene_name:
                 threading.Thread(target=self._push_album, daemon=True).start()
@@ -2733,15 +2754,19 @@ class App:
 
     def _album_canvas(self, index: int) -> Image.Image | None:
         """相册图片铺满整版（含键间缝隙补偿和旋转），按内容缓存。"""
-        return self._album_canvas_generic({"fit": self._alb_fit()}, self._alb_items(), index)
+        return self._album_canvas_generic({"fit": self._alb_fit(), "gap": self._alb_gap()},
+                                          self._alb_items(), index)
 
     def _album_canvas_generic(self, alb: dict, items: list, index: int) -> Image.Image | None:
-        """按指定的图片列表 + 填充方式铺整版；相册场景和待机相册共用。"""
+        """按指定的图片列表 + 填充方式 + 缝隙铺整版；相册场景和待机相册共用。"""
         path = self._album_file_for(items, index)
-        w, h = self._canvas_size()
+        fit = str(alb.get("fit") or "cover")
+        if fit not in ("cover", "contain", "fill"):
+            fit = "cover"
+        gap = self._gap(alb.get("gap"))
+        w, h = self._canvas_size(gap)
         if not path:
             return Image.new("RGB", (w, h), (0, 0, 0))
-        fit = "contain" if alb.get("fit") == "contain" else "cover"
         key = (path, os.path.getmtime(path), w, h, fit, self.standby_brightness)
         cache = getattr(self, "_album_cache", {})
         if key in cache:
@@ -2758,9 +2783,9 @@ class App:
         self._album_cache = cache
         return img
 
-    def _canvas_tiles(self, canvas: Image.Image) -> dict:
+    def _canvas_tiles(self, canvas: Image.Image, gap: int | None = None) -> dict:
         """整版画面切成 15 块（设备方向由 DeviceWS 统一转）。"""
-        pitch = KEY_SIZE + self._gap()
+        pitch = KEY_SIZE + self._gap(gap)
         out = {}
         for key in range(1, KEY_COUNT + 1):
             col = (key - 1) % GRID_COLS
@@ -2787,6 +2812,7 @@ class App:
             cur = self._album_canvas(self._alb_index())
             if cur is None:
                 return False
+            gap = self._alb_gap_eff()
             mode = self._alb_transition() if prev is not None and prev.size == cur.size else "none"
             self._pushing = True
             try:
@@ -2803,13 +2829,12 @@ class App:
                             frame = Image.new("RGB", cur.size)
                             frame.paste(prev, (-off, 0))
                             frame.paste(cur, (w - off, 0))
-                        self._send_tiles(self._canvas_tiles(frame))
+                        self._send_tiles(self._canvas_tiles(frame, gap))
                         self.device.refresh()
                         time.sleep(0.07)
                 elif mode in ("wipe", "mosaic"):
-                    tiles = self._canvas_tiles(cur)
+                    tiles = self._canvas_tiles(cur, gap)
                     if mode == "wipe":       # 从左往右一列一列换（按观看方向的列）
-                        pitch = KEY_SIZE + self._gap()
                         groups: dict = {}
                         for key in tiles:
                             col = (key - 1) % GRID_COLS
@@ -2827,7 +2852,7 @@ class App:
                         self.device.refresh()
                         time.sleep(gap_s)
                 else:
-                    self._send_tiles(self._canvas_tiles(cur))
+                    self._send_tiles(self._canvas_tiles(cur, gap))
                     self.device.refresh()
             finally:
                 self._pushing = False
@@ -2869,13 +2894,15 @@ class App:
         if not self.album_active():
             self._album_return = self.active_scene or self.custom_scene_name
         self.album_scene_name = name
+        fit = str(alb.get("fit") or "cover")
         self._album_scene = {
             "items": items,
             "index": int(alb.get("index") or 0) % len(items),
             "slideshow": bool(alb.get("slideshow", True)),
             "interval": max(2, min(600, int(alb.get("interval") or 8))),
             "transition": str(alb.get("transition") or "fade") if str(alb.get("transition") or "") in ALBUM_TRANSITIONS else "fade",
-            "fit": "contain" if alb.get("fit") == "contain" else "cover",
+            "fit": fit if fit in ("cover", "contain", "fill") else "cover",
+            "gap": None if alb.get("gap") is None else self._gap(alb.get("gap")),
         }
         ok = self.album_play()
         if ok:
@@ -2971,12 +2998,14 @@ class App:
             if not items:
                 return None
             canvas = self._album_canvas_generic(alb, items, int(alb.get("index") or 0))
+            gap = self._gap(alb.get("gap"))
         else:
             canvas = self._album_canvas(self.album_index)
+            gap = self._alb_gap_eff()
         if canvas is None:
             return None
         sprite = Image.new("RGB", (GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE), (0, 0, 0))
-        for key, tile in self._canvas_tiles(canvas).items():
+        for key, tile in self._canvas_tiles(canvas, gap).items():
             col = (key - 1) % GRID_COLS
             row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
             # 界面里键格会反向转回正，所以这里给「观看方向」的图块，不转
@@ -3059,8 +3088,11 @@ class App:
             if state == 1:
                 self._wake_swallow.add(key)
                 if self.album_scene_name:
+                    # 相册场景：◀ ▶ 翻相册里的图片，中间键回主场景，其余屏幕键切下一个场景
                     if key == 16:
-                        threading.Thread(target=self.prev_scene, daemon=True).start()
+                        threading.Thread(target=self.album_goto, args=(-1,), daemon=True).start()
+                    elif key == 18:
+                        threading.Thread(target=self.album_goto, args=(1,), daemon=True).start()
                     elif key == 17:
                         threading.Thread(target=self.album_stop, daemon=True).start()
                     else:

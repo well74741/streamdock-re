@@ -1,4 +1,4 @@
-﻿const $ = (sel, root = document) => root.querySelector(sel);
+const $ = (sel, root = document) => root.querySelector(sel);
 
 const MODE_NAMES = {
   solid: "常亮", rainbow: "彩虹", breathe: "呼吸",
@@ -3472,6 +3472,12 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
   document.querySelectorAll("#as-transition [data-tr]").forEach((b) => {
     b.classList.toggle("on", b.dataset.tr === a.transition);
   });
+  document.querySelectorAll("#as-fit [data-fit]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.fit === (a.fit || "cover"));
+  });
+  const gap = a.gap == null ? 27 : a.gap;
+  $("#as-gap").value = gap;
+  $("#as-gap-val").textContent = gap;
   const sig = `${name}|${items.join("|")}#${a.index}`;
   if (sig === albumSceneSig) {
     document.querySelectorAll("#as-strip .album-thumb").forEach((t) => {
@@ -3632,6 +3638,29 @@ function bindAlbumSceneEditor() {
     if (!name) return;
     renderAlbumEditor(await post("/api/album/settings", { scene: name, transition: b.dataset.tr }), name);
   }));
+  document.querySelectorAll("#as-fit [data-fit]").forEach((b) => b.addEventListener("click", async () => {
+    const name = activeAlbumScene();
+    if (!name) return;
+    albumSceneSig = "";
+    renderAlbumEditor(await post("/api/album/settings", { scene: name, fit: b.dataset.fit }), name);
+  }));
+  const pushGap = throttle((v) => {
+    const name = activeAlbumScene();
+    if (!name) return;
+    post("/api/album/settings", { scene: name, gap: v }).then(() => refreshAlbumPreview(name));
+  }, 300);
+  $("#as-gap").addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    $("#as-gap-val").textContent = v;
+    if (albumSceneState) albumSceneState.gap = v;
+    pushGap(v);
+  });
+}
+
+function refreshAlbumPreview(name) {
+  const prev = $("#as-preview");
+  if (!prev || prev.hidden || !name) return;
+  prev.src = `/api/album/preview.jpg?scene=${encodeURIComponent(name)}&v=${Date.now()}`;
 }
 
 
