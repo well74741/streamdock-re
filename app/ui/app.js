@@ -4096,7 +4096,16 @@ function bindUI() {
   });
 
   $("#reconnect").addEventListener("click", async () => {
-    applyState(await post("/api/device/reconnect"));
+    if (!(await confirmDialog("重新连接并接管？<br><small>会断开 SDK 再重新枚举设备（约 3 秒），期间屏幕会闪一下。</small>"))) return;
+    await post("/api/device/reconnect");
+    toast("正在重新连接…", 1600);
+    setTimeout(() => refreshState(), 3500);
+  });
+
+  /* 画面卡住（灯效正常、屏幕不刷新）时：清屏 + 背光重启 + 重推 15 个键 */
+  $("#hard-reset").addEventListener("click", async () => {
+    const r = await post("/api/device/hard-reset", { hard: false });
+    toast(r?.ok === false ? (r.error || "设备没连上") : "已清屏重推，看看屏幕刷新没有", 2600);
   });
 
   /* 动图错位时的手动对齐：整组重新加载后一起开始 */

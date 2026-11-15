@@ -2506,6 +2506,64 @@ class App:
         except Exception as exc:  # noqa: BLE001
             log(f"休眠恢复处理失败：{exc}")
 
+    def hard_recover(self, hard: bool = False) -> dict:
+        """画面卡住（推过去的图不刷新，但灯效、按键都正常）时的重手恢复。
+
+        按顺序：停动图 → 清掉所有键图（clearAllIcon）→ 背光 0 → 背光还原 →
+        整版重推 + 动图重启。还不行就 hard=True：整条 SDK 连接断开重连
+        （重连会重新枚举 HID，等于软拔插一次 USB）。
+        """
+        dev = self.device
+        steps: list[str] = []
+        if dev is None or not getattr(dev, "connected", False):
+            return {"ok": False, "error": "设备没连上", "steps": steps}
+        try:
+            self._gif_stop_all()
+            steps.append("停动图")
+            dev.set_screen_brightness(0)
+            steps.append("背光 0")
+            time.sleep(0.2)
+            dev.clear_keys()
+            steps.append("清屏")
+            time.sleep(0.2)
+            dev.set_screen_brightness(self.screen_brightness)
+            steps.append(f"背光 {self.screen_brightness}")
+            time.sleep(0.3)
+        except Exception as exc:  # noqa: BLE001
+            steps.append(f"前置出错：{exc}")
+        if hard:
+            try:
+                dev.disconnect()
+                steps.append("断开连接")
+                time.sleep(1.2)
+                if dev.connect():
+                    steps.append("重新连接成功")
+                    self._restore_all()
+                else:
+                    steps.append("重新连接失败")
+            except Exception as exc:  # noqa: BLE001
+                steps.append(f"重连出错：{exc}")
+            log(f"强制恢复画面：{' / '.join(steps)}")
+            return {"ok": True, "steps": steps}
+        try:
+            if self.screen_off:
+                self._blanked = False
+                self.blank_screen()
+                steps.append("重新息屏")
+            elif self.in_standby:
+                self.apply_standby()
+                steps.append("重推待机画面")
+            else:
+                self.apply_keys()
+                self._gif_start_all()
+                steps.append("重推 15 个键")
+            self._frame_hash = None
+            self._dirty = True
+        except Exception as exc:  # noqa: BLE001
+            steps.append(f"重推出错：{exc}")
+        log(f"恢复画面：{' / '.join(steps)}")
+        return {"ok": True, "steps": steps}
+
     def _animation_loop(self) -> None:
         """按键动图：主机侧逐帧推送（设备本身不循环播放）。"""
         last_refresh = 0.0
@@ -7872,11 +7930,26 @@ class Handler(BaseHTTPRequestHandler):
             APP.device.set_screen_brightness(APP.screen_brightness)
             self._json({"ok": True, "value": APP.screen_brightness})
         elif path == "/api/device/reconnect":
-            ok = APP.device.connect()
-            APP.official_running = App._detect_official()
-            if ok:
-                APP._restore_all()
-            self._json({"ok": ok, **APP.snapshot()})
+            # 强制重连：以前 connect() 在「已连接」时直接返回，点了等于没点
+            def _force_reconnect() -> None:
+                try:
+                    APP.device.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(1.0)
+                try:
+                    if APP.device.connect():
+                        APP.official_running = App._detect_official()
+                        APP._restore_all()
+                except Exception as exc:  # noqa: BLE001
+                    log(f"重新连接失败：{exc}")
+
+            threading.Thread(target=_force_reconnect, daemon=True).start()
+            self._json({"ok": True, "reconnecting": True})
+        elif path == "/api/device/hard-reset":
+            hard = bool(body.get("hard"))
+            threading.Thread(target=APP.hard_recover, args=(hard,), daemon=True).start()
+            self._json({"ok": True, "hard": hard})
         elif path == "/api/device/wake-panel":
             ok = APP.wake_panel()
             self._json({"ok": ok})
