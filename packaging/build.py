@@ -1,4 +1,4 @@
-"""一键构建安装包：python packaging/build.py（或双击项目根目录的「打包.bat」）
+﻿"""一键构建安装包：python packaging/build.py（或双击项目根目录的「打包.bat」）
 
     python packaging/build.py            # 检查环境 → 缺什么引导装什么 → 打包
     python packaging/build.py --yes      # 缺的依赖不问，直接装
@@ -199,7 +199,7 @@ def pyinstaller(*args: str) -> None:
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)   # 中文 / ✓ 在 GBK 控制台里不报错；逐行输出
-    parser = argparse.ArgumentParser(description="打包 M18 控制台安装程序")
+    parser = argparse.ArgumentParser(description="打包 M18 控制台绿色版（解压即用的 zip）")
     parser.add_argument("--yes", "-y", action="store_true", help="缺少的依赖直接安装，不再询问")
     parser.add_argument("--check", action="store_true", help="只检查环境，不打包")
     args = parser.parse_args()
