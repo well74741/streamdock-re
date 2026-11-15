@@ -6,15 +6,16 @@
 
 ## 打开方式
 
-**装好的版本**：双击安装包 `M18Console-Setup-<版本>.exe`，装完开始菜单和桌面上都有「Stream Dock M18 控制台」。
+**绿色版**：把 `M18Console-Portable-<版本>.zip` 解压到任意文件夹，双击 `M18Console.exe`
+（不写注册表、不建快捷方式、不用管理员权限，换电脑直接拷整个文件夹）。
 
 **从源码运行**：双击 `启动 M18 控制台.bat`。
 
 会启动本地服务（`127.0.0.1:8642`）和一个 Edge 应用窗口（无地址栏）。重复启动只会复用已有实例，并替换掉旧窗口。
 
-## 安装包
+## 打包（只出绿色版）
 
-完整的打包与安装步骤见 [docs/打包与安装指南.md](docs/打包与安装指南.md)。
+完整的打包步骤见 [docs/打包与安装指南.md](docs/打包与安装指南.md)。
 
 双击项目根目录的 **`打包.bat`**（缺 Python / 依赖会引导安装），或：
 
@@ -22,16 +23,16 @@
 python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会询问后自动安装；需要 ws-sdk/ 已就位
 ```
 
-产物：`dist/release/M18Console-Setup-<版本>.exe`（单文件，约 44 MB，版本号在 `app/version.py`）。
+产物只有：`dist/release/M18Console-Portable-<版本>.zip`（约 45 MB，版本号在 `app/version.py`）。
 
 - 自带 Python 运行时和官方 WebSocket SDK，对方电脑**不需要装 Python**
-- 装到当前用户目录（`%LOCALAPPDATA%\Programs\M18 Console`），**不需要管理员权限**
-- 开始菜单 / 桌面快捷方式，「设置 → 应用」里可卸载；卸载时可选是否保留用户数据
-- 用户数据（配置、场景、上传的图标、自制插件）在 `%APPDATA%\M18Console`，升级重装不丢
-- 静默安装：`Setup.exe --silent [--dir 目录] [--no-shortcut] [--no-launch]`
+- 解压即用，放到哪个目录都行；不写注册表、不建快捷方式、**不需要管理员权限**
+- 用户数据（配置、场景、上传的图标、自制插件、相册）在 `%APPDATA%\M18Console`，换程序版本不丢；
+  `%APPDATA%` 写不进去时自动改用程序旁边的 `data\`
+- 不再提供 `M18Console-Setup-*.exe` 安装程序
 
 对方电脑的要求：Windows 10/11 64 位、Microsoft Edge（系统自带）、M18 设备。
-**不需要官方 Stream Dock 软件**：设备驱动用的是安装包自带的官方 WebSocket SDK。
+**不需要官方 Stream Dock 软件**：设备驱动用的是包里自带的官方 WebSocket SDK。
 装了官方软件时还能导入官方场景 / 图标包 / 插件；导入后的内容存在本地，卸载官方软件也不会丢：
 
 | 内容 | 存放 | 官方软件卸载后 |
@@ -41,12 +42,12 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 | 第三方插件 + Node 运行环境 | 「同步官方」时选择备份，复制到 `official-mirror\plugins`、`node`（约 500 MB） | 备份过的照常可用 |
 | 官方内置功能（打开 / 热键 / 文本 / 页面…） | 拖到按键时换成控制台原生动作 | 照常可用 |
 
-- 安装包**自带 28 个官方「内置功能」插件**（OBS Studio、热点、热键、文本、页面、鼠标事件…，约 13 MB），
+- 绿色版**自带 28 个官方「内置功能」插件**（OBS Studio、热点、热键、文本、页面、鼠标事件…，约 13 MB），
   对方不装官方驱动也能在侧栏「插件」里看到并使用它们。
 - 首次运行会自动装好默认场景：**相册1**（自带 12 张示例图，可换成自己的）和 **音乐控制台**，加上「自定义」共三个。
   之后自己删掉的场景不会再自动出现。
 
-安装包没有数字签名，首次运行 Windows 可能提示「已保护你的电脑」，点「更多信息 → 仍要运行」即可。
+程序没有数字签名，首次运行时 Windows 可能提示「已保护你的电脑」，点「更多信息 → 仍要运行」即可。
 
 ## 架构（重要）
 
@@ -168,7 +169,7 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 |---|---|
 | `app/server.py` | 本地服务、渲染、灯光引擎、动作执行 |
 | `app/wssdk.py` | 极简 WebSocket 客户端 + 官方 SDK 设备封装 |
-| `app/mcp_server.py` | MCP 服务（给 AI 智能体用，安装版是 `mcp\m18-mcp.exe`） |
+| `app/mcp_server.py` | MCP 服务（给 AI 智能体用，绿色版是 `mcp\m18-mcp.exe`） |
 | `app/ui/` | 界面（HTML/CSS/JS） |
 | `app/config.json` | 配置（页面、按键、灯光、待机等） |
 | `ws-sdk/` | 官方 WebSocket SDK（Windows） |

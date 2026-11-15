@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Stream Dock M18 控制台 — Core 服务
 
@@ -51,9 +51,9 @@ from wssdk import DeviceWS
 HERE = os.path.dirname(os.path.abspath(__file__))     # 程序自带资源（界面、默认壁纸、图标）
 ROOT = os.path.dirname(HERE)
 UI_DIR = os.path.join(HERE, "ui")
-FROZEN = bool(getattr(sys, "frozen", False))          # 安装版（PyInstaller 打包）
+FROZEN = bool(getattr(sys, "frozen", False))          # 绿色版（PyInstaller 打包）
 APP_DIR = os.path.dirname(sys.executable) if FROZEN else ROOT
-# 用户数据（配置、场景、上传的图标、插件数据）：安装版放 %APPDATA%\M18Console，
+# 用户数据（配置、场景、上传的图标、插件数据）：绿色版放 %APPDATA%\M18Console，
 # 源码运行时仍放在 app 目录里（和以前一样）；也可以用环境变量 M18_DATA_DIR 指定
 DATA_DIR = os.environ.get("M18_DATA_DIR") or (
     os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "M18Console") if FROZEN else HERE)
@@ -89,7 +89,7 @@ def _ensure_data_dir(path: str) -> str:
     except PermissionError as exc:
         if not FROZEN:
             raise
-        # 免安装版：AppData 写不进去时，试试程序旁边的 data 文件夹
+        # 绿色版：AppData 写不进去时，试试程序旁边的 data 文件夹
         alt = os.path.join(APP_DIR, "data")
         if os.path.normcase(alt) != os.path.normcase(path):
             try:
@@ -181,10 +181,10 @@ official.CUSTOM_PLUGIN_ROOTS.append(CUSTOM_PLUGIN_DIR)
 official.EXTRA_ICON_ROOTS.append(os.path.join(MIRROR_DIR, "icons"))
 PRESET_DIR = os.path.join(HERE, "presets")   # 首次运行载入的默认场景（音乐控制台 / 相册1）
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-# 源码版和安装版可以装在同一台电脑上：端口共用（谁先开谁生效），数据目录各自独立。
-EDITION = "安装版" if getattr(sys, "frozen", False) else "源码版"
+# 源码版和绿色版可以同时放在同一台电脑上：端口共用（谁先开谁生效），数据目录各自独立。
+EDITION = "绿色版" if getattr(sys, "frozen", False) else "源码版"
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
-STARTUP_LNKS = {"安装版": "Stream Dock M18 控制台.lnk", "源码版": "Stream Dock M18 控制台（源码版）.lnk"}
+STARTUP_LNKS = {"绿色版": "Stream Dock M18 控制台.lnk", "源码版": "Stream Dock M18 控制台（源码版）.lnk"}
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
 GRID_COLS, GRID_ROWS = 5, 3
@@ -3936,7 +3936,7 @@ class App:
         """启动文件夹里的快捷方式确实指向这个版本吗？
 
         只「看得见文件」不够：早期用源码版跑过时留下的 `.lnk` 指着 `启动….bat`，
-        安装版/免安装版看到它会误以为自启已经开着。所以还要看快捷方式的目标。
+        绿色版看到它会误以为自启已经开着。所以还要看快捷方式的目标。
         """
         lnk = os.path.join(STARTUP_DIR, STARTUP_LNKS[ed])
         if not os.path.isfile(lnk):
@@ -3951,7 +3951,7 @@ class App:
     @staticmethod
     def autostart_state() -> dict:
         """开机自启现状：本版本有没有开；另一个版本有没有开（只会有一个生效，后启动的只是打开窗口）。"""
-        other = "源码版" if EDITION == "安装版" else "安装版"
+        other = "源码版" if EDITION == "绿色版" else "绿色版"
         this_on = App._startup_points_to_me(EDITION) or bool(App._run_value())
         other_on = App._startup_points_to_me(other)
         return {"this": this_on, "other": other if other_on else ""}
@@ -4024,7 +4024,7 @@ class App:
         else:
             ps = f"Remove-Item -LiteralPath '{q(lnk)}' -ErrorAction SilentlyContinue"
             if EDITION == "源码版":           # 旧版本建的同名快捷方式（指向 .bat 的）也一起删
-                old = os.path.join(STARTUP_DIR, STARTUP_LNKS["安装版"])
+                old = os.path.join(STARTUP_DIR, STARTUP_LNKS["绿色版"])
                 if os.path.isfile(old) and self._lnk_target(old).lower().endswith(".bat"):
                     ps += f";Remove-Item -LiteralPath '{q(old)}' -ErrorAction SilentlyContinue"
         try:
@@ -7390,7 +7390,7 @@ def _shutdown() -> None:
 
 
 def running_instance(port: int) -> dict | None:
-    """端口上已有控制台在跑就返回它的信息（含 edition：源码版 / 安装版）。"""
+    """端口上已有控制台在跑就返回它的信息（含 edition：源码版 / 绿色版）。"""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.8) as resp:
             data = resp.read()

@@ -1,11 +1,11 @@
-"""M18 控制台的 MCP 服务（stdio）：让 Codex / DeepSeek Harness / Claude / Cursor 等 AI 智能体
+﻿"""M18 控制台的 MCP 服务（stdio）：让 Codex / DeepSeek Harness / Claude / Cursor 等 AI 智能体
 连上控制台，开发、绑定、测试自制插件。
 
 只用标准库。智能体启动它（命令见控制台「接入 AI」），它通过本机 HTTP 接口操作控制台；
 控制台没开就在后台拉起来。
 
     python app/mcp_server.py           # 源码
-    mcp\m18-mcp.exe                    # 安装版（在 M18Console.exe 所在目录的 mcp 子文件夹里）
+    mcp\m18-mcp.exe                    # 绿色版（在 M18Console.exe 所在目录的 mcp 子文件夹里）
 
 环境变量：M18_URL=http://127.0.0.1:8642 指定控制台地址（默认自动在 8642–8653 里找）。
 """
@@ -80,7 +80,7 @@ class Console:
         flags = 0x00000008 | 0x00000200 | 0x08000000   # DETACHED | NEW_PROCESS_GROUP | NO_WINDOW
         if FROZEN:
             exe = os.path.join(EXE_DIR, "M18Console.exe")
-            if not os.path.isfile(exe):                       # 安装版：m18-mcp 在 mcp\ 子目录
+            if not os.path.isfile(exe):                       # 绿色版：m18-mcp 在 mcp\ 子目录
                 exe = os.path.join(os.path.dirname(EXE_DIR), "M18Console.exe")
             if not os.path.isfile(exe):
                 raise ConsoleError(f"找不到控制台程序：{exe}")

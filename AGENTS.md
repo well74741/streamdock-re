@@ -1,4 +1,4 @@
-# AGENTS.md — 给 AI 智能体（Codex / DeepSeek Harness / Claude / Cursor …）
+﻿# AGENTS.md — 给 AI 智能体（Codex / DeepSeek Harness / Claude / Cursor …）
 
 这是 **Stream Dock M18 控制台**：一个本地程序，接管 Stream Dock M18（15 个带屏幕的按键 + 3 个导航键 + 24 颗灯珠）。
 所有回复请用**中文**。
@@ -9,7 +9,7 @@
 
 | 运行方式 | command | args |
 |---|---|---|
-| 安装版 | `%LOCALAPPDATA%\Programs\M18 Console\mcp\m18-mcp.exe` | 无 |
+| 绿色版（解压目录） | `<解压目录>\mcp\m18-mcp.exe` | 无 |
 | 源码 | `python`（带控制台的 python.exe） | `app/mcp_server.py` |
 
 控制台没开时 MCP 会在后台自动拉起。工具一览：
@@ -50,11 +50,11 @@
 | `app/mcp_server.py` | MCP 服务（只用标准库） |
 | `app/plugin_guide.md` | 自制插件开发指南（`m18_plugin_api` 返回的就是它） |
 | `app/ui/` | 界面（原生 HTML / CSS / JS，无构建步骤；改完把 `index.html` 里的 `?v=` 版本戳加一） |
-| `packaging/build.py` | 打安装包（PyInstaller） |
+| `packaging/build.py` | 打绿色版 zip（PyInstaller） |
 
 - 运行：`python app/server.py`（`--no-browser` 只起服务）；改了 Python 要重启：
   `POST /api/quit`（带 `Origin: http://127.0.0.1:8642`、`Content-Type: application/json`）后再启动
 - HTTP 写接口要求同源 `Origin` + JSON，自己写脚本时带上这两个头
-- 用户数据（配置、场景、自制插件）：源码运行在 `app/` 下，安装版在 `%APPDATA%\M18Console`
+- 用户数据（配置、场景、自制插件）：源码运行在 `app/` 下，绿色版在 `%APPDATA%\M18Console`
 - 设备命令没有回执和背压，别一次性狂发图片；动图用 SDK 原生 `setKeyGif`
 - 代码注释、界面文字用中文

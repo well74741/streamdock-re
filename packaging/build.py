@@ -4,14 +4,14 @@
     python packaging/build.py --yes      # 缺的依赖不问，直接装
     python packaging/build.py --check    # 只检查环境，不打包
 
-产物：dist/release/M18Console-Setup-<版本>.exe、M18Console-Portable-<版本>.zip
+产物：dist/release/M18Console-Portable-<版本>.zip（绿色版，解压即用）
 
 步骤：
 1. PyInstaller 把 app/server.py 打成文件夹版程序（dist/M18Console/，含 Python 运行时、界面、默认壁纸）
 2. 把官方 WebSocket SDK（ws-sdk/）放到程序旁边；AI 接口 m18-mcp 也打成文件夹版放进 mcp/
-3. 整个程序文件夹压成 payload.zip
-4. 用 Windows 自带的 csc.exe 编译 packaging/Setup.cs（原生安装 / 卸载程序），把 payload.zip 附加在 exe 末尾
+3. 整个程序文件夹压成 M18Console-Portable-<版本>.zip
 
+不做安装程序（Setup.exe）：绿色版解压就能用，换电脑 / 换目录都不留注册表和快捷方式，也不需要管理员权限。
 全程不用「单文件 exe」：单文件 exe 启动时要先解压到临时目录，部分电脑的安全软件会拦截
 （报 Could not create temporary directory / failed to create runtime-tmpdir）。
 """
@@ -42,42 +42,6 @@ PIP_PACKAGES = {"PIL": "pillow", "PyInstaller": "pyinstaller"}     # 模块名 �
 PIP_MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"            # 官方源下载失败时换国内镜像
 SDK_EXE = os.path.join(ROOT, "ws-sdk", "StreamDockWebsocketSDK.exe")
 SDK_PAGE = "https://sdk.key123.vip/"
-PAYLOAD_MAGIC = b"M18PAYLD"        # 和 Setup.cs 里一致：[exe][payload.zip][8 字节长度][标记]
-
-
-def find_csc() -> str | None:
-    """.NET Framework 4.x 的 C# 编译器，Windows 10/11 自带。"""
-    windir = os.environ.get("WINDIR", r"C:\Windows")
-    for fw in ("Framework64", "Framework"):
-        path = os.path.join(windir, "Microsoft.NET", fw, "v4.0.30319", "csc.exe")
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def build_setup(payload: str, out: str) -> None:
-    """编译原生安装程序并把 payload.zip 附加在末尾。"""
-    src = os.path.join(HERE, "Setup.cs")
-    work = os.path.join(BUILD, "setup")
-    os.makedirs(work, exist_ok=True)
-    cs = os.path.join(work, "Setup.cs")
-    with open(src, encoding="utf-8") as fh:
-        code = fh.read().replace("__VERSION__", VERSION)
-    with open(cs, "w", encoding="utf-8-sig") as fh:
-        fh.write(code)
-    exe = os.path.join(work, "Setup.exe")
-    run([find_csc(), "-nologo", "-target:winexe", "-codepage:65001", "-optimize+", f"-out:{exe}",
-         f"-win32icon:{os.path.join(APP, 'icon.ico')}",
-         "-r:System.IO.Compression.dll", "-r:System.IO.Compression.FileSystem.dll",
-         "-r:System.Windows.Forms.dll", "-r:System.Drawing.dll", "-r:System.Management.dll", cs])
-    size = os.path.getsize(payload)
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "wb") as dst:
-        with open(exe, "rb") as fh:
-            shutil.copyfileobj(fh, dst)
-        with open(payload, "rb") as fh:
-            shutil.copyfileobj(fh, dst)
-        dst.write(size.to_bytes(8, "little") + PAYLOAD_MAGIC)
 
 
 # --------------------------------------------------------------------------- #
@@ -151,16 +115,7 @@ def preflight(auto_yes: bool) -> bool:
         return False
     print(f"✓ Python {sys.version.split()[0]}（{sys.executable}）")
 
-    # 2) C# 编译器：安装程序用它编译，Windows 10/11 自带 .NET Framework 4.8 里就有
-    csc = find_csc()
-    if csc:
-        print(f"✓ C# 编译器（{csc}）")
-    else:
-        print("✗ 找不到 .NET Framework 4 的 csc.exe（编译安装程序要用）")
-        print("  在「控制面板 → 程序 → 启用或关闭 Windows 功能」里勾选 .NET Framework 4.8，或安装 .NET Framework 4.8")
-        ok = False
-
-    # 3) Pillow / PyInstaller：可以自动装
+    # 2) Pillow / PyInstaller：可以自动装
     miss = missing_modules()
     if miss:
         pkgs = [PIP_PACKAGES[m] for m in miss]
@@ -180,7 +135,7 @@ def preflight(auto_yes: bool) -> bool:
         import PyInstaller
         print(f"✓ Pillow {PIL.__version__}，PyInstaller {PyInstaller.__version__}")
 
-    # 4) 官方 WebSocket SDK（不在仓库里，也不随官方驱动安装，需要从 SDK 网站下载）
+    # 3) 官方 WebSocket SDK（不在仓库里，也不随官方驱动安装，需要从 SDK 网站下载）
     if os.path.isfile(SDK_EXE):
         print("✓ 官方 WebSocket SDK（ws-sdk\\StreamDockWebsocketSDK.exe）")
     else:
@@ -191,7 +146,7 @@ def preflight(auto_yes: bool) -> bool:
             webbrowser.open(SDK_PAGE)
         ok = False
 
-    # 5) dist 里的程序正在运行 → 文件被占用，删不掉旧产物
+    # 4) dist 里的程序正在运行 → 文件被占用，删不掉旧产物
     running = console_in_dist()
     if running:
         print(f"✗ dist 里的控制台正在运行（{running[0][1]}），打包前要先退出")
@@ -310,25 +265,18 @@ def main() -> int:
     for doc in (os.path.join(ROOT, "AGENTS.md"), os.path.join(APP, "plugin_guide.md")):
         shutil.copyfile(doc, os.path.join(app_dir, os.path.basename(doc)))
 
-    # 3) 程序文件夹 → payload.zip
-    payload = os.path.join(BUILD, "payload.zip")
-    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    # 3) 程序文件夹 → 绿色版 zip（解压出来就是能直接运行的程序目录）
+    release = os.path.join(DIST, "release")
+    os.makedirs(release, exist_ok=True)
+    portable = os.path.join(release, f"M18Console-Portable-{VERSION}.zip")
+    with zipfile.ZipFile(portable, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for root, _, files in os.walk(app_dir):
             for f in files:
                 full = os.path.join(root, f)
                 zf.write(full, os.path.relpath(full, app_dir))
-    print(f"payload.zip：{os.path.getsize(payload) / 1048576:.1f} MB")
-
-    # 4) 安装程序：原生 C#，载荷附加在末尾（安装时直接解压到安装目录；卸载程序由它装好后写入）
-    release = os.path.join(DIST, "release")
-    setup = os.path.join(release, f"M18Console-Setup-{VERSION}.exe")
-    build_setup(payload, setup)
-    print(f"\n✓ 安装包：{setup}（{os.path.getsize(setup) / 1048576:.1f} MB，用时 {time.time() - t0:.0f} 秒）")
-    # 5) 免安装版：程序文件夹直接压成 zip，解压即用
-    portable = os.path.join(release, f"M18Console-Portable-{VERSION}.zip")
-    shutil.copyfile(payload, portable)
-    print(f"✓ 免安装版：{portable}（{os.path.getsize(portable) / 1048576:.1f} MB，解压后运行 M18Console.exe）")
-    print("  一般发安装包；对方装不上时发免安装版。安装说明见 docs/打包与安装指南.md")
+    print(f"\n✓ 绿色版：{portable}（{os.path.getsize(portable) / 1048576:.1f} MB，"
+          f"用时 {time.time() - t0:.0f} 秒，解压后运行 M18Console.exe）")
+    print("  只出绿色版：不写注册表、不建快捷方式，放到哪个目录都能跑。说明见 docs/打包与安装指南.md")
     return 0
 
 
