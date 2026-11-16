@@ -3053,19 +3053,9 @@ function renderLog(events) {
   }).join("");
 }
 
-function fmtSec(v) {
-  const m = Math.floor(v / 60), sec = v % 60;
-  if (!m) return `${sec} 秒`;
-  return sec ? `${m} 分 ${sec} 秒` : `${m} 分钟`;
-}
-
 function updateGapLabel(gap) {
   $("#wallpaper-gap-val").textContent = gap;
   const pct = (gap / 64) * 100;
-  const ratioEl = $("#gap-ratio");
-  if (ratioEl) {
-    ratioEl.textContent = (pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)) + "%";
-  }
 }
 
 /* ------------------------------------------------------------------ 色板 */
@@ -3100,18 +3090,6 @@ function setColor(c) {
 }
 
 /* ------------------------------------------------------------------ 交互 */
-function activateTab(name) {
-  document.querySelectorAll(".nav-item").forEach((b) => {
-    b.classList.toggle("active", b.dataset.tab === name);
-  });
-  document.querySelectorAll(".page").forEach((p) => {
-    p.classList.toggle("active", p.id === "tab-" + name);
-  });
-  const btn = document.querySelector(`.nav-item[data-tab="${name}"]`);
-  if (btn) $("#page-title").textContent = btn.textContent.trim();
-  applyRotation();
-}
-
 function bindUI() {
   // 设备设置弹窗
   const modal = $("#device-modal");
@@ -3200,7 +3178,6 @@ function bindUI() {
     });
   };
   bindView("#wp-zoom", "zoom", (v) => Math.round(v * 100) + "%");
-  bindView("#wp-ox", "ox", (v) => String(v));
 
   // 在壁纸预览上拖动 = 平移壁纸显示位置（拖动时纯前端跟手，松手才写回服务端）
   const wpHolder = $("#wp-thumb");
@@ -3247,26 +3224,17 @@ function bindUI() {
       const scale = canvasW / Math.max(1, wpImg.clientWidth);
       const ox = Math.max(-400, Math.min(400, Math.round(baseOx + dx * scale)));
       const oy = Math.max(-400, Math.min(400, Math.round(baseOy + dy * scale)));
-      const oxEl = $("#wp-ox");
-      const oyEl = $("#wp-oy");
-      if (oxEl) { oxEl.value = ox; $("#wp-ox-val").textContent = ox; }
-      if (oyEl) { oyEl.value = oy; $("#wp-oy-val").textContent = oy; }
       pushView({ ox, oy });
     };
     wpHolder.addEventListener("pointerup", finishDrag);
     wpHolder.addEventListener("pointercancel", finishDrag);
   }
-  bindView("#wp-oy", "oy", (v) => String(v));
 
   document.querySelectorAll(".fit-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".fit-btn").forEach((b) => b.classList.remove("on"));
       btn.classList.add("on");
       // 换填充方式时把偏移归零，避免上一张图的位移带过来导致画面歪掉
-      const oxEl = $("#wp-ox");
-      const oyEl = $("#wp-oy");
-      if (oxEl) { oxEl.value = 0; $("#wp-ox-val").textContent = "0"; }
-      if (oyEl) { oyEl.value = 0; $("#wp-oy-val").textContent = "0"; }
       if (state) state.view = { ...(state.view || {}), fit: btn.dataset.fit, ox: 0, oy: 0 };
       pushView({ fit: btn.dataset.fit, ox: 0, oy: 0 });
     });

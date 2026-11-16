@@ -105,8 +105,6 @@ def _ensure_data_dir(path: str) -> str:
 
 
 DATA_DIR = _ensure_data_dir(DATA_DIR)
-SDK_SRC = os.path.join(ROOT, "refs", "devicesdk", "Python-SDK", "src")
-sys.path.insert(0, SDK_SRC)
 # 打包版：refs/ 不会带进安装目录，官方 Python SDK 被复制到 sdk/ 下（开关屏 / 唤醒要用）
 SDK_BUNDLED = os.path.join(APP_DIR, "sdk")
 if os.path.isdir(SDK_BUNDLED):
@@ -672,195 +670,6 @@ def load_path(value: str) -> str:
 # --------------------------------------------------------------------------- #
 # 设备
 # --------------------------------------------------------------------------- #
-class Device:
-    def __init__(self, on_input):
-        self.on_input = on_input
-        self.tr = None
-        self.lock = threading.RLock()
-        self.connected = False
-        self.info = {}
-        self.error = ""
-        self._stop = threading.Event()
-        self._threads = []
-        self._read_errors = 0
-        self._seen_raw: set[str] = set()
-        self.stats = {"read": 0, "data": 0, "none": 0, "err": 0}
-        self.quiet = False
-
-    # -- 生命周期 ---------------------------------------------------------- #
-    def connect(self) -> bool:
-        try:
-            from StreamDock.Transport.LibUSBHIDAPI import LibUSBHIDAPI
-        except Exception as exc:  # noqa: BLE001
-            self.error = f"设备 SDK 加载失败：{exc}"
-            self.connected = False
-            log(self.error)
-            return False
-        self.disconnect()
-        self._stop.clear()
-        tr = LibUSBHIDAPI()
-        found = None
-        for vid, pid in CANDIDATES:
-            devs = tr.enumerate_devices(vendor_id=vid, product_id=pid)
-            if devs:
-                found = (vid, pid, devs[0])
-                break
-        if not found:
-            self.error = "未检测到 M18 设备"
-            self.connected = False
-            return False
-
-        vid, pid, info = found
-        if not tr.open(bytes(info["path"], "utf-8")):
-            self.error = f"打开设备失败：{tr.get_last_error()}"
-            self.connected = False
-            return False
-
-        try:
-            tr.set_report_size(513, 1025, 0)
-            fw = tr.get_firmware_version()
-        except Exception as exc:  # noqa: BLE001
-            fw = ""
-            log(f"读取固件失败: {exc}")
-
-        self.tr = tr
-        self.connected = True
-        self.error = ""
-        self.info = {
-            "vid": f"0x{vid:04X}",
-            "pid": f"0x{pid:04X}",
-            "serial": info.get("serial_number") or "",
-            "firmware": fw,
-            "keys": KEY_COUNT,
-            "leds": LED_COUNT,
-            "path": info.get("path", ""),
-        }
-        for target in (self._read_loop, self._heartbeat_loop):
-            t = threading.Thread(target=target, daemon=True)
-            t.start()
-            self._threads.append(t)
-        log(f"设备已连接 {self.info['vid']}/{self.info['pid']} 固件={fw}")
-        return True
-
-    def disconnect(self) -> None:
-        self._stop.set()
-        with self.lock:
-            if self.tr is not None:
-                try:
-                    self.tr.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            self.tr = None
-            self.connected = False
-        self._threads = []
-
-    def check_present(self) -> bool:
-        """不重开设备，只确认它还在不在总线上。"""
-        try:
-            from StreamDock.Transport.LibUSBHIDAPI import LibUSBHIDAPI
-
-            probe = LibUSBHIDAPI()
-            for vid, pid in CANDIDATES:
-                if probe.enumerate_devices(vendor_id=vid, product_id=pid):
-                    return True
-        except Exception:  # noqa: BLE001
-            pass
-        return False
-
-    def mark_lost(self, reason: str) -> None:
-        self.error = reason
-        log(reason)
-        self.disconnect()
-
-    # -- 写入 -------------------------------------------------------------- #
-    def write(self, fn, *args):
-        with self.lock:
-            if not self.connected or self.tr is None:
-                return False
-            try:
-                fn(self.tr, *args)
-                return True
-            except Exception as exc:  # noqa: BLE001
-                self.error = f"写入失败：{exc}"
-                log(self.error)
-                return False
-
-    def set_leds(self, colors) -> bool:
-        return self.write(lambda tr, c: tr.set_single_led_color(c), colors)
-
-    def set_led_brightness(self, value: int) -> bool:
-        return self.write(lambda tr, v: tr.set_led_brightness(v), value)
-
-    def reset_leds(self) -> bool:
-        return self.write(lambda tr: tr.reset_led_color())
-
-    def set_screen_brightness(self, value: int) -> bool:
-        return self.write(lambda tr, v: tr.set_key_brightness(v), value)
-
-    def clear_queue(self) -> bool:
-        return self.write(lambda tr: tr.clear_task_queue())
-
-    def change_mode(self, mode: int) -> bool:
-        return self.write(lambda tr, m: tr.change_mode(m), mode)
-
-    def send_image(self, key: int, jpeg: bytes) -> bool:
-        return self.write(lambda tr, k, data: tr.set_key_image_stream(data, k), key, jpeg)
-
-    def refresh(self) -> bool:
-        return self.write(lambda tr: tr.refresh_screen())
-
-    def clear_keys(self) -> bool:
-        return self.write(lambda tr: tr.clear_all_keys())
-
-    # -- 读线程 ------------------------------------------------------------ #
-    def _read_loop(self) -> None:
-        while not self._stop.is_set():
-            tr = self.tr
-            if tr is None:
-                time.sleep(0.1)
-                continue
-            try:
-                data = tr.read(200)
-                self._read_errors = 0
-                self.stats["read"] += 1
-            except Exception:  # noqa: BLE001
-                self._read_errors += 1
-                self.stats["err"] += 1
-                time.sleep(0.2)
-                continue
-            if data and len(data) < 11:
-                raw = " ".join(f"{b:02X}" for b in data[:16])
-                if raw not in self._seen_raw and len(self._seen_raw) < 20:
-                    self._seen_raw.add(raw)
-                    log(f"短包 len={len(data)} {raw}")
-                continue
-            if not data or len(data) < 11:
-                self.stats["none"] += 1
-                time.sleep(0.01)      # 读不到时不空转
-                continue
-            self.stats["data"] += 1
-            code, state = data[9], data[10]
-            if code in CODE_TO_KEY and state in (0, 1):
-                try:
-                    self.on_input(CODE_TO_KEY[code], state)
-                except Exception as exc:  # noqa: BLE001
-                    log(f"输入回调异常: {exc}")
-            else:
-                raw = " ".join(f"{b:02X}" for b in data[:16])
-                if raw not in self._seen_raw:
-                    if len(self._seen_raw) < 20:
-                        self._seen_raw.add(raw)
-                    log(f"未识别输入包 {raw}")
-
-    def _heartbeat_loop(self) -> None:
-        while not self._stop.is_set():
-            time.sleep(8)
-            if self._stop.is_set():
-                break
-            if self.quiet:
-                continue
-            self.write(lambda tr: tr.heartbeat())
-
 
 # --------------------------------------------------------------------------- #
 # 应用状态 + 灯光引擎
@@ -1658,74 +1467,6 @@ class App:
             if self.device.connected:
                 log(f"读取统计 {delta}")
 
-    def probe_inputs(self, seconds: int = 15) -> None:
-        """并发读取所有 HID 接口若干秒，期间按键就能看出上报走的是哪个口。"""
-        try:
-            from StreamDock.Transport import LibUSBHIDAPI as L
-
-            lib = L._transport_lib
-            lib.transport_hid_enumerate.restype = ctypes.POINTER(L._HidDeviceInfo)
-            lib.transport_hid_enumerate.argtypes = [ctypes.c_ushort, ctypes.c_ushort]
-            lib.transport_hid_free_enumeration.argtypes = [ctypes.POINTER(L._HidDeviceInfo)]
-
-            ptr = lib.transport_hid_enumerate(0x6603, 0x1012)
-            entries = []
-            cur = ptr
-            while cur:
-                info = cur.contents
-                entries.append((
-                    info.path.decode("utf-8", "ignore") if info.path else "",
-                    info.usage_page, info.usage, info.interface_number,
-                ))
-                if not info.next:
-                    break
-                cur = info.next
-            lib.transport_hid_free_enumeration(ptr)
-        except Exception as exc:  # noqa: BLE001
-            log(f"输入探测失败：{exc}")
-            return
-
-        log(f"开始探测 {seconds} 秒，共 {len(entries)} 个接口 —— 请现在按键")
-        for path, up, us, itf in entries:
-            log(f"  接口 iface={itf} usage_page=0x{up:04X} usage={us}")
-
-        def reader(path, itf, deadline):
-            try:
-                tr = L.LibUSBHIDAPI()
-                if not tr.open(path.encode()):
-                    log(f"  iface={itf} 打不开（可能被主进程占用）")
-                    return
-                try:
-                    tr.set_report_size(513, 1025, 0)
-                except Exception:  # noqa: BLE001
-                    pass
-                got = 0
-                seen = set()
-                while time.time() < deadline:
-                    d = tr.read(100)
-                    if d:
-                        got += 1
-                        raw = " ".join(f"{b:02X}" for b in d[:16])
-                        if raw not in seen and len(seen) < 8:
-                            seen.add(raw)
-                            log(f"  ★iface={itf} 收到 len={len(d)} {raw}")
-                    else:
-                        time.sleep(0.01)
-                tr.close()
-                log(f"  iface={itf} 结束，收到 {got} 个包")
-            except Exception as exc:  # noqa: BLE001
-                log(f"  iface={itf} 异常：{exc}")
-
-        deadline = time.time() + seconds
-        threads = [
-            threading.Thread(target=reader, args=(p, itf, deadline), daemon=True)
-            for p, up, us, itf in entries
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
     def _standby_loop(self) -> None:
         while True:
             time.sleep(1)
@@ -1756,36 +1497,6 @@ class App:
                     self.apply_standby()
             except Exception:  # noqa: BLE001
                 pass
-
-    def _panel_device(self):
-        """常驻一条 transport 句柄（备用）。发开关屏指令已经改走主连接，别再另开一条抢按键上报。"""
-        dev = getattr(self, "_panel_dev", None)
-        if dev is not None and dev.connected:
-            return dev
-        try:
-            dev = Device(lambda k, s: None)
-            if not dev.connect():
-                return None
-        except Exception:  # noqa: BLE001
-            return None
-        self._panel_dev = dev
-        return dev
-
-    def _panel_write(self, fn) -> bool:
-        """发一条 transport 指令（备用）：优先走主连接，别另开句柄抢按键上报。"""
-        dev = self.device
-        if dev is not None and getattr(dev, "connected", False) and hasattr(dev, "write"):
-            try:
-                return bool(dev.write(fn))
-            except Exception:  # noqa: BLE001
-                pass
-        dev = self._panel_device()
-        if not dev:
-            return False
-        try:
-            return bool(dev.write(fn))
-        except Exception:  # noqa: BLE001
-            return False
 
     def _black_jpeg(self) -> bytes:
         """一张全黑的 64×64，用来把 15 个键刷成黑屏。"""
@@ -1899,11 +1610,6 @@ class App:
             pass
         time.sleep(0.1)
         self.apply_keys()
-
-    def mark_activity(self) -> None:
-        self._last_activity = time.time()
-        if self.in_standby and not self.album_active():
-            threading.Thread(target=self.apply_keys, daemon=True).start()
 
     # -- 页面 -------------------------------------------------------------- #
     # -- 文件夹 ------------------------------------------------------------ #
@@ -2519,10 +2225,6 @@ class App:
         if not self.key_overrides.get(key):
             return
         self.device.send_image(key, self._render_key(key))
-
-    def _apply_overrides(self) -> None:
-        for key in list(self.key_overrides):
-            self._apply_key(key)
 
     def _keepalive_loop(self) -> None:
         """低频巡检（30 秒）。
@@ -4040,65 +3742,6 @@ class App:
         sprite.save(buf, "PNG")
         return buf.getvalue()
 
-    def tiles_png(self) -> bytes | None:
-        """15 个键的画面拼成一张 320×192 的精灵图，供界面上的键格直接铺。"""
-        canvas = self._canvas()
-        if canvas is None:
-            return None
-        gap = self._gap()
-        pitch = KEY_SIZE + gap
-        sprite = Image.new("RGB", (GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE), (0, 0, 0))
-        for key in range(1, KEY_COUNT + 1):
-            col = (key - 1) % GRID_COLS
-            row_from_bottom = (key - 1) // GRID_COLS
-            row_top = row_from_bottom if self.wallpaper_flip else (GRID_ROWS - 1 - row_from_bottom)
-            slot_col, slot_row = self._cell_slot(col, row_top)
-            tile = canvas.crop((slot_col * pitch, slot_row * pitch,
-                                slot_col * pitch + KEY_SIZE, slot_row * pitch + KEY_SIZE))
-            item = self.key_overrides.get(key)
-            if item:
-                jpeg = item["jpeg"] if item["type"] == "image" else item["frames"][item["idx"]][0]
-                try:
-                    tile = Image.open(io.BytesIO(jpeg)).convert("RGB").resize(
-                        (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
-                except Exception:  # noqa: BLE001
-                    pass
-            if self.rotation:
-                tile = tile.rotate(self.rotation, expand=False)
-            sprite.paste(tile, (col * KEY_SIZE, row_top * KEY_SIZE))
-        buf = io.BytesIO()
-        sprite.save(buf, "PNG")
-        return buf.getvalue()
-
-    def preview_png(self) -> bytes | None:
-        """给界面用的对照图：和实际送到设备的画面完全一致，并把缝隙位置标出来。"""
-        canvas = self._canvas()
-        if canvas is None:
-            return None
-        gap = self._gap()
-        w, h = canvas.size
-        pitch = KEY_SIZE + gap
-        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-
-        if gap > 0:
-            for c in range(GRID_COLS - 1):
-                x = (c + 1) * KEY_SIZE + c * gap
-                od.rectangle([x, 0, x + gap - 1, h - 1], fill=(6, 8, 12, 210))
-            for r in range(GRID_ROWS - 1):
-                y = (r + 1) * KEY_SIZE + r * gap
-                od.rectangle([0, y, w - 1, y + gap - 1], fill=(6, 8, 12, 150))
-        for c in range(GRID_COLS):
-            for r in range(GRID_ROWS):
-                x, y = c * pitch, r * pitch
-                od.rectangle([x, y, x + KEY_SIZE - 1, y + KEY_SIZE - 1],
-                             outline=(120, 190, 255, 140), width=1)
-
-        out = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
-        buf = io.BytesIO()
-        out.save(buf, "PNG")
-        return buf.getvalue()
-
     # -- 外部输入 ---------------------------------------------------------- #
     def _on_input(self, key: int, state: int) -> None:
         self._last_input_seen = time.time()
@@ -4450,9 +4093,6 @@ class App:
         self._links_cache = None
         log(f"场景「{name}」已{'停用（切换时跳过）' if muted else '启用'}")
         return True
-
-    def scene_muted(self, name: str) -> bool:
-        return bool(self._scene_flags().get(self._canonical_scene(name), {}).get("muted"))
 
     def _scene_order_path(self) -> str:
         return os.path.join(SCENE_DIR, ".scene-order.json")
@@ -5457,17 +5097,6 @@ class App:
     def next_scene(self) -> bool:
         """官方「场景切换」键：按场景列表顺序切到下一个。"""
         return self._step_scene(1)
-
-    def prev_scene(self) -> bool:
-        """往前切一个场景（相册场景的「上一页」导航键用）。"""
-        return self._step_scene(-1)
-
-    def main_scene(self) -> bool:
-        """「主场景」键：退出相册，回到进相册之前的那个场景。"""
-        if self.album_active():
-            self.album_stop()
-            return True
-        return False
 
     def swap_keys(self, a: int, b: int) -> bool:
         top = KEY_COUNT + 3
@@ -7444,15 +7073,6 @@ __CODE__
         # 按键里的「控制台 → 灯光效果切换」改了模式，界面上的灯效预设也要跟着高亮
         self.broadcast({"type": "lighting", "lighting": snap})
 
-    def paint_led(self, index: int, color: str) -> None:
-        self._save_soon()
-        rgb = list(hex_to_rgb(color))
-        with self.lock:
-            index = max(0, min(LED_COUNT - 1, int(index)))
-            self.lighting["custom"][index] = rgb
-            self.lighting["mode"] = "custom"
-            self._dirty = True
-
     def set_custom(self, colors) -> None:
         self._save_soon()
         with self.lock:
@@ -7855,28 +7475,6 @@ class Handler(BaseHTTPRequestHandler):
                         "dataDir": DATA_DIR, "pid": os.getpid(), "shuttingDown": SHUTTING_DOWN})
         elif path == "/api/events":
             self._sse()
-        elif path == "/api/wallpaper/preview.png":
-            data = APP.preview_png()
-            if data is None:
-                self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(data)
-        elif path == "/api/wallpaper/tiles.png":
-            data = APP.tiles_png()
-            if data is None:
-                self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(data)
         elif path in ("/api/album/tiles.png", "/api/album/preview.jpg") or (
                 path.startswith("/api/album/thumb/") and path.endswith(".jpg")):
             # 相册场景的图片走 ?scene=场景名；不传就是「待机画面」里那本相册
@@ -8109,9 +7707,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/lighting":
             APP.set_lighting(body)
             self._json(APP.snapshot())
-        elif path == "/api/lighting/paint":
-            APP.paint_led(int(body.get("index", 0)), body.get("color", "#00aaff"))
-            self._json({"ok": True})
         elif path == "/api/lighting/custom":
             APP.set_custom(body.get("colors") or [])
             self._json({"ok": True})
@@ -8152,12 +7747,6 @@ class Handler(BaseHTTPRequestHandler):
                                    "ms": 7000})
             threading.Thread(target=_reset_job, daemon=True).start()
             self._json({"ok": True, "resetting": True})
-        elif path == "/api/device/wake-panel":
-            ok = APP.wake_panel()
-            self._json({"ok": ok})
-        elif path == "/api/device/repaint":
-            threading.Thread(target=APP._wake_from_standby, daemon=True).start()
-            self._json({"ok": True})
         elif path == "/api/device/resume":
             # 电脑休眠回来后按键没反应时，手动点一下（和自动恢复走同一段代码）
             threading.Thread(target=APP._after_resume, daemon=True).start()
@@ -8176,41 +7765,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/device/mute":
             APP.input_muted = bool(body.get("value"))
             self._json({"ok": True, "value": APP.input_muted})
-        elif path == "/api/device/repaint-on-press":
-            APP.repaint_on_press = bool(body.get("value"))
-            self._json({"ok": True, "value": APP.repaint_on_press})
-        elif path == "/api/device/keep-awake":
-            APP.keep_awake = bool(body.get("value"))
-            self._json({"ok": True, "value": APP.keep_awake})
-        elif path == "/api/device/probe":
-            threading.Thread(target=APP.probe_inputs, daemon=True).start()
-            self._json({"ok": True})
-        elif path == "/api/device/pause-writes":
-            APP.writes_paused = bool(body.get("value"))
-            if APP.writes_paused:
-                APP._gif_stop_all()
-            if not APP.writes_paused and APP.device.connected:
-                threading.Thread(target=APP.apply_keys, daemon=True).start()
-            self._json({"ok": True, "value": APP.writes_paused})
-        elif path == "/api/device/lighting-only":
-            APP.lighting_only = bool(body.get("value"))
-            if APP.lighting_only:
-                APP._gif_stop_all()
-            APP._save_config()
-            if not APP.lighting_only and APP.device.connected:
-                threading.Thread(target=APP.apply_keys, daemon=True).start()
-            self._json({"ok": True, "value": APP.lighting_only})
-        elif path == "/api/device/mode":
-            mode = int(body.get("mode", 0))
-            ok = APP.device.change_mode(mode)
-            self._json({"ok": ok, "mode": mode})
-        elif path == "/api/device/reset":
-            APP.device.disconnect()
-            time.sleep(0.4)
-            ok = APP.device.connect()
-            if ok:
-                APP._restore_all()
-            self._json({"ok": ok, **APP.snapshot()})
         elif path == "/api/activity":
             APP._last_activity = time.time()
             if body.get("wake") and APP.in_standby and not APP.album_active():
@@ -8407,9 +7961,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/key/icon":
             self._json({"ok": APP.set_key_icon(int(body.get("key", 0)),
                                                str(body.get("name") or ""))})
-        elif path == "/api/catalog/refresh":
-            self._json({"ok": True, "packs": APP.icon_packs(refresh=True),
-                        "plugins": APP.plugin_catalog()})
         elif path == "/api/config/backups":
             self._json({"ok": True, "items": APP.list_config_backups()})
         elif path == "/api/config/restore":
@@ -8457,14 +8008,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 ok = APP.apply_standby()
             self._json({"ok": ok, "flip": APP.wallpaper_flip, "gap": APP.wallpaper_gap})
-        elif path == "/api/wallpaper/clear":
-            APP.device.clear_keys()
-            APP.device.refresh()
-            self._json({"ok": True})
         elif path == "/api/wallpaper/calibrate":
             self._json({"ok": APP.apply_calibration()})
-        elif path == "/api/wallpaper/apply":
-            self._json({"ok": APP.apply_wallpaper()})
         elif path == "/api/upload":
             name = str(body.get("name") or "image")
             data = str(body.get("dataUrl") or "")
@@ -8511,17 +8056,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok})
         elif path == "/api/key/clear":
             self._json({"ok": APP.clear_key(int(body.get("key", 0)))})
-        elif path == "/api/led/layout":
-            if "offset" in body:
-                APP.led_offset = int(body["offset"]) % (LED_COUNT - 2)
-            if "reverse" in body:
-                APP.led_reverse = bool(body["reverse"])
-            APP._save_config()
-            APP._dirty = True
-            self._json({"ok": True, "offset": APP.led_offset, "reverse": APP.led_reverse})
-        elif path == "/api/led/identify":
-            APP._identify = (int(body.get("index", 0)) % LED_COUNT, time.time() + 1.5)
-            self._json({"ok": True})
         elif path == "/api/wallpaper/view":
             if "fit" in body:
                 fit = str(body["fit"])
@@ -8588,10 +8122,6 @@ class Handler(BaseHTTPRequestHandler):
             APP._save_config()
             APP._dirty = True
             self._json({"ok": True, "value": APP.effect_reverse})
-        elif path == "/api/folder/create":
-            r = APP.create_folder(int(body.get("key", 0)), str(body.get("name") or ""),
-                                  str(body.get("gesture") or ""))
-            self._json({**r, **APP.snapshot()})
         elif path == "/api/folder/open":
             ok = APP.open_folder(str(body.get("page") or ""))
             self._json({"ok": ok, **APP.snapshot()})
