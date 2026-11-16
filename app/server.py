@@ -16,6 +16,7 @@ import io
 import json
 import os
 import queue
+import shutil
 import socket
 import subprocess
 import sys
@@ -1344,6 +1345,39 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as exc:  # noqa: BLE001
                     log(f"打开图片位置失败：{exc}")
             self._json({"ok": ok, "path": fp or ""})
+        elif path == "/api/library/collect":
+            # 拖系统文件到侧栏「相册」：dataUrl 直接落成文件再收进去（保留原文件名）
+            saved = []
+            inbox = os.path.join(DATA_DIR, "cache", "collect")
+            os.makedirs(inbox, exist_ok=True)
+            for f in (body.get("files") or [])[:200]:
+                try:
+                    name = os.path.basename(str(f.get("name") or "image.png"))
+                    data = str(f.get("dataUrl") or "")
+                    if "," not in data:
+                        continue
+                    raw = base64.b64decode(data.split(",", 1)[1])
+                except Exception:  # noqa: BLE001
+                    continue
+                if len(raw) > MAX_UPLOAD_BYTES:
+                    continue
+                # 保留原文件名：收进相册时重名自动加序号、同一张文件名+大小相同就不重复收
+                safe_name = "".join(ch for ch in name if ch not in '\/:*?"<>|').strip() or "image.png"
+                dst = os.path.join(inbox, safe_name)
+                i = 2
+                stem, ext = os.path.splitext(safe_name)
+                while os.path.exists(dst):
+                    dst = os.path.join(inbox, f"{stem} ({i}){ext}")
+                    i += 1
+                try:
+                    with open(dst, "wb") as fh:
+                        fh.write(raw)
+                except OSError:
+                    continue
+                saved.append(dst)
+            n = APP.library_collect(saved)
+            shutil.rmtree(inbox, ignore_errors=True)
+            self._json({"ok": True, "added": n, "items": APP.library_items()})
         elif path == "/api/library/add":
             self._json(APP.library_add(body.get("files") or []))
         elif path == "/api/library/remove":

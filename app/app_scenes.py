@@ -440,6 +440,11 @@ class ScenesMixin:
     def create_scene(self, name: str, kind: str = "normal") -> dict:
         """新建场景：普通场景（把当前画面存一份）或相册场景（空的图片集，编辑区里再加图）。"""
         name = (name or "").strip()[:40]
+        if not name and kind == "album":
+            i = 1
+            while os.path.isfile(self._scene_path(f"相册 {i}")):
+                i += 1
+            name = f"相册 {i}"                       # 默认名：相册 1、相册 2…
         if not name:
             return {"ok": False, "reason": "场景名不能为空"}
         name = self._canonical_scene(name)
@@ -709,9 +714,7 @@ class ScenesMixin:
                   if name == self.custom_scene_name else self._scene_path(name))
         data = self._scene_file_data(target)
         if data is not None and data.get("sceneType") == "album":
-            if not self._album_scene_items(name):
-                return f"相册场景「{name}」里还没有图片，先在编辑区里拖几张图进去"
-            return ""
+            return ""            # 空相册也允许切过去（整屏黑色），编辑区里加图即可
         if data is not None and not self._scene_has_content(data):
             if name == self.custom_scene_name:
                 return "「自定义」场景还是空的：先在界面上摆好按键，改动会自动存进「自定义」"

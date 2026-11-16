@@ -846,11 +846,28 @@ function bindLibraryDrop() {
       toast("相册只收图片（PNG / JPG / GIF / WebP / BMP）", 2200);
       return;
     }
-    const r = await post("/api/library/add", { files: rels });
-    libraryItems = r.items || [];
-    renderLibrary();
-    toast(`已收进相册 ${r.added || 0} 张`, 1600);
+    await libraryCollectFiles(files);
   });
+}
+
+/* 拖系统图片文件到侧栏「相册」：原文件名收进分类（去重、重名加序号都在服务端做） */
+async function libraryCollectFiles(files) {
+  const imgs = [...(files || [])].filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name));
+  if (!imgs.length) {
+    toast("相册只收图片（PNG / JPG / GIF / WebP / BMP）", 2200);
+    return;
+  }
+  const payload = [];
+  for (const f of imgs) {
+    try {
+      payload.push({ name: f.name, dataUrl: await readAsDataURL(f) });
+    } catch (_) { /* 掉一张不算错 */ }
+  }
+  if (!payload.length) return;
+  const r = await post("/api/library/collect", { files: payload });
+  libraryItems = r.items || [];
+  renderLibrary();
+  toast(r.added ? `已收进相册 ${r.added} 张` : "这些图已经在相册里了", 1600);
 }
 
 /* --------------------------------------------------------------- 裁图工具 */
@@ -2047,6 +2064,12 @@ function newSceneDialog() {
       album: "相册场景：整屏轮播图片，点任意屏幕键切到下一个场景。",
     };
     let kind = "normal";
+    const albumDefault = () => {
+      const used = new Set(sceneItems.map((i) => i.name));
+      for (let i = 1; ; i += 1) {
+        if (!used.has(`相册 ${i}`)) return `相册 ${i}`;
+      }
+    };
     let done = false;
     const finish = (v) => {
       if (done) return;
@@ -2062,7 +2085,11 @@ function newSceneDialog() {
       }
       finish({ name, kind });
     };
-    nameEl.value = `场景 ${new Date().toLocaleDateString().replace(/\//g, "-")}`;
+    const dateName = `场景 ${new Date().toLocaleDateString().replace(/\//g, "-")}`;
+    nameEl.value = dateName;
+    box.querySelectorAll("#scene-new-kind [data-kind]").forEach((b) => b.addEventListener("click", () => {
+      nameEl.value = b.dataset.kind === "album" ? albumDefault() : dateName;
+    }));
     nameEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); submit(); }
       if (e.key === "Escape") { e.preventDefault(); finish(null); }
@@ -4231,7 +4258,10 @@ function renderAlbum(a) {
     const board = document.querySelector(".ring-board");
     if (board) {
       board.classList.add("album-on");
-      const url = `url("/api/album/tiles.png?scene=${encodeURIComponent(a.scene)}&v=${Date.now()}")`;
+      // 空相册：设备上是整屏黑，控制台预览也显示整屏黑
+      const url = (a.items || []).length
+        ? `url("/api/album/tiles.png?scene=${encodeURIComponent(a.scene)}&v=${Date.now()}")`
+        : "linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))";
       document.querySelectorAll(".ring-board .cell").forEach((cell) => {
         const n = Number(cell.dataset.key);
         const col = (n - 1) % 5, row = 2 - Math.floor((n - 1) / 5);
@@ -4276,7 +4306,8 @@ function renderAlbum(a) {
   const board = document.querySelector(".ring-board");
   if (board) {
     board.classList.toggle("album-on", !!a.active);
-    const url = a.active ? `url("/api/album/tiles.png?v=${encodeURIComponent(sig)}")` : "";
+    const url = a.active && items.length ? `url("/api/album/tiles.png?v=${encodeURIComponent(sig)}")`
+      : (a.active ? "linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))" : "");
     document.querySelectorAll(".ring-board .cell").forEach((cell) => {
       const n = Number(cell.dataset.key);
       const col = (n - 1) % 5, row = 2 - Math.floor((n - 1) / 5);

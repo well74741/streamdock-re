@@ -388,9 +388,11 @@ class RenderMixin:
     # -- 动图：交给 SDK 原生播放 ------------------------------------------- #
     def _gif_allowed(self) -> bool:
         d = self.device
+        # 相册播放（in_standby）也允许：整屏只有相册这一组 GIF，没有按键动图和它抢
+        standby_ok = self.in_standby and self.preview_mode == "album"
         return bool(getattr(d, "gif_native", False) and d.connected
                     and not (self.writes_paused or self.quiet or self.lighting_only or self.yielded
-                             or self.screen_off or self.in_standby))
+                             or self.screen_off or (self.in_standby and not standby_ok)))
 
     def _gif_sync_session(self) -> None:
         """设备重连后 SDK 里的 GIF 已被清空，本地记录也要作废。"""

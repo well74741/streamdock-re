@@ -3,6 +3,7 @@
 由 server.py 拆出（方法体原样搬过来），App 通过多重继承把它们合在一起。
 """
 from __future__ import annotations
+import hashlib
 import io
 import json
 import random
@@ -15,6 +16,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from core import (  # noqa: F401
     ALBUM_TRANSITIONS,
+    GIF_CACHE,
     GRID_COLS,
     GRID_ROWS,
     IMAGE_EXTS,
@@ -1350,8 +1352,8 @@ class MediaMixin:
         return self._album_canvas_generic({"fit": self._alb_fit(), "gap": self._alb_gap()},
                                           self._alb_items(), index)
 
-    def _album_canvas_generic(self, alb: dict, items: list, index: int) -> Image.Image | None:
-        """按指定的图片列表 + 填充方式 + 缝隙铺整版；相册场景和待机相册共用。"""
+    def _album_frame(self, alb: dict, items: list, index: int):
+        """相册某一张的画面：(帧列表 [PIL.Image], 每帧毫秒)。动图返回多帧，静态图一帧，缺失返回 ([], [])。"""
         path = self._album_file_for(items, index)
         fit = str(alb.get("fit") or "cover")
         if fit not in ("cover", "contain", "fill"):
@@ -1359,22 +1361,35 @@ class MediaMixin:
         gap = self._gap(alb.get("gap"))
         w, h = self._canvas_size(gap)
         if not path:
-            return Image.new("RGB", (w, h), (0, 0, 0))
-        key = (path, os.path.getmtime(path), w, h, fit, self.standby_brightness)
+            return [Image.new("RGB", (w, h), (0, 0, 0))], [100]
+        key = (path, os.path.getmtime(path), w, h, fit, self.standby_brightness, "anim")
         cache = getattr(self, "_album_cache", {})
         if key in cache:
             return cache[key]
+        frames, durations = [], []
         try:
             with Image.open(path) as im:
-                src = self._flat_rgb(im)
-            img = self._fit_canvas(src, w, h, zoom_offset=False, fit=fit)
+                total = int(getattr(im, "n_frames", 1) or 1)
+                if total > 1 and path.lower().endswith(".gif"):
+                    for i in range(min(total, 120)):
+                        im.seek(i)
+                        frames.append(self._fit_canvas(self._flat_rgb(im), w, h, zoom_offset=False, fit=fit))
+                        durations.append(max(40, min(1000, int(im.info.get("duration", 100) or 100))))
+                else:
+                    frames.append(self._fit_canvas(self._flat_rgb(im), w, h, zoom_offset=False, fit=fit))
+                    durations.append(0)
         except Exception as exc:  # noqa: BLE001
             log(f"相册图片读取失败 {path}: {exc}")
-            return Image.new("RGB", (w, h), (0, 0, 0))
-        cache = dict(list(cache.items())[-8:])
-        cache[key] = img
+            return [Image.new("RGB", (w, h), (0, 0, 0))], [100]
+        cache = dict(list(cache.items())[-4:])
+        cache[key] = (frames, durations)
         self._album_cache = cache
-        return img
+        return frames, durations
+
+    def _album_canvas_generic(self, alb: dict, items: list, index: int) -> Image.Image | None:
+        """相册某一张的「静态画面」（第一帧）；动图的多帧走 _album_frame。"""
+        frames, _durs = self._album_frame(alb, items, index)
+        return frames[0] if frames else None
 
     def _canvas_tiles(self, canvas: Image.Image, gap: int | None = None) -> dict:
         """整版画面切成 15 块（设备方向由 DeviceWS 统一转）。"""
@@ -1396,6 +1411,45 @@ class MediaMixin:
     def _album_can_push(self) -> bool:
         return (self.device.connected and not (self.writes_paused or self.quiet or self.yielded
                                                or self.screen_off))
+
+    def _album_gif_start(self) -> None:
+        """相册当前张是动图：切成 15 块 64×64 GIF 交给 SDK 循环播放（过渡结束后调用）。"""
+        if not self._gif_allowed():
+            return          # 相册播放时 in_standby=True，_gif_allowed 为 False：直接用主机推帧
+        frames, durs = self._album_frame(dict(fit=self._alb_fit(), gap=self._alb_gap_eff()),
+                                         self._alb_items(), self._alb_index())
+        if len(frames) < 2:
+            return
+        gap = self._alb_gap_eff()
+        # 逐键把「每一帧的这个键」打包成一个多帧 GIF，交给 SDK 播
+        pitch = KEY_SIZE + gap
+        ok_any = False
+        for key in range(1, KEY_COUNT + 1):
+            col = (key - 1) % GRID_COLS
+            row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+            sc, sr = self._cell_slot(col, row_top)
+            kf, kd = [], []
+            for f, d in zip(frames, durs):
+                kf.append(f.crop((sc * pitch, sr * pitch, sc * pitch + KEY_SIZE, sr * pitch + KEY_SIZE)))
+                kd.append(max(40, d))
+            if len(kf) < 2:
+                continue
+            sig = hashlib.sha1(repr([id(f) for f in kf]).encode()).hexdigest()  # 内容不稳定，用帧序列长度+源路径
+            src = self._album_file_for(self._alb_items(), self._alb_index()) or ""
+            sig = hashlib.sha1(f"{src}|{self._alb_index()}|{key}|{gap}".encode()).hexdigest()[:20]
+            out = os.path.join(GIF_CACHE, f"album_{sig}.gif")
+            if not os.path.isfile(out):
+                try:
+                    kf[0].save(out, "GIF", save_all=True, append_images=kf[1:], duration=kd,
+                               loop=0, disposal=1, optimize=False)
+                except Exception as exc:  # noqa: BLE001
+                    log(f"相册动图转换失败：{exc}")
+                    return
+            self.device.set_key_gif(key, out)
+            self._gif_active[key] = out
+            ok_any = True
+        if ok_any:
+            self.device.start_gif_loop()
 
     def _push_album(self, prev: Image.Image | None = None) -> bool:
         """把当前相册图片推到设备；prev 不为空时按设置的过渡效果切换。"""
@@ -1445,11 +1499,15 @@ class MediaMixin:
                         self.device.refresh()
                         time.sleep(gap_s)
                 else:
+                    self._gif_stop_all()               # 先停掉上一张的动图循环
                     self._send_tiles(self._canvas_tiles(cur, gap))
                     self.device.refresh()
             finally:
                 self._pushing = False
             self._last_paint = time.time()
+        if mode != "none":
+            time.sleep(0.05)                       # 过渡最后一段写完再起动图，避免被盖掉
+        self._album_gif_start()
         return True
 
     def album_play(self, index: int | None = None) -> bool:
@@ -1483,8 +1541,31 @@ class MediaMixin:
             return False
         items = [str(n) for n in (alb.get("items") or []) if str(n)]
         if not items:
-            log(f"相册场景「{name}」里还没有图片，先在编辑区加几张")
-            return False
+            # 空相册也允许「切换过去」：整屏黑 + 界面里可以继续编辑（拖图进来立即显示）
+            self._ensure_album_nav(name)
+            if not self.album_active():
+                self._album_return = self.active_scene or self.custom_scene_name
+                self._album_nav_backup = {
+                    k: (self.key_actions.get(k),
+                        dict(self.key_gestures.get(k) or {})) for k in self.ALBUM_NAV
+                }
+            self._album_nav_load(name)
+            self.album_scene_name = name
+            self._album_scene = {"items": [], "index": 0, "slideshow": bool(alb.get("slideshow", True)),
+                                 "interval": max(2, min(600, int(alb.get("interval") or 8))),
+                                 "transition": str(alb.get("transition") or "fade"),
+                                 "fit": str(alb.get("fit") or "cover"), "gap": None if alb.get("gap") is None else self._gap(alb.get("gap"))}
+            self._gif_stop_all()
+            self.preview_mode = "album"
+            self.in_standby = True
+            self._album_last = time.time()
+            self.active_scene = name           # 和非空路径一致：当前场景就是这个相册场景
+            self._save_config()
+            self._push_album()
+            self.broadcast({"type": "album", **self.album_state()})
+            self.broadcast({"type": "scene", "name": name, "ok": True})
+            log(f"相册场景「{name}」是空的：整屏显示黑色，在编辑区里加图即可")
+            return True
         if not self.album_active():
             self._album_return = self.active_scene or self.custom_scene_name
         self._ensure_album_nav(name)
@@ -1508,6 +1589,8 @@ class MediaMixin:
         }
         ok = self.album_play()
         if ok:
+            self.active_scene = name
+            self._save_config()
             log(f"已切换到相册场景：{name}（{len(items)} 张）")
         return ok
 
