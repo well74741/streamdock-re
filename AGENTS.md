@@ -51,6 +51,7 @@
 | `app/plugin_guide.md` | 自制插件开发指南（`m18_plugin_api` 返回的就是它） |
 | `app/ui/` | 界面（原生 HTML / CSS / JS，无构建步骤；改完把 `index.html` 里的 `?v=` 版本戳加一） |
 | `packaging/build.py` | 打绿色版 zip（PyInstaller） |
+| `tools/cssdiff.py` | 改 CSS 前后对比所有元素的计算样式（0 处不同 = 外观没变） |
 
 - 运行：`python app/server.py`（`--no-browser` 只起服务）；改了 Python 要重启：
   `POST /api/quit`（带 `Origin: http://127.0.0.1:8642`、`Content-Type: application/json`）后再启动
