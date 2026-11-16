@@ -12,6 +12,9 @@ import shutil
 import subprocess
 import threading
 import time
+import tempfile
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw, ImageOps
 
 from core import (  # noqa: F401
@@ -35,6 +38,50 @@ from core import (  # noqa: F401
 
 class MediaMixin:
 
+    def _init_media_render_state(self) -> None:
+        # 编码与绘制分开：慢编码不占设备锁；所有整版提交共用绘制锁。
+        self._paint_lock = threading.RLock()
+        self._media_cache_lock = threading.RLock()
+        self._album_request_lock = threading.RLock()
+        self._album_generation = 0
+        self._album_pending = None
+        self._album_worker_running = False
+        self._album_display_canvas = None
+        self._album_display_key = None
+        self._image_source_cache = OrderedDict()
+        self._album_cache = OrderedDict()
+        self._album_jpeg_cache = OrderedDict()
+        self._render_perf = {}   # 只记录准备/发送调用耗时，不代表设备物理完成
+
+    @staticmethod
+    def _file_stamp(path: str) -> tuple:
+        st = os.stat(path)
+        return (os.path.normcase(os.path.abspath(path)), st.st_mtime_ns, st.st_size)
+
+    @staticmethod
+    def _cache_put(cache, key, value, size: int, budget: int, limit: int) -> None:
+        """小型 LRU，按真实像素/字节量限制，超大单项不驻留。"""
+        if size > budget:
+            return
+        cache[key] = (value, size)
+        cache.move_to_end(key)
+        while len(cache) > limit or sum(entry[1] for entry in cache.values()) > budget:
+            cache.popitem(last=False)
+
+    @staticmethod
+    def _atomic_gif(out: str, frames: list, durations: list) -> None:
+        """发布前写独立临时文件，不让 SDK/并发预览读到半个 GIF。"""
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".gif-", suffix=".tmp", dir=os.path.dirname(out))
+        os.close(fd)
+        try:
+            frames[0].save(tmp, "GIF", save_all=True, append_images=frames[1:],
+                           duration=durations, loop=0, disposal=1, optimize=False)
+            os.replace(tmp, out)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
     # -- 按键素材 ---------------------------------------------------------- #
     @staticmethod
     def _flat_rgb(img):
@@ -48,27 +95,36 @@ class MediaMixin:
 
     def _load_image_source(self, path: str):
         try:
-            img = Image.open(path)
-            try:
-                n = int(getattr(img, "n_frames", 1))
-            except Exception:  # noqa: BLE001
-                n = 1
-            if n > 1:
-                frames = []
-                for i in range(min(n, 80)):
-                    img.seek(i)
-                    frame = ImageOps.fit(self._flat_rgb(img),
-                                         (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
-                    buf = io.BytesIO()
-                    frame.save(buf, "JPEG", quality=70, subsampling=2)
-                    dur = int(img.info.get("duration", 100) or 100)
-                    frames.append((buf.getvalue(), max(40, min(1000, dur))))
-                return {"type": "anim", "frames": frames, "idx": 0, "next": 0.0, "file": path}
-            static = ImageOps.fit(self._flat_rgb(img), (KEY_SIZE, KEY_SIZE),
-                                  Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            static.save(buf, "JPEG", quality=90, subsampling=0)
-            return {"type": "image", "jpeg": buf.getvalue(), "file": path}
+            key = self._file_stamp(path)
+            with self._media_cache_lock:
+                cached = self._image_source_cache.get(key)
+                if cached:
+                    self._image_source_cache.move_to_end(key)
+                    return dict(cached[0], file=path, idx=0, next=0.0)
+                with Image.open(path) as img:
+                    n = int(getattr(img, "n_frames", 1) or 1)
+                    if n > 1:
+                        frames = []
+                        for i in range(min(n, 80)):
+                            img.seek(i)
+                            frame = ImageOps.fit(self._flat_rgb(img), (KEY_SIZE, KEY_SIZE),
+                                                 Image.Resampling.LANCZOS)
+                            buf = io.BytesIO()
+                            frame.save(buf, "JPEG", quality=70, subsampling=2)
+                            dur = int(img.info.get("duration", 100) or 100)
+                            frames.append((buf.getvalue(), max(40, min(1000, dur))))
+                        # 只共享不可变帧；每个键的 idx/next 独立，不能串播放时钟。
+                        data = {"type": "anim", "frames": tuple(frames)}
+                        size = sum(len(jpeg) for jpeg, _ in frames)
+                    else:
+                        static = ImageOps.fit(self._flat_rgb(img), (KEY_SIZE, KEY_SIZE),
+                                              Image.Resampling.LANCZOS)
+                        buf = io.BytesIO()
+                        static.save(buf, "JPEG", quality=90, subsampling=0)
+                        data = {"type": "image", "jpeg": buf.getvalue()}
+                        size = len(data["jpeg"])
+                self._cache_put(self._image_source_cache, key, data, size, 32 * 1048576, 96)
+                return dict(data, file=path, idx=0, next=0.0)
         except Exception as exc:  # noqa: BLE001
             log(f"图片读取失败 {path}: {exc}")
             return None
@@ -353,7 +409,7 @@ class MediaMixin:
             if (not self.device.connected or not self.key_overrides
                     or self.in_standby or self.lighting_only
                     or self.quiet or self.writes_paused or self.yielded
-                    or self.screen_off
+                    or self.screen_off or self._pushing
                     or time.time() < getattr(self, "_anim_pause_until", 0)):
                 continue
             now = time.time()
@@ -405,9 +461,9 @@ class MediaMixin:
             rows * KEY_SIZE + (rows - 1) * gap,
         )
 
-    def _cell_slot(self, col: int, row: int) -> tuple[int, int]:
+    def _cell_slot(self, col: int, row: int, rotation: int | None = None) -> tuple[int, int]:
         """把「默认朝向」的键位换算成「旋转后」画面里的位置。"""
-        rot = self.rotation % 360
+        rot = (self.rotation if rotation is None else rotation) % 360
         if rot == 90:
             return GRID_ROWS - 1 - row, col
         if rot == 180:
@@ -454,9 +510,10 @@ class MediaMixin:
         return self._fit_canvas(src, w, h)
 
     def _fit_canvas(self, src: Image.Image, w: int, h: int, zoom_offset: bool = True,
-                    fit: str | None = None) -> Image.Image:
+                    fit: str | None = None, zoom: float | None = None,
+                    dim: int | None = None) -> Image.Image:
         """壁纸和相册共用的铺放：填充 / 完整 / 拉伸 + 缩放（壁纸还有拖动位移）+ 待机亮度。"""
-        zoom = max(0.2, min(4.0, float(self.wallpaper_zoom)))
+        zoom = max(0.2, min(4.0, float(self.wallpaper_zoom if zoom is None else zoom)))
         tw, th = max(1, int(w * zoom)), max(1, int(h * zoom))
         fit = fit or self.wallpaper_fit
         if fit == "fill":
@@ -473,7 +530,7 @@ class MediaMixin:
         y = (h - scaled.height) // 2 + (int(self.wallpaper_oy) if zoom_offset else 0)
         canvas.paste(scaled, (x, y))
         # 待机画面单独调暗（不影响按键画面的屏幕亮度）
-        dim = max(0, min(100, int(self.standby_brightness)))
+        dim = max(0, min(100, int(self.standby_brightness if dim is None else dim)))
         if dim < 100:
             k = dim / 100.0
             canvas = canvas.point(lambda v: int(v * k))
@@ -524,6 +581,11 @@ class MediaMixin:
             self.apply_wallpaper()
 
     def _push_canvas(self, note: str) -> bool:
+        self._cancel_album_push()
+        with self._paint_lock:
+            return self._push_canvas_locked(note)
+
+    def _push_canvas_locked(self, note: str) -> bool:
         """把画布按当前 gap 切块，逐键写入设备。"""
         if not self.device.connected or self.writes_paused or self.quiet or self.lighting_only or self.yielded:
             return False
@@ -1329,7 +1391,7 @@ class MediaMixin:
             if self._album_scene_edit(scene, change):
                 self._album_last = time.time()
                 if self.album_active() and self.album_scene_name == scene:
-                    threading.Thread(target=self._push_album, daemon=True).start()
+                    self._queue_album_push()
             return
         if body.get("source") in ("wallpaper", "album"):
             self.standby_source = body["source"]
@@ -1344,7 +1406,7 @@ class MediaMixin:
         if body.get("fit") in ("cover", "contain", "fill"):
             self.album_fit = body["fit"]
             if self.album_active() and not self.album_scene_name:
-                threading.Thread(target=self._push_album, daemon=True).start()
+                self._queue_album_push()
         self._save_soon(0.5)
 
     def _album_canvas(self, index: int) -> Image.Image | None:
@@ -1352,173 +1414,345 @@ class MediaMixin:
         return self._album_canvas_generic({"fit": self._alb_fit(), "gap": self._alb_gap()},
                                           self._alb_items(), index)
 
-    def _album_frame(self, alb: dict, items: list, index: int):
-        """相册某一张的画面：(帧列表 [PIL.Image], 每帧毫秒)。动图返回多帧，静态图一帧，缺失返回 ([], [])。"""
-        path = self._album_file_for(items, index)
+    def _album_render_spec(self, alb: dict) -> dict:
+        """冻结所有影响像素的参数，后台任务不再边编码边读当前场景。"""
         fit = str(alb.get("fit") or "cover")
-        if fit not in ("cover", "contain", "fill"):
-            fit = "cover"
         gap = self._gap(alb.get("gap"))
-        w, h = self._canvas_size(gap)
+        rotation = int(alb.get("rotation", self.rotation)) % 360
+        cols, rows = (GRID_ROWS, GRID_COLS) if rotation % 180 else (GRID_COLS, GRID_ROWS)
+        return {"fit": fit if fit in ("cover", "contain", "fill") else "cover", "gap": gap,
+                "rotation": rotation, "zoom": float(alb.get("zoom", self.wallpaper_zoom)),
+                "dim": int(alb.get("dim", self.standby_brightness)),
+                "size": (cols * KEY_SIZE + (cols - 1) * gap, rows * KEY_SIZE + (rows - 1) * gap)}
+
+    def _album_render_key(self, alb: dict, items: list, index: int) -> tuple:
+        path = self._album_file_for(items, index)
+        spec = self._album_render_spec(alb)
+        try:
+            stamp = self._file_stamp(path) if path else None
+        except OSError:
+            stamp = None  # 检查后恰好被移走的素材按缺图处理，不让请求/工作线程崩掉
+        return ("album-v3", stamp, spec["size"], spec["fit"], spec["gap"],
+                spec["rotation"], spec["zoom"], spec["dim"])
+
+    def _album_frame(self, alb: dict, items: list, index: int, first_only=False, cancelled=None):
+        """相册帧按像素量做 LRU；普通截图只读第一帧，不为预览解码整个 GIF。"""
+        path = self._album_file_for(items, index)
+        spec = self._album_render_spec(alb)
+        w, h = spec["size"]
         if not path:
             return [Image.new("RGB", (w, h), (0, 0, 0))], [100]
-        key = (path, os.path.getmtime(path), w, h, fit, self.standby_brightness, "anim")
-        cache = getattr(self, "_album_cache", {})
-        if key in cache:
-            return cache[key]
-        frames, durations = [], []
         try:
-            with Image.open(path) as im:
-                total = int(getattr(im, "n_frames", 1) or 1)
-                if total > 1 and path.lower().endswith(".gif"):
-                    for i in range(min(total, 120)):
+            base_key = self._album_render_key(spec, items, index)
+            with self._media_cache_lock:
+                if cancelled and cancelled():
+                    return [], []
+                for kind in ((False, True) if first_only else (False,)):
+                    key = (base_key, kind)
+                    cached = self._album_cache.get(key)
+                    if cached:
+                        self._album_cache.move_to_end(key)
+                        frames, durations = cached[0]
+                        return (frames[:1], durations[:1]) if first_only else (frames, durations)
+                frames, durations = [], []
+                with Image.open(path) as im:
+                    # 第一帧访问不扫描 n_frames（Pillow 计算它也要遍历文件）。
+                    total = 1 if first_only else int(getattr(im, "n_frames", 1) or 1)
+                    total = min(total, 120) if path.lower().endswith(".gif") else 1
+                    for i in range(total):
+                        if cancelled and cancelled():
+                            return [], []
                         im.seek(i)
-                        frames.append(self._fit_canvas(self._flat_rgb(im), w, h, zoom_offset=False, fit=fit))
+                        frames.append(self._fit_canvas(self._flat_rgb(im), w, h, zoom_offset=False,
+                                                       fit=spec["fit"], zoom=spec["zoom"], dim=spec["dim"]))
                         durations.append(max(40, min(1000, int(im.info.get("duration", 100) or 100))))
-                else:
-                    frames.append(self._fit_canvas(self._flat_rgb(im), w, h, zoom_offset=False, fit=fit))
-                    durations.append(0)
+                self._cache_put(self._album_cache, (base_key, first_only), (frames, durations),
+                                w * h * 3 * len(frames), 64 * 1048576, 12)
+                return frames, durations
         except Exception as exc:  # noqa: BLE001
             log(f"相册图片读取失败 {path}: {exc}")
             return [Image.new("RGB", (w, h), (0, 0, 0))], [100]
-        cache = dict(list(cache.items())[-4:])
-        cache[key] = (frames, durations)
-        self._album_cache = cache
-        return frames, durations
 
     def _album_canvas_generic(self, alb: dict, items: list, index: int) -> Image.Image | None:
         """相册某一张的「静态画面」（第一帧）；动图的多帧走 _album_frame。"""
-        frames, _durs = self._album_frame(alb, items, index)
+        frames, _durs = self._album_frame(alb, items, index, first_only=True)
         return frames[0] if frames else None
 
-    def _canvas_tiles(self, canvas: Image.Image, gap: int | None = None) -> dict:
+    def _canvas_tiles(self, canvas: Image.Image, gap: int | None = None,
+                      rotation: int | None = None) -> dict:
         """整版画面切成 15 块（设备方向由 DeviceWS 统一转）。"""
         pitch = KEY_SIZE + self._gap(gap)
         out = {}
         for key in range(1, KEY_COUNT + 1):
             col = (key - 1) % GRID_COLS
             row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
-            sc, sr = self._cell_slot(col, row_top)
+            sc, sr = self._cell_slot(col, row_top, rotation)
             out[key] = canvas.crop((sc * pitch, sr * pitch, sc * pitch + KEY_SIZE, sr * pitch + KEY_SIZE))
         return out
 
-    def _send_tiles(self, tiles: dict, keys=None) -> None:
-        for key in keys or tiles:
+    @staticmethod
+    def _encode_tiles(tiles: dict) -> dict:
+        out = {}
+        for key, tile in tiles.items():
             buf = io.BytesIO()
-            tiles[key].save(buf, "JPEG", quality=88, subsampling=0)
-            self.device.send_image(key, buf.getvalue())
+            tile.save(buf, "JPEG", quality=88, subsampling=0)
+            out[key] = buf.getvalue()
+        return out
+
+    def _send_tiles(self, tiles: dict, keys=None, cancelled=None) -> bool:
+        ok = True
+        for key in tiles if keys is None else keys:
+            if cancelled and cancelled():
+                return False
+            data = tiles[key]
+            if not isinstance(data, bytes):
+                data = self._encode_tiles({key: data})[key]
+            if not self.device.send_image(key, data):
+                ok = False
+        return ok
 
     def _album_can_push(self) -> bool:
         return (self.device.connected and not (self.writes_paused or self.quiet or self.yielded
-                                               or self.screen_off))
+                                               or self.screen_off or self.lighting_only))
 
-    def _album_gif_start(self) -> None:
-        """相册当前张是动图：切成 15 块 64×64 GIF 交给 SDK 循环播放（过渡结束后调用）。"""
-        if not self._gif_allowed():
-            return          # 相册播放时 in_standby=True，_gif_allowed 为 False：直接用主机推帧
-        frames, durs = self._album_frame(dict(fit=self._alb_fit(), gap=self._alb_gap_eff()),
-                                         self._alb_items(), self._alb_index())
-        if len(frames) < 2:
-            return
-        gap = self._alb_gap_eff()
-        # 逐键把「每一帧的这个键」打包成一个多帧 GIF，交给 SDK 播
-        pitch = KEY_SIZE + gap
-        ok_any = False
-        for key in range(1, KEY_COUNT + 1):
-            col = (key - 1) % GRID_COLS
-            row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
-            sc, sr = self._cell_slot(col, row_top)
-            kf, kd = [], []
-            for f, d in zip(frames, durs):
-                kf.append(f.crop((sc * pitch, sr * pitch, sc * pitch + KEY_SIZE, sr * pitch + KEY_SIZE)))
-                kd.append(max(40, d))
-            if len(kf) < 2:
-                continue
-            sig = hashlib.sha1(repr([id(f) for f in kf]).encode()).hexdigest()  # 内容不稳定，用帧序列长度+源路径
-            src = self._album_file_for(self._alb_items(), self._alb_index()) or ""
-            sig = hashlib.sha1(f"{src}|{self._alb_index()}|{key}|{gap}".encode()).hexdigest()[:20]
-            out = os.path.join(GIF_CACHE, f"album_{sig}.gif")
-            if not os.path.isfile(out):
-                try:
-                    kf[0].save(out, "GIF", save_all=True, append_images=kf[1:], duration=kd,
-                               loop=0, disposal=1, optimize=False)
-                except Exception as exc:  # noqa: BLE001
-                    log(f"相册动图转换失败：{exc}")
-                    return
-            self.device.set_key_gif(key, out)
-            self._gif_active[key] = out
-            ok_any = True
-        if ok_any:
-            self.device.start_gif_loop()
+    def _cancel_album_push(self) -> None:
+        with self._album_request_lock:
+            self._album_generation += 1
+            self._album_pending = None
 
-    def _push_album(self, prev: Image.Image | None = None) -> bool:
-        """把当前相册图片推到设备；prev 不为空时按设置的过渡效果切换。"""
-        if not self._album_can_push():
-            return False
-        with self._album_lock:
-            cur = self._album_canvas(self._alb_index())
-            if cur is None:
+    def _album_snapshot(self) -> dict:
+        items = tuple(self._alb_items())
+        index = self._alb_index()
+        spec = self._album_render_spec({"fit": self._alb_fit(), "gap": self._alb_gap_eff()})
+        return {"items": items, "index": index, "spec": spec,
+                "key": self._album_render_key(spec, items, index), "scene": self.album_scene_name,
+                "rev": self.scene_rev, "session": getattr(self.device, "session", 0),
+                "transition": self._alb_transition()}
+
+    def _album_request(self, prev=None) -> dict:
+        with self._album_request_lock:
+            self._album_generation += 1
+            return {"generation": self._album_generation, "snapshot": self._album_snapshot(),
+                    "prev": prev, "requested": time.perf_counter()}
+
+    def _album_request_current(self, request: dict) -> bool:
+        with self._album_request_lock:
+            if request["generation"] != self._album_generation:
                 return False
-            gap = self._alb_gap_eff()
-            mode = self._alb_transition() if prev is not None and prev.size == cur.size else "none"
+        if not self.album_active() or not self._album_can_push():
+            return False
+        try:
+            now = self._album_snapshot()
+        except OSError:
+            return False
+        snapshot = request["snapshot"]
+        return all(now[k] == snapshot[k] for k in ("key", "scene", "rev", "session", "items", "index"))
+
+    def _queue_album_push(self, prev=None) -> None:
+        """最多一个工作线程和一个待处理请求，快速翻页直接覆盖中间页。"""
+        request = self._album_request(prev)
+        with self._album_request_lock:
+            # 创建快照后可能被另一线程的新请求抢先，不允许倒序覆盖。
+            if request["generation"] != self._album_generation:
+                return
+            self._album_pending = request
+            if self._album_worker_running:
+                return
+            self._album_worker_running = True
+            threading.Thread(target=self._album_push_worker, daemon=True, name="相册绘制").start()
+
+    def _album_push_worker(self) -> None:
+        while True:
+            with self._album_request_lock:
+                request, self._album_pending = self._album_pending, None
+                if request is None:
+                    self._album_worker_running = False
+                    return
+            try:
+                self._push_album(_request=request)
+            except Exception as exc:  # noqa: BLE001
+                log(f"相册绘制失败：{exc}")
+
+    def _album_gif_paths(self, snapshot: dict, cancelled=None) -> dict:
+        """先查真实编码缓存；命中时不解码/裁切多帧，失效键包含完整渲染参数。"""
+        items, index, spec = snapshot["items"], snapshot["index"], snapshot["spec"]
+        path = self._album_file_for(items, index)
+        if not path or not path.lower().endswith(".gif"):
+            return {}
+        sig = hashlib.sha1(repr(snapshot["key"]).encode()).hexdigest()[:20]
+        paths = {key: os.path.join(GIF_CACHE, f"album_{sig}_{key}.gif")
+                 for key in range(1, KEY_COUNT + 1)}
+        with self._media_cache_lock:
+            if cancelled and cancelled():
+                return {}
+            if all(os.path.isfile(out) for out in paths.values()):
+                for out in paths.values():
+                    os.utime(out, None)
+                return paths
+            frames, durs = self._album_frame(spec, items, index, cancelled=cancelled)
+            if len(frames) < 2:
+                return {}
+            pitch = KEY_SIZE + spec["gap"]
+
+            def encode(entry):
+                key, out = entry
+                if (cancelled and cancelled()) or os.path.isfile(out):
+                    return
+                col = (key - 1) % GRID_COLS
+                row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+                sc, sr = self._cell_slot(col, row_top, spec["rotation"])
+                box = (sc * pitch, sr * pitch, sc * pitch + KEY_SIZE, sr * pitch + KEY_SIZE)
+                self._atomic_gif(out, [f.crop(box) for f in frames], [max(40, d) for d in durs])
+
+            # 只并行 CPU/磁盘编码，设备提交仍串行；最多两个编码任务占用图块内存。
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="相册编码") as pool:
+                list(pool.map(encode, paths.items()))
+            return {} if cancelled and cancelled() else paths
+
+    def _album_gif_start(self, request=None, paths=None) -> bool:
+        """只提交已准备好的当前任务；提交期间和退出/切场景共用绘制锁。"""
+        request = request or self._album_request()
+        cancelled = lambda: not self._album_request_current(request)
+        if not self._gif_allowed() or cancelled():
+            return False
+        if paths is None:
+            paths = self._album_gif_paths(request["snapshot"], cancelled)
+        with self._paint_lock, self._gif_lock:
+            self._gif_sync_session()
+            if cancelled() or not self._gif_allowed():
+                return False
+            if self._gif_active == paths and bool(getattr(self.device, "gif_running", False)) == bool(paths):
+                return True  # 补帧/重复请求没有换组，不重新载入和重置动画时钟
+            ok = True
+            for key, out in paths.items():
+                if cancelled():
+                    return False
+                # 先登记在途成员：若发送回调触发退出，退出路径也能清理这张。
+                self._gif_active[key] = out
+                if not self.device.set_key_gif(key, out):
+                    if self._gif_active.get(key) == out:
+                        self._gif_active.pop(key, None)
+                    ok = False
+                if cancelled():
+                    return False
+            if self._gif_active and not cancelled():
+                ok = bool(self.device.start_gif_loop()) and ok
+                if cancelled():
+                    return False
+                self.broadcast({"type": "gif", "t": time.time(), "keys": sorted(self._gif_active)})
+            return ok
+
+    def _push_album(self, prev: Image.Image | None = None, _request=None) -> bool:
+        """冻结目标→准备→串行提交；新请求随时使旧编码/过渡失效。"""
+        if not self.album_active() or not self._album_can_push():
+            return False
+        request = _request or self._album_request(prev)
+        snapshot, prev = request["snapshot"], request["prev"]
+        spec = snapshot["spec"]
+        cancelled = lambda: not self._album_request_current(request)
+        if cancelled():
+            return False
+        started = time.perf_counter()
+        frames, _ = self._album_frame(spec, snapshot["items"], snapshot["index"],
+                                      first_only=True, cancelled=cancelled)
+        if not frames or cancelled():
+            return False
+        cur = frames[0]
+        # 首帧 JPEG 也复用；真实 GIF 编码在设备锁外完成，热缓存不重裁全帧。
+        with self._media_cache_lock:
+            cached = self._album_jpeg_cache.get(snapshot["key"])
+            if cached:
+                self._album_jpeg_cache.move_to_end(snapshot["key"])
+                tiles = cached[0]
+            else:
+                tiles = self._encode_tiles(self._canvas_tiles(cur, spec["gap"], spec["rotation"]))
+                self._cache_put(self._album_jpeg_cache, snapshot["key"], tiles,
+                                sum(map(len, tiles.values())), 8 * 1048576, 32)
+        try:
+            paths = self._album_gif_paths(snapshot, cancelled) if self._gif_allowed() else {}
+        except Exception as exc:  # noqa: BLE001
+            log(f"相册动图转换失败：{exc}")
+            paths = {}
+        prepared = time.perf_counter()
+        if cancelled():
+            return False
+        mode = snapshot["transition"] if prev is not None and prev.size == cur.size else "none"
+        ok = True
+        with self._paint_lock:
+            if cancelled():
+                return False
             self._pushing = True
             try:
+                # 换组/过渡先停旧 GIF；同图低频补帧不重复清组和加载 15 张 GIF。
+                if mode != "none" or self._gif_active != paths or not getattr(self.device, "gif_running", False):
+                    self._gif_stop_all()
                 if mode in ("fade", "slide"):
-                    # 步数压到 3、间隔拉到 0.16s：SDK 没有背压，5 步 0.07s 会把队列塞爆，
-                    # 表现成「切换太慢、有的格子刷一半」。中间帧只是锦上添花，最终帧必须完整到达。
-                    steps = 3
-                    w = cur.width
-                    for i in range(1, steps):
-                        k = i / steps
+                    # 保留原有节流，不以堆积无 ACK 的 SDK 命令换取 HTTP 响应更快。
+                    for i in range(1, 3):
+                        if cancelled():
+                            return False
+                        k = i / 3
                         if mode == "fade":
                             frame = Image.blend(prev, cur, k)
                         else:
-                            ease = 1 - (1 - k) ** 2
-                            off = int(w * ease)
+                            off = int(cur.width * (1 - (1 - k) ** 2))
                             frame = Image.new("RGB", cur.size)
                             frame.paste(prev, (-off, 0))
-                            frame.paste(cur, (w - off, 0))
-                        self._send_tiles(self._canvas_tiles(frame, gap))
+                            frame.paste(cur, (cur.width - off, 0))
+                        ok = self._send_tiles(self._canvas_tiles(frame, spec["gap"], spec["rotation"]),
+                                              cancelled=cancelled) and ok
                         self.device.refresh()
                         time.sleep(0.16)
-                    # 最后一步直接发目标帧（和 mode == "none" 同路），不再被中间帧挤掉
-                    self._gif_stop_all()
-                    self._send_tiles(self._canvas_tiles(cur, gap))
-                    self.device.refresh()
-                    time.sleep(0.05)
                 elif mode in ("wipe", "mosaic"):
-                    tiles = self._canvas_tiles(cur, gap)
-                    if mode == "wipe":       # 从左往右一列一列换（按观看方向的列）
-                        groups: dict = {}
+                    if mode == "wipe":
+                        groups = {}
                         for key in tiles:
                             col = (key - 1) % GRID_COLS
                             row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
-                            groups.setdefault(self._cell_slot(col, row_top)[0], []).append(key)
+                            groups.setdefault(self._cell_slot(col, row_top, spec["rotation"])[0], []).append(key)
                         order = [groups[c] for c in sorted(groups)]
                     else:
                         keys = list(tiles)
                         random.shuffle(keys)
                         order = [[k] for k in keys]
-                    # 每组只发一次、间隔拉大：wipe 0.09 / mosaic 0.035 挤爆 SDK 队列，格子会刷一半
                     for group in order:
-                        self._send_tiles(tiles, group)
+                        if cancelled():
+                            return False
+                        ok = self._send_tiles(tiles, group, cancelled) and ok
                         self.device.refresh()
                         time.sleep(0.14)
-                    # 补发整版：中间丢过包也能保证最终画面完整
-                    self._gif_stop_all()
-                    self._send_tiles(tiles)
-                    self.device.refresh()
-                else:
-                    self._gif_stop_all()               # 先停掉上一张的动图循环
-                    self._send_tiles(self._canvas_tiles(cur, gap))
-                    self.device.refresh()
+                if cancelled():
+                    return False
+                # 最终整版仍完整补发，不省略恢复丢包所需的最终帧。
+                ok = self._send_tiles(tiles, cancelled=cancelled) and ok
+                if cancelled():
+                    return False
+                ok = bool(self.device.refresh()) and ok
+                if mode in ("fade", "slide"):
+                    time.sleep(0.05)
+                if mode != "none":
+                    time.sleep(0.05)
+                if cancelled():
+                    return False
+                if paths:
+                    ok = self._album_gif_start(request, paths) and ok
+                if cancelled():
+                    return False
+                display_key = (snapshot["key"], snapshot["scene"], snapshot["rev"], snapshot["index"])
+                self._album_display_canvas = cur
+                self._last_paint = time.time()
+                if display_key != self._album_display_key:
+                    # 新图片从发送调用结束起算；25 秒补帧不能重置时钟，否则长间隔永不翻页。
+                    self._album_last = self._last_paint
+                self._album_display_key = display_key
             finally:
                 self._pushing = False
-            self._last_paint = time.time()
-        if mode != "none":
-            time.sleep(0.05)                       # 过渡最后一段写完再起动图，避免被盖掉
-        self._album_gif_start()
-        return True
+        finished = time.perf_counter()
+        self._render_perf["album"] = {"prepareMs": (prepared - started) * 1000,
+                                      "sendMs": (finished - prepared) * 1000,
+                                      "totalMs": (finished - request["requested"]) * 1000,
+                                      "ok": ok, "generation": request["generation"]}
+        return ok
 
     def album_play(self, index: int | None = None) -> bool:
         items = self._alb_items()
@@ -1529,6 +1763,9 @@ class MediaMixin:
             self._album_return = None
         if index is not None:
             self._alb_set_index(index)
+        self._cancel_album_push()
+        self._album_display_canvas = None
+        self._album_display_key = None
         self._gif_stop_all()
         self.preview_mode = "album"
         self.in_standby = True
@@ -1538,7 +1775,7 @@ class MediaMixin:
                 self.device.set_screen_brightness(self.screen_brightness)
         except Exception:  # noqa: BLE001
             pass
-        threading.Thread(target=self._push_album, daemon=True).start()
+        self._queue_album_push()
         self.broadcast({"type": "album", **self.album_state()})
         self.broadcast({"type": "scene", "name": self.current_scene(), "ok": True, "quiet": True})
         log(f"相册开始播放（{len(items)} 张）")
@@ -1608,20 +1845,24 @@ class MediaMixin:
         items = self._alb_items()
         if not items:
             return False
-        prev = self._album_canvas(self._alb_index()) if self.album_active() else None
+        # 用已发送画面的缓存，不在按键/HTTP 线程里解码当前 GIF 的全部帧。
+        prev = getattr(self, "_album_display_canvas", None) if self.album_active() else None
         if index is not None:
             self._alb_set_index(int(index))
         else:
             self._alb_set_index(self._alb_index() + delta)
         self._album_last = time.time()
         if self.album_active():
-            threading.Thread(target=self._push_album, args=(prev,), daemon=True).start()
+            self._queue_album_push(prev)
         self.broadcast({"type": "album", **self.album_state()})
         return True
 
     def album_stop(self) -> None:
         if self.preview_mode != "album":
             return
+        self._cancel_album_push()
+        self._album_display_canvas = None
+        self._album_display_key = None
         scene_name = self.album_scene_name
         self.preview_mode = "wallpaper"
         self.in_standby = False
@@ -1704,39 +1945,36 @@ class MediaMixin:
         canvas.save(buf, "JPEG", quality=85)
         return buf.getvalue()
 
-    def album_canvas_gif(self, scene: str = "") -> bytes | None:
-        """当前相册画面合成一张动图精灵图（和 tiles.png 同布局：15 格 5×3）。
-        界面键盘预览铺它（background-position 各取各的位置），动起来和 Dock 一致。"""
+    def album_canvas_gif(self, scene: str = "", index: int | None = None) -> bytes | None:
+        """冻结目标后合成精灵 GIF；显式 index 防止旧 URL 取到切换后的图片。"""
         alb = (self._album_scene_data(scene) or {}) if scene else {"fit": self._alb_fit(), "gap": self._alb_gap()}
-        items = self._album_scene_items(scene) if scene else self._alb_items()
-        idx = self._album_scene_index(scene, alb) if scene else self._alb_index()
-        frames, durs = self._album_frame(alb, items, idx)
-        if not frames:
+        items = tuple(str(n) for n in (alb.get("items") or []) if str(n)) if scene else tuple(self._alb_items())
+        idx = (self._album_scene_index(scene, alb) if scene else self._alb_index()) if index is None else index
+        if index is not None and not (0 <= idx < len(items)):
             return None
-        # 排成和 tiles.png 一样的精灵图（15 格 5×3，无间隙），界面按 % 定位直接铺
-        gap = self._gap(alb.get("gap"))
-        W, H = GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE
-        sprite_frames = []
-        for f in frames:
-            sp = Image.new("RGB", (W, H), (0, 0, 0))
-            for key, tile in self._canvas_tiles(f, gap).items():
-                col = (key - 1) % GRID_COLS
-                row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
-                sp.paste(tile, (col * KEY_SIZE, row_top * KEY_SIZE))
-            sprite_frames.append(sp)
-        path = self._album_file_for(items, idx) or ""
-        key = hashlib.sha1(f"{path}|{os.path.getmtime(path) if os.path.isfile(path) else 0}|{W}x{H}|{len(sprite_frames)}|{scene}".encode()).hexdigest()[:20]
-        out = os.path.join(GIF_CACHE, f"albsprite_{key}.gif")
-        if os.path.isfile(out):
-            return open(out, "rb").read()
-        os.makedirs(GIF_CACHE, exist_ok=True)
+        spec = self._album_render_spec(alb)
         try:
-            if len(sprite_frames) > 1:
-                sprite_frames[0].save(out, "GIF", save_all=True, append_images=sprite_frames[1:],
-                                      duration=[max(40, d) for d in durs], loop=0, disposal=1, optimize=False)
-            else:
-                sprite_frames[0].save(out, "GIF", disposal=1, optimize=False)
-            return open(out, "rb").read()
+            key = hashlib.sha1(repr(self._album_render_key(spec, items, idx)).encode()).hexdigest()[:20]
+            out = os.path.join(GIF_CACHE, f"albsprite_{key}.gif")
+            with self._media_cache_lock:
+                if os.path.isfile(out):
+                    os.utime(out, None)
+                    with open(out, "rb") as fh:
+                        return fh.read()
+                frames, durs = self._album_frame(spec, items, idx)
+                if not frames:
+                    return None
+                sprite_frames = []
+                for f in frames:
+                    sp = Image.new("RGB", (GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE), (0, 0, 0))
+                    for k, tile in self._canvas_tiles(f, spec["gap"], spec["rotation"]).items():
+                        col = (k - 1) % GRID_COLS
+                        row_top = GRID_ROWS - 1 - (k - 1) // GRID_COLS
+                        sp.paste(tile, (col * KEY_SIZE, row_top * KEY_SIZE))
+                    sprite_frames.append(sp)
+                self._atomic_gif(out, sprite_frames, [max(40, d) for d in durs])
+                with open(out, "rb") as fh:
+                    return fh.read()
         except Exception as exc:  # noqa: BLE001
             log(f"相册精灵动图合成失败：{exc}")
             return None

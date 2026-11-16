@@ -277,7 +277,11 @@ class RenderMixin:
             return False
         try:
             img = official.read_image(path)
-            raw = img[1] if img else open(path, "rb").read()
+            if img:
+                raw = img[1]
+            else:
+                with open(path, "rb") as fh:
+                    raw = fh.read()
             with Image.open(io.BytesIO(raw)) as im:
                 rgb = ImageOps.fit(self._flat_rgb(im), (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
@@ -288,8 +292,7 @@ class RenderMixin:
         others = [k for k in self.key_previews if k != key]
         self.key_previews = {key: buf.getvalue()}       # 同一时间只预览一个键
         self._repaint_keys([key, *others])
-        # 上一处预览被恢复的键重新开始播动图时，起点和别的键差了半拍：整组拉回同一时刻
-        self._gif_resync()
+        # _repaint_keys 负责一次整组对齐，这里不再重复清空重传。
         return True
 
     def clear_key_preview(self, key: int = 0) -> bool:
@@ -299,7 +302,6 @@ class RenderMixin:
         for k in keys:
             self.key_previews.pop(k, None)
         self._repaint_keys(keys)
-        self._gif_resync()
         return True
 
     def _repaint_keys(self, keys) -> None:
@@ -308,31 +310,24 @@ class RenderMixin:
             return
         self._anim_pause_until = time.time() + 0.6
         previews = {k for k in keys if k in self.key_previews}
-        with self._gif_lock:
+        with self._paint_lock, self._gif_lock:
             self._gif_sync_session()
-            # 被预览盖住的键停掉原生动图（否则 SDK 马上把下一帧画回来盖住预览）
-            for k in previews:
-                if self._gif_active.pop(k, None):
-                    self.device.clear_key_gif(k)
-            # 预览结束（不在 key_previews 里了）的键恢复自己的动图
+            target = dict(self._gif_active)
             for k in keys:
-                if k in previews or not (1 <= k <= KEY_COUNT):
+                if not (1 <= k <= KEY_COUNT):
                     continue
-                want = self._gif_want(k) if self._gif_allowed() else None
-                old = self._gif_active.get(k)
-                if old != want:
-                    if old:
-                        self.device.clear_key_gif(k)
-                        self._gif_active.pop(k, None)
-                    if want:
-                        self.device.set_key_gif(k, want)
-                        self._gif_active[k] = want
-        # 整组对齐：预览开始 / 结束都会动到组员，全部从同一时刻重播（否则差半拍）
-        self._gif_resync()
-        for k in keys:
-            if 1 <= k <= KEY_COUNT and k not in self._gif_active:
-                self.device.send_image(k, self._render_key(k))
-        self.device.refresh()
+                want = self._gif_want(k) if self._gif_allowed() and k not in previews else None
+                if want:
+                    target[k] = want
+                else:
+                    target.pop(k, None)
+            # 先决定目标组再一次清旧/载新，不先单键载入再整组重复载入。
+            if target != self._gif_active:
+                self._gif_resync(target)
+            for k in keys:
+                if 1 <= k <= KEY_COUNT and k not in self._gif_active:
+                    self.device.send_image(k, self._render_key(k))
+            self.device.refresh()
 
     def _plugin_vis(self, key: int) -> dict | None:
         spec = self.key_actions.get(key)
@@ -365,37 +360,72 @@ class RenderMixin:
             pass
 
     def apply_keys(self) -> bool:
-        """正常状态：每个键显示自己的图（没有就用编号占位）。"""
+        """先准备整组图和 GIF，再提交；切场景会取消旧相册任务。"""
+        self._cancel_album_push()
+        generation = self._album_generation
+        rev = self.scene_rev
+        images, styles = self.key_overrides, self.key_styles
+        session = getattr(self.device, "session", 0)
+        cancelled = lambda: (generation != self._album_generation or rev != self.scene_rev
+                              or images is not self.key_overrides or styles is not self.key_styles
+                              or session != getattr(self.device, "session", 0))
         if not self.device.connected or self.writes_paused or self.quiet or self.lighting_only or self.yielded:
             return False
         if self.screen_off:
             if not getattr(self, "_blanked", False):
-                self.blank_screen()     # 息屏：15 个键刷黑 + 背光 0
+                self.blank_screen()
             return False
-        self._blanked = False
-        self._gif_stop_all()
-        # 先发亮度命令唤醒面板，否则设备睡过去后写进去的图不会显示
-        try:
-            self.device.set_screen_brightness(self.screen_brightness)
-            time.sleep(0.06)
-        except Exception:  # noqa: BLE001
-            pass
-        self.in_standby = False
+        started = time.perf_counter()
+        tiles, want = {}, {}
+        for key in range(1, KEY_COUNT + 1):
+            if cancelled():
+                return False
+            tiles[key] = self._render_key(key)
+            if getattr(self.device, "gif_native", False) and key not in self.key_previews:
+                path = self._gif_want(key)
+                if path:
+                    want[key] = path
+        prepared = time.perf_counter()
         ok = True
-        self._pushing = True
-        try:
-            self.device.clear_queue()
-            self._clear_screen()
-            for key in range(1, KEY_COUNT + 1):
-                jpeg = self._render_key(key)
-                if not self.device.send_image(key, jpeg):
-                    ok = False
-            self.device.refresh()
-        finally:
-            self._pushing = False
-        self._gif_start_all()
-        self._last_paint = time.time()
-        self._last_activity = time.time()   # 刚画完键面就重置待机计时，避免立刻又进待机
+        with self._paint_lock:
+            if cancelled() or not self.device.connected or self.screen_off or self.writes_paused \
+                    or self.quiet or self.lighting_only or self.yielded:
+                return False
+            self._blanked = False
+            self.in_standby = False
+            self._pushing = True
+            try:
+                self._gif_stop_all()
+                # 保留面板唤醒等待；节省的是重复解码/编码，而不是必要的发送间隔。
+                try:
+                    self.device.set_screen_brightness(self.screen_brightness)
+                    time.sleep(0.06)
+                except Exception:  # noqa: BLE001
+                    pass
+                if cancelled():
+                    return False
+                self.device.clear_queue()
+                self._clear_screen()
+                for key, jpeg in tiles.items():
+                    if cancelled():
+                        return False
+                    if not self.device.send_image(key, jpeg):
+                        ok = False
+                if cancelled():
+                    return False
+                ok = bool(self.device.refresh()) and ok
+                if getattr(self.device, "gif_native", False):
+                    ok = self._gif_start_all(want, cancelled) and ok
+                if cancelled():
+                    return False
+                self._last_paint = time.time()
+                self._last_activity = self._last_paint
+            finally:
+                self._pushing = False
+        finished = time.perf_counter()
+        self._render_perf["keys"] = {"prepareMs": (prepared - started) * 1000,
+                                     "sendMs": (finished - prepared) * 1000,
+                                     "totalMs": (finished - started) * 1000, "ok": ok}
         caller = sys._getframe(1).f_code.co_name
         log(f"重画按键画面（自定义 {len(self.key_overrides)} 个，原生动图 {len(self._gif_active)} 个）来自 {caller}"
             + ("" if ok else "  ⚠ 有命令没发出去"))
@@ -423,42 +453,39 @@ class RenderMixin:
             return None
         src = item.get("file") or ""
         try:
-            mtime = os.path.getmtime(src)
+            stamp = self._file_stamp(src)
         except OSError:
             return None
         if style is None:
             style = self.key_styles.get(key) or {}
-        text = {k: style.get(k) for k in ("text", "color", "opacity", "size", "pos")} \
-            if (style.get("text") or "").strip() else {}
-        sig = hashlib.sha1(json.dumps([os.path.abspath(src), mtime, text], sort_keys=True,
+        text = {k: style[k] for k in ("text", "color", "opacity", "size", "pos")
+                if k in style and style[k] is not None} if (style.get("text") or "").strip() else {}
+        sig = hashlib.sha1(json.dumps(["key-v2", stamp, KEY_SIZE, text], sort_keys=True,
                                       ensure_ascii=False).encode()).hexdigest()[:20]
         out = os.path.join(GIF_CACHE, f"{sig}.gif")
-        if os.path.isfile(out):
-            _touch(out)
-            return out
-        frames, durations = [], []
-        try:
-            with Image.open(src) as im:
-                for i, frame in enumerate(ImageSequence.Iterator(im)):
-                    if i >= 240:
-                        break
-                    rgb = ImageOps.fit(self._flat_rgb(frame), (KEY_SIZE, KEY_SIZE),
-                                       Image.Resampling.LANCZOS)
-                    if text:
-                        rgb = self._draw_text(rgb, text)
-                    frames.append(rgb)
-                    durations.append(max(20, int(frame.info.get("duration", 100) or 100)))
-            if len(frames) < 2:
+        with self._media_cache_lock:
+            if os.path.isfile(out):
+                _touch(out)
+                return out
+            frames, durations = [], []
+            try:
+                with Image.open(src) as im:
+                    for i, frame in enumerate(ImageSequence.Iterator(im)):
+                        if i >= 240:
+                            break
+                        rgb = ImageOps.fit(self._flat_rgb(frame), (KEY_SIZE, KEY_SIZE),
+                                           Image.Resampling.LANCZOS)
+                        if text:
+                            rgb = self._draw_text(rgb, text)
+                        frames.append(rgb)
+                        durations.append(max(20, int(frame.info.get("duration", 100) or 100)))
+                if len(frames) < 2:
+                    return None
+                self._atomic_gif(out, frames, durations)
+                return out
+            except Exception as exc:  # noqa: BLE001
+                log(f"动图转换失败 {src}: {exc}")
                 return None
-            os.makedirs(GIF_CACHE, exist_ok=True)
-            tmp = out + ".tmp"
-            frames[0].save(tmp, "GIF", save_all=True, append_images=frames[1:],
-                           duration=durations, loop=0, disposal=1, optimize=False)
-            os.replace(tmp, out)
-            return out
-        except Exception as exc:  # noqa: BLE001
-            log(f"动图转换失败 {src}: {exc}")
-            return None
 
     def _warm_gif_cache(self) -> None:
         """后台把所有场景里的动图预先转好，第一次切场景 / 翻页也不用等渲染。"""
@@ -498,7 +525,7 @@ class RenderMixin:
 
     def _gif_stop_all(self) -> None:
         """整屏换画面（待机 / 壁纸 / 息屏 / 重画）前先停掉 SDK 的动图，否则会盖掉新画面。"""
-        with self._gif_lock:
+        with self._paint_lock, self._gif_lock:
             self._gif_sync_session()
             if not self._gif_active:
                 return
@@ -507,70 +534,91 @@ class RenderMixin:
                 self.device.clear_key_gif(key)
             self._gif_active = {}
 
-    def _gif_start_all(self) -> None:
-        with self._gif_lock:
+    def _gif_start_all(self, want=None, cancelled=None) -> bool:
+        with self._paint_lock, self._gif_lock:
             self._gif_sync_session()
-            if not self._gif_allowed():
-                return
-            want = {}
-            for key in range(1, KEY_COUNT + 1):
-                path = None if key in self.key_previews else self._gif_want(key)
-                if path:
-                    want[key] = path
+            # 相册动图由冻结的相册任务恢复，不能拿普通按键 GIF 盖回去。
+            if not self._gif_allowed() or self.album_active() or (cancelled and cancelled()):
+                return False
+            if want is None:
+                want = {}
+                for key in range(1, KEY_COUNT + 1):
+                    path = None if key in self.key_previews else self._gif_want(key)
+                    if path:
+                        want[key] = path
+            if self._gif_active == want and bool(getattr(self.device, "gif_running", False)) == bool(want):
+                return True
+            ok = True
             for key in [k for k in self._gif_active if k not in want]:
                 self.device.clear_key_gif(key)
+                self._gif_active.pop(key, None)
             for key, path in want.items():
+                if cancelled and cancelled():
+                    return False
                 if self._gif_active.get(key) != path:
-                    self.device.set_key_gif(key, path)
-            self._gif_active = want
-            if want:
-                self.device.start_gif_loop()
+                    if self.device.set_key_gif(key, path):
+                        self._gif_active[key] = path
+                    else:
+                        ok = False
+            if cancelled and cancelled():
+                return False
+            if self._gif_active:
+                ok = bool(self.device.start_gif_loop()) and ok
             else:
-                self.device.stop_gif_loop()
-            keys = sorted(want.keys())
+                ok = bool(self.device.stop_gif_loop()) and ok
+            keys = sorted(self._gif_active)
         if keys:
             self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
+        return ok
 
-    def _gif_resync(self) -> None:
+    def _gif_resync(self, target=None) -> None:
         """让所有正在播的动图从同一时刻重新开始，否则新加进来的那张会一直错位。
 
         只 stop/start 循环不够：每张动图是各自加载、各自计时的，停一下再开
         并不会把它们拉回同一个起点。这里整组清掉重发，再一起开始播。
         """
-        with self._gif_lock:
-            if not self._gif_active:
+        with self._paint_lock, self._gif_lock:
+            self._gif_sync_session()
+            items = dict(self._gif_active if target is None else target)
+            if not self._gif_allowed():
+                self._gif_stop_all()
                 return
-            items = dict(self._gif_active)
+            if not self._gif_active and not items:
+                return
             self.device.stop_gif_loop()
-            for key in items:
+            for key in self._gif_active:
                 self.device.clear_key_gif(key)
+            active = {}
             for key, path in items.items():
-                self.device.set_key_gif(key, path)
-            self._gif_active = dict(items)
-            self.device.start_gif_loop()
-            keys = sorted(items.keys())
-        self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
+                if self.device.set_key_gif(key, path):
+                    active[key] = path
+            self._gif_active = active
+            if active:
+                self.device.start_gif_loop()
+            keys = sorted(active)
+        if keys:
+            self.broadcast({"type": "gif", "t": time.time(), "keys": keys})
 
     def _gif_update_key(self, key: int) -> None:
         """单个键换图 / 改标题：只动这一个键。要在写静态画面之前调用。"""
-        with self._gif_lock:
+        with self._paint_lock, self._gif_lock:
             self._gif_sync_session()
+            if self.album_active():
+                return
             want = self._gif_want(key) if self._gif_allowed() and key not in self.key_previews else None
             old = self._gif_active.get(key)
             if old == want:
                 return
-            if old:
-                self.device.clear_key_gif(key)
-                self._gif_active.pop(key, None)
+            target = dict(self._gif_active)
             if want:
-                self.device.set_key_gif(key, want)
-                self._gif_active[key] = want
-                self.device.start_gif_loop()
-            elif not self._gif_active:
-                self.device.stop_gif_loop()
-        # 新加的动图要和大家对齐：整组停一下再一起开始
-        if want:
-            self._gif_resync()
+                target[key] = want
+                self._gif_resync(target)  # 新成员只随整组载入一次，保留相同时钟起点
+            else:
+                if old:
+                    self.device.clear_key_gif(key)
+                    self._gif_active.pop(key, None)
+                if not self._gif_active:
+                    self.device.stop_gif_loop()
 
     def apply_standby(self) -> bool:
         """待机：整屏铺壁纸（壁纸亮度在渲染层调暗，屏幕亮度保持正常）。"""
@@ -652,6 +700,11 @@ class RenderMixin:
         return self._black_frame
 
     def blank_screen(self) -> bool:
+        self._cancel_album_push()
+        with self._paint_lock:
+            return self._blank_screen_locked()
+
+    def _blank_screen_locked(self) -> bool:
         """息屏：15 个键全刷成黑 + 背光 0 + 停掉动图。
 
         不用 transport 的硬件 sleep —— 设备一睡就不再上报按键，三个导航键按下去也叫不醒。

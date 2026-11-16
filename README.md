@@ -6,7 +6,7 @@
 
 ## 打开方式
 
-**绿色版**：把 `M18Console-Portable-<版本>.zip` 解压到任意文件夹，双击 `M18Console.exe`
+**绿色版**：[下载最新免安装版](https://github.com/well74741/streamdock-re/releases/latest)，把 `M18Console-Portable-<版本>.zip` 解压到任意文件夹，双击 `M18Console.exe`
 （不写注册表、不建快捷方式、不用管理员权限，换电脑直接拷整个文件夹）。
 
 **从源码运行**：双击 `启动 M18 控制台.bat`。

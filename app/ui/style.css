@@ -1877,6 +1877,26 @@ html, body { overflow: hidden; height: 100%; }
   border-radius: 10px;
 }
 
+/* 共同时钟的动图画布：原 img 保留布局、地址和拖拽事件，不再自己显示 GIF。 */
+.gif-clock-view { position: relative; display: block; min-width: 0; line-height: 0; }
+.gif-clock-cover { width: 24px; height: 24px; flex: 0 0 auto; }
+.crop-cover > .gif-clock-view { width: 100%; height: 100%; }
+.gif-clock-view > .gif-clock-source { opacity: 0; }
+.gif-clock-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.gif-clock-canvas[hidden] { display: none; }
+.icon-group .gif-clock-canvas { border: 1px solid transparent; border-radius: 9px; background: #0e131a; }
+.icon-group .gif-clock-view:hover > .gif-clock-canvas { transform: translateY(-1px); border-color: #2f6fe0; }
+.icon-group summary .gif-clock-canvas { border-radius: 6px; }
+.icon-group summary .crop-cover .gif-clock-canvas { border-radius: 0; }
+.icon-group summary .gif-clock-view:hover > .gif-clock-canvas { transform: none; }
+
 /* 相册瓦片：图片本身也要能接到鼠标（全局 img 是 pointer-events:none） */
 .lib-album .lib-cell img {
   width: 100%;

@@ -126,7 +126,7 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
         self.album_fit = "cover"
         self.standby_source = "wallpaper"         # 待机时显示：wallpaper 壁纸 / album 相册幻灯片
         self._album_last = 0.0
-        self._album_lock = threading.Lock()
+        self._init_media_render_state()
         # 相册场景（可以有多个）：播放时用场景自己的图片和设置，待机相册不受影响
         self.album_scene_name = ""                # 正在播放的相册场景名（空 = 没在放相册场景）
         self._album_scene: dict = {}               # {"items": [...], "index": 0, "slideshow": …, …}
@@ -659,7 +659,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/album/canvas.gif":
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
             scene = (q.get("scene") or [""])[0]
-            data = APP.album_canvas_gif(scene)
+            try:
+                index = int(q["index"][0]) if "index" in q else None
+            except (ValueError, IndexError):
+                self.send_error(400)
+                return
+            data = APP.album_canvas_gif(scene, index)
             if not data:
                 self.send_error(404)
                 return

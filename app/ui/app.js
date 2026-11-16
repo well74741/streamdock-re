@@ -1325,7 +1325,7 @@ function bindIconDrag(container) {
   container.addEventListener("pointerdown", (e) => {
     // 相册瓦片的 img 外面还包着一层 .lib-cell（全局 img 设了 pointer-events:none）
     let img = e.target.closest("img[data-name]");
-    if (!img) img = e.target.closest(".lib-cell")?.querySelector("img[data-name]") || null;
+    if (!img) img = e.target.closest(".lib-cell, .gif-clock-view")?.querySelector("img[data-name]") || null;
     if (!img || e.button !== 0) return;
     e.preventDefault();
     const start = { x: e.clientX, y: e.clientY };
@@ -1721,13 +1721,16 @@ function bindSidebar() {
   bindIconDrag($("#plugin-list"));
   bindIconDrag($("#custom-plugin-list"));
   bindLibMenus();
+  window.M18GifClock?.observe($("#icon-groups"));
+  window.M18GifClock?.observe($("#lib-album"));
 }
 
 /* ------------------------------------------------------- 拖拽幽灵（通用） */
 let ghostEl = null;
 function startGhost(srcEl, x, y, cls) {
   endGhost();
-  ghostEl = srcEl.cloneNode(true);
+  const copy = srcEl.cloneNode(true);
+  ghostEl = window.M18GifClock?.clone(srcEl, copy) || copy;
   ghostEl.classList.add("drag-ghost");
   if (cls) ghostEl.classList.add(cls);
   ghostEl.style.left = `${x}px`;
@@ -4265,6 +4268,12 @@ function bindUI() {
 /* ------------------------------------------------------------------ 相册 */
 let albumState = null;
 let albumSig = "";
+let albumListSig = "";
+
+function albumVisualVersion(a, scene = "") {
+  return encodeURIComponent(JSON.stringify([scene, a.items, a.index, a.fit, a.gap,
+    state?.view, state?.standbyBrightness, state?.rotation ?? 0]));
+}
 
 function renderAlbum(a) {
   if (a && state) state.album = a;   // 相册消息是「最新事实」，先写进 state 再判断 body 类
@@ -4279,7 +4288,8 @@ function renderAlbum(a) {
       setSwitch($("#album-slideshow"), a.standby.slideshow);
       const sp = $("#album-preview");
       if (a.standby.items && sp) {
-        sp.src = `/api/album/raw/${a.standby.index || 0}?v=${Date.now()}`;
+        const src = `/api/album/raw/${a.standby.index || 0}?v=${encodeURIComponent(JSON.stringify(a.standby))}`;
+        if (sp.getAttribute("src") !== src) sp.src = src;
         sp.hidden = false;
         $("#album-empty").hidden = true;
       }
@@ -4287,9 +4297,9 @@ function renderAlbum(a) {
     const board = document.querySelector(".ring-board");
     if (board) {
       board.classList.add("album-on");
-      // 空相册：设备上是整屏黑，控制台预览也显示整屏黑；有图用动图精灵（和 Dock 一致地动）
+      // 空相册显示整屏黑；有图使用按设备键位拼出的动态精灵。
       const url = (a.items || []).length
-        ? `url("/api/album/canvas.gif?scene=${encodeURIComponent(a.scene)}&v=${Date.now()}")`
+        ? `url("/api/album/canvas.gif?scene=${encodeURIComponent(a.scene)}&index=${a.index || 0}&v=${albumVisualVersion(a, a.scene)}")`
         : "linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))";
       document.querySelectorAll(".ring-board .cell").forEach((cell) => {
         const n = Number(cell.dataset.key);
@@ -4326,16 +4336,20 @@ function renderAlbum(a) {
       prev.removeAttribute("src");
     }
     $("#album-empty").hidden = !!items.length;
+  }
+  // 换一张图只更新选中态，不拆掉整个缩略图列表、重启所有 GIF。
+  const listSig = JSON.stringify(items);
+  if (listSig !== albumListSig) {
+    albumListSig = listSig;
     $("#album-strip").innerHTML = items.map((name, i) => `<div class="album-thumb${i === a.index ? " on" : ""}" data-i="${i}" draggable="true" title="单击：显示这张　拖动：调整顺序">
       <img src="/api/album/raw/${i}?n=${encodeURIComponent(name)}" alt="" /><button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
-  } else {
-    document.querySelectorAll("#album-strip .album-thumb").forEach((t) => t.classList.toggle("on", Number(t.dataset.i) === a.index));
   }
+  document.querySelectorAll("#album-strip .album-thumb").forEach((t) => t.classList.toggle("on", Number(t.dataset.i) === a.index));
   // 播放中：控制台键盘上也显示相册画面（和设备一致）
   const board = document.querySelector(".ring-board");
   if (board) {
     board.classList.toggle("album-on", !!a.active);
-    const url = a.active && items.length ? `url("/api/album/canvas.gif?v=${encodeURIComponent(sig)}")`
+    const url = a.active && items.length ? `url("/api/album/canvas.gif?index=${a.index || 0}&v=${albumVisualVersion(a)}")`
       : (a.active ? "linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))" : "");
     document.querySelectorAll(".ring-board .cell").forEach((cell) => {
       const n = Number(cell.dataset.key);
@@ -4459,6 +4473,7 @@ function bindAlbum() {
 /* ===== 相册场景：编辑区里的图片集（和「待机画面 → 幻灯片」同一套操作） ===== */
 let albumSceneState = null;
 let albumSceneSig = "";
+let albumSceneListSig = "";
 let albumSceneLoaded = "";
 
 function activeAlbumScene() {
@@ -4518,11 +4533,18 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
     prev.removeAttribute("src");
   }
   $("#as-empty").hidden = !!items.length;
-  const q = encodeURIComponent(name);
-  $("#as-strip").innerHTML = items.map((n, i) => `<div class="album-thumb${i === a.index ? " on" : ""}"`
-    + ` data-i="${i}" draggable="true" title="单击：显示这张　拖动：调整顺序">`
-    + `<img src="/api/album/raw/${i}?scene=${q}&n=${encodeURIComponent(n)}" alt="" />`
-    + `<button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
+  const listSig = JSON.stringify([name, items]);
+  if (listSig !== albumSceneListSig) {
+    albumSceneListSig = listSig;
+    const q = encodeURIComponent(name);
+    $("#as-strip").innerHTML = items.map((n, i) => `<div class="album-thumb${i === a.index ? " on" : ""}"`
+      + ` data-i="${i}" draggable="true" title="单击：显示这张　拖动：调整顺序">`
+      + `<img src="/api/album/raw/${i}?scene=${q}&n=${encodeURIComponent(n)}" alt="" />`
+      + `<button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
+  }
+  document.querySelectorAll("#as-strip .album-thumb").forEach((t) => {
+    t.classList.toggle("on", Number(t.dataset.i) === a.index);
+  });
 }
 
 async function reloadAlbumEditor() {
@@ -4714,11 +4736,8 @@ function restartGifAnim(msg) {
   for (const k of (msg && msg.keys) || []) {
     bump(document.querySelector(`.cell[data-key="${k}"] .cell-img`));
   }
-  // 图标库里的动图缩略图（同一次重播，和屏幕上对得上）
-  document.querySelectorAll("#icon-groups img").forEach((img) => {
-    const src = img.getAttribute("src") || "";
-    if (/\.gif(\?|$)/i.test(src)) bump(img);
-  });
+  // 图标库是独立的预览时间轴。Dock 的重播不能重设图库地址：
+  // 每张图加载完成的时刻不同，换地址反而会打散裁图包的相位。
 }
 
 function connectEvents() {

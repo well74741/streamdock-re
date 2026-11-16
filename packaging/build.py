@@ -3,6 +3,7 @@
     python packaging/build.py            # 检查环境 → 缺什么引导装什么 → 打包
     python packaging/build.py --yes      # 缺的依赖不问，直接装
     python packaging/build.py --check    # 只检查环境，不打包
+    python packaging/build.py --release  # 公开发布，只使用 HEAD 中的默认预设
 
 产物：dist/release/M18Console-Portable-<版本>.zip（绿色版，解压即用）
 
@@ -18,11 +19,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
 import webbrowser
@@ -196,12 +199,40 @@ def pyinstaller(*args: str) -> None:
          "--workpath", os.path.join(BUILD, "work"), "--specpath", BUILD, *args])
 
 
+def release_presets() -> str:
+    """公开发布只采用 HEAD 中的预设快照，不导出或覆盖本机用户场景。"""
+    data = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "app/presets"], cwd=ROOT)
+    target = os.path.join(BUILD, "release-presets")
+    os.makedirs(target, exist_ok=False)
+    prefix = "app/presets/"
+    count = 0
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        for member in archive.getmembers():
+            if member.isdir():
+                continue
+            if not member.isfile() or not member.name.startswith(prefix):
+                raise ValueError(f"预设快照含不支持的路径：{member.name}")
+            rel = member.name[len(prefix):]
+            if not rel or ".." in rel.split("/") or "\\" in rel or ":" in rel:
+                raise ValueError(f"预设快照路径无效：{member.name}")
+            path = os.path.join(target, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with archive.extractfile(member) as source, open(path, "wb") as dest:
+                shutil.copyfileobj(source, dest)
+            count += 1
+    if not count:
+        raise ValueError("仓库中没有已提交的默认预设，停止发布打包")
+    print(f"默认场景：使用 HEAD 预设快照（{count} 个文件），不收集本机用户数据")
+    return target
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)   # 中文 / ✓ 在 GBK 控制台里不报错；逐行输出
     parser = argparse.ArgumentParser(description="打包 M18 控制台绿色版（解压即用的 zip）")
     parser.add_argument("--yes", "-y", action="store_true", help="缺少的依赖直接安装，不再询问")
     parser.add_argument("--check", action="store_true", help="只检查环境，不打包")
+    parser.add_argument("--release", action="store_true", help="公开发布：只打包 Git HEAD 中的默认预设，不导出本机场景")
     args = parser.parse_args()
     if not preflight(args.yes):
         return 1
@@ -214,12 +245,17 @@ def main() -> int:
     # 0) 默认场景：控制台正在跑时，把用户当前的场景（含相册场景和图片）导出成随包默认场景。
     #     必须在 pyinstaller 之前：presets/ 是 --add-data 打进程序的。
     #     控制台没开也能打包，只是不带当前场景（随包自带的「相册1 / 音乐控制台」仍在）。
-    try:
-        sys.path.insert(0, HERE)
-        from export_presets import export_presets  # noqa: E402
-        print(f"默认场景：已导出 {export_presets()} 个（当前控制台里的场景会随包带给新用户）")
-    except Exception as exc:  # noqa: BLE001
-        print(f"默认场景：跳过（{exc}）")
+    presets = os.path.join(APP, "presets")
+    if args.release:
+        # 公开包不读取运行中的控制台；有未提交的本地预设也不混进发布包。
+        presets = release_presets()
+    else:
+        try:
+            sys.path.insert(0, HERE)
+            from export_presets import export_presets  # noqa: E402
+            print(f"默认场景：已导出 {export_presets()} 个（当前控制台里的场景会随包带给新用户）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"默认场景：跳过（{exc}）")
 
     # 1) 程序本体（文件夹版，启动快、不会每次解压到临时目录）
     pyinstaller(
@@ -232,7 +268,7 @@ def main() -> int:
         # 官方内置插件（com.hotspot.streamdock.*）随包带走：对方没装官方驱动也能用
         "--add-data", f"{os.path.join(APP, 'builtin-plugins')}{SEP}builtin-plugins",
         # 默认场景（音乐控制台 / 相册1 + 相册图片）：首次运行时装进用户数据目录
-        "--add-data", f"{os.path.join(APP, 'presets')}{SEP}presets",
+        "--add-data", f"{presets}{SEP}presets",
         "--add-data", f"{os.path.join(APP, 'icon.ico')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'icon.png')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'config.example.json')}{SEP}.",
