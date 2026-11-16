@@ -307,17 +307,30 @@ class RenderMixin:
                                                or self.lighting_only or self.yielded or self.screen_off)):
             return
         self._anim_pause_until = time.time() + 0.6
-        for k in keys:
-            if not (1 <= k <= KEY_COUNT):
-                continue
-            if k in self.key_previews:
-                # 预览盖住原生动图：先停掉这个键的动图，否则 SDK 会马上把下一帧画回去
-                with self._gif_lock:
-                    if self._gif_active.pop(k, None):
+        previews = {k for k in keys if k in self.key_previews}
+        with self._gif_lock:
+            self._gif_sync_session()
+            # 被预览盖住的键停掉原生动图（否则 SDK 马上把下一帧画回来盖住预览）
+            for k in previews:
+                if self._gif_active.pop(k, None):
+                    self.device.clear_key_gif(k)
+            # 预览结束（不在 key_previews 里了）的键恢复自己的动图
+            for k in keys:
+                if k in previews or not (1 <= k <= KEY_COUNT):
+                    continue
+                want = self._gif_want(k) if self._gif_allowed() else None
+                old = self._gif_active.get(k)
+                if old != want:
+                    if old:
                         self.device.clear_key_gif(k)
-            else:
-                self._gif_update_key(k)
-            if k not in self._gif_active:
+                        self._gif_active.pop(k, None)
+                    if want:
+                        self.device.set_key_gif(k, want)
+                        self._gif_active[k] = want
+        # 整组对齐：预览开始 / 结束都会动到组员，全部从同一时刻重播（否则差半拍）
+        self._gif_resync()
+        for k in keys:
+            if 1 <= k <= KEY_COUNT and k not in self._gif_active:
                 self.device.send_image(k, self._render_key(k))
         self.device.refresh()
 

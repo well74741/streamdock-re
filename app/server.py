@@ -656,6 +656,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self._image_file(fp)
+        elif path == "/api/album/canvas.gif":
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            scene = (q.get("scene") or [""])[0]
+            data = APP.album_canvas_gif(scene)
+            if not data:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/gif")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
         elif path in ("/api/album/tiles.png", "/api/album/preview.jpg") or (
                 path.startswith("/api/album/thumb/") and path.endswith(".jpg")):
             # 相册场景的图片走 ?scene=场景名；不传就是「待机画面」里那本相册

@@ -706,7 +706,7 @@ function libraryTile(it) {
   const name = escHtml(it.name);
   return `<span class="lib-cell" title="${name}" data-file="${name}">`
     + `<img loading="lazy" draggable="false" data-name="lib:${name}"`
-    + ` src="/api/library/thumb/${encodeURIComponent(it.name)}?v=${it.mtime || 0}" alt="" /></span>`;
+    + ` src="/api/library/${encodeURIComponent(it.name)}?v=${it.mtime || 0}" alt="" /></span>`;
 }
 
 function renderLibrary() {
@@ -4287,9 +4287,9 @@ function renderAlbum(a) {
     const board = document.querySelector(".ring-board");
     if (board) {
       board.classList.add("album-on");
-      // 空相册：设备上是整屏黑，控制台预览也显示整屏黑
+      // 空相册：设备上是整屏黑，控制台预览也显示整屏黑；有图用动图精灵（和 Dock 一致地动）
       const url = (a.items || []).length
-        ? `url("/api/album/tiles.png?scene=${encodeURIComponent(a.scene)}&v=${Date.now()}")`
+        ? `url("/api/album/canvas.gif?scene=${encodeURIComponent(a.scene)}&v=${Date.now()}")`
         : "linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))";
       document.querySelectorAll(".ring-board .cell").forEach((cell) => {
         const n = Number(cell.dataset.key);
@@ -4335,7 +4335,7 @@ function renderAlbum(a) {
   const board = document.querySelector(".ring-board");
   if (board) {
     board.classList.toggle("album-on", !!a.active);
-    const url = a.active && items.length ? `url("/api/album/tiles.png?v=${encodeURIComponent(sig)}")`
+    const url = a.active && items.length ? `url("/api/album/canvas.gif?v=${encodeURIComponent(sig)}")`
       : (a.active ? "linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))" : "");
     document.querySelectorAll(".ring-board .cell").forEach((cell) => {
       const n = Number(cell.dataset.key);

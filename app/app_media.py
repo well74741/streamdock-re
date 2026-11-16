@@ -1464,9 +1464,11 @@ class MediaMixin:
             self._pushing = True
             try:
                 if mode in ("fade", "slide"):
-                    steps = 5
+                    # 步数压到 3、间隔拉到 0.16s：SDK 没有背压，5 步 0.07s 会把队列塞爆，
+                    # 表现成「切换太慢、有的格子刷一半」。中间帧只是锦上添花，最终帧必须完整到达。
+                    steps = 3
                     w = cur.width
-                    for i in range(1, steps + 1):
+                    for i in range(1, steps):
                         k = i / steps
                         if mode == "fade":
                             frame = Image.blend(prev, cur, k)
@@ -1478,7 +1480,12 @@ class MediaMixin:
                             frame.paste(cur, (w - off, 0))
                         self._send_tiles(self._canvas_tiles(frame, gap))
                         self.device.refresh()
-                        time.sleep(0.07)
+                        time.sleep(0.16)
+                    # 最后一步直接发目标帧（和 mode == "none" 同路），不再被中间帧挤掉
+                    self._gif_stop_all()
+                    self._send_tiles(self._canvas_tiles(cur, gap))
+                    self.device.refresh()
+                    time.sleep(0.05)
                 elif mode in ("wipe", "mosaic"):
                     tiles = self._canvas_tiles(cur, gap)
                     if mode == "wipe":       # 从左往右一列一列换（按观看方向的列）
@@ -1488,16 +1495,19 @@ class MediaMixin:
                             row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
                             groups.setdefault(self._cell_slot(col, row_top)[0], []).append(key)
                         order = [groups[c] for c in sorted(groups)]
-                        gap_s = 0.09
                     else:
                         keys = list(tiles)
                         random.shuffle(keys)
                         order = [[k] for k in keys]
-                        gap_s = 0.035
+                    # 每组只发一次、间隔拉大：wipe 0.09 / mosaic 0.035 挤爆 SDK 队列，格子会刷一半
                     for group in order:
                         self._send_tiles(tiles, group)
                         self.device.refresh()
-                        time.sleep(gap_s)
+                        time.sleep(0.14)
+                    # 补发整版：中间丢过包也能保证最终画面完整
+                    self._gif_stop_all()
+                    self._send_tiles(tiles)
+                    self.device.refresh()
                 else:
                     self._gif_stop_all()               # 先停掉上一张的动图循环
                     self._send_tiles(self._canvas_tiles(cur, gap))
@@ -1693,6 +1703,43 @@ class MediaMixin:
         buf = io.BytesIO()
         canvas.save(buf, "JPEG", quality=85)
         return buf.getvalue()
+
+    def album_canvas_gif(self, scene: str = "") -> bytes | None:
+        """当前相册画面合成一张动图精灵图（和 tiles.png 同布局：15 格 5×3）。
+        界面键盘预览铺它（background-position 各取各的位置），动起来和 Dock 一致。"""
+        alb = (self._album_scene_data(scene) or {}) if scene else {"fit": self._alb_fit(), "gap": self._alb_gap()}
+        items = self._album_scene_items(scene) if scene else self._alb_items()
+        idx = self._album_scene_index(scene, alb) if scene else self._alb_index()
+        frames, durs = self._album_frame(alb, items, idx)
+        if not frames:
+            return None
+        # 排成和 tiles.png 一样的精灵图（15 格 5×3，无间隙），界面按 % 定位直接铺
+        gap = self._gap(alb.get("gap"))
+        W, H = GRID_COLS * KEY_SIZE, GRID_ROWS * KEY_SIZE
+        sprite_frames = []
+        for f in frames:
+            sp = Image.new("RGB", (W, H), (0, 0, 0))
+            for key, tile in self._canvas_tiles(f, gap).items():
+                col = (key - 1) % GRID_COLS
+                row_top = GRID_ROWS - 1 - (key - 1) // GRID_COLS
+                sp.paste(tile, (col * KEY_SIZE, row_top * KEY_SIZE))
+            sprite_frames.append(sp)
+        path = self._album_file_for(items, idx) or ""
+        key = hashlib.sha1(f"{path}|{os.path.getmtime(path) if os.path.isfile(path) else 0}|{W}x{H}|{len(sprite_frames)}|{scene}".encode()).hexdigest()[:20]
+        out = os.path.join(GIF_CACHE, f"albsprite_{key}.gif")
+        if os.path.isfile(out):
+            return open(out, "rb").read()
+        os.makedirs(GIF_CACHE, exist_ok=True)
+        try:
+            if len(sprite_frames) > 1:
+                sprite_frames[0].save(out, "GIF", save_all=True, append_images=sprite_frames[1:],
+                                      duration=[max(40, d) for d in durs], loop=0, disposal=1, optimize=False)
+            else:
+                sprite_frames[0].save(out, "GIF", disposal=1, optimize=False)
+            return open(out, "rb").read()
+        except Exception as exc:  # noqa: BLE001
+            log(f"相册精灵动图合成失败：{exc}")
+            return None
 
     def album_tiles_png(self, scene: str = "") -> bytes | None:
         """相册当前图切成 15 块拼成精灵图（和设备上一致），给界面键盘预览叠在上面。"""
