@@ -402,6 +402,11 @@ class DeviceWS:
         stamp = int(os.path.getmtime(path))
         out = f"{os.path.splitext(path)[0]}.r{rot}_{stamp}.gif"
         if os.path.isfile(out):
+            try:
+                if time.time() - os.path.getmtime(out) > 86400:
+                    os.utime(out, None)     # 记一下最近用过，缓存清扫按这个判断
+            except OSError:
+                pass
             return out
         frames, durations = [], []
         with Image.open(path) as im:

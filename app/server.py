@@ -575,8 +575,34 @@ def action_label(spec: dict) -> str:
     return os.path.basename(path.rstrip("\\/")) or path
 
 
+_log_writes = 0
+
+
 def log(msg: str) -> None:
+    global _log_writes
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    _log_writes += 1
+    if _log_writes % 200 == 0:
+        _rotate_log()
+
+
+def _rotate_log() -> None:
+    """日志文件（pythonw 运行时 stdout 重定向到的那个）超过 2 MB 就换一份，只留上一份。"""
+    f = sys.stdout
+    path = getattr(f, "name", "")
+    if not (isinstance(path, str) and path.endswith("server.log")):
+        return
+    try:
+        if os.path.getsize(path) < 2_000_000:
+            return
+        f.flush()
+        f.close()
+        os.replace(path, path + ".1")
+    except OSError:
+        pass
+    new = open(path, "a", buffering=1, encoding="utf-8")
+    sys.stdout = new
+    sys.stderr = new
 
 
 def pick_path(mode: str = "file") -> str:
@@ -682,6 +708,60 @@ def hex_to_rgb(value: str):
         return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
     except ValueError:              # 非十六进制（坏配置 / 插件传了乱值）：当黑色，别让灯效线程崩掉
         return (0, 0, 0)
+
+
+def _touch(path: str) -> None:
+    """记一下「最近用过」（NTFS 默认不更新访问时间，用修改时间代替）。一天内用过就不再改，省磁盘写。"""
+    try:
+        if time.time() - os.path.getmtime(path) > 86400:
+            os.utime(path, None)
+    except OSError:
+        pass
+
+
+def sweep_dir(folder: str, max_age_days: float, max_mb: float = 0, keep=frozenset(), recursive: bool = False) -> tuple[int, int]:
+    """删掉超过 max_age_days 没用过的文件；总量超过 max_mb 时再从最旧的删起。keep 里的文件不动。
+    返回 (删掉的文件数, 释放的字节数)。"""
+    if not os.path.isdir(folder):
+        return 0, 0
+    items = []
+    walker = os.walk(folder) if recursive else [(folder, [], os.listdir(folder))]
+    for root, _dirs, files in walker:
+        for f in files:
+            p = os.path.join(root, f)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            if os.path.isfile(p):
+                items.append((st.st_mtime, st.st_size, p))
+    keep = {os.path.normcase(os.path.abspath(k)) for k in keep if k}
+    now = time.time()
+    removed, freed = 0, 0
+    items.sort()                                    # 最旧的在前
+    total = sum(sz for _, sz, _ in items)
+    for mtime, size, p in items:
+        if os.path.normcase(os.path.abspath(p)) in keep:
+            continue
+        too_old = now - mtime > max_age_days * 86400
+        too_big = max_mb and total > max_mb * 1024 * 1024
+        if not (too_old or too_big):
+            continue
+        try:
+            os.remove(p)
+            removed += 1
+            freed += size
+            total -= size
+        except OSError:
+            pass
+    if recursive:                                   # 清掉删空的子目录
+        for root, dirs, _files in os.walk(folder, topdown=False):
+            for d in dirs:
+                try:
+                    os.rmdir(os.path.join(root, d))
+                except OSError:
+                    pass
+    return removed, freed
 
 
 def run_forever(fn, name: str) -> None:
@@ -865,6 +945,7 @@ class App:
         start_loop(self._standby_loop, "待机")
         start_loop(self._album_loop, "相册幻灯片")
         start_loop(self._diag_loop, "诊断")
+        start_loop(self._cache_sweep_loop, "缓存清扫")
         start_loop(self._official_loop, "官方软件检测")
         threading.Thread(target=self._auto_sync_official, daemon=True).start()
         threading.Thread(target=self._warm_gif_cache, daemon=True).start()
@@ -1313,6 +1394,7 @@ class App:
                                       ensure_ascii=False).encode()).hexdigest()[:20]
         out = os.path.join(GIF_CACHE, f"{sig}.gif")
         if os.path.isfile(out):
+            _touch(out)
             return out
         frames, durations = [], []
         try:
@@ -1457,6 +1539,28 @@ class App:
         self.in_standby = True
         return self._push_canvas("待机图")
 
+    def _cache_sweep_loop(self) -> None:
+        """缓存只增不减：动图缓存、旋转副本、相册缩略图、裁图临时目录、插件日志，定期清扫。"""
+        time.sleep(60)
+        while True:
+            try:
+                in_use = set(self._gif_active.values())
+                for vis in list(self.plugin_visual.values()):
+                    if vis.get("gif"):
+                        in_use.add(vis["gif"])
+                report = {
+                    "动图缓存": sweep_dir(GIF_CACHE, 30, 300, keep=in_use),
+                    "相册缩略图": sweep_dir(LIB_THUMB_DIR, 60, 200),
+                    "裁图临时文件": sweep_dir(CROP_CACHE, 1, recursive=True),
+                    "插件旧日志": sweep_dir(os.path.join(PLUGIN_DATA, "logs"), 30),
+                }
+                freed = {k: v for k, v in report.items() if v[0]}
+                if freed:
+                    log("缓存清扫：" + "，".join(f"{k} {n} 个（{b / 1048576:.1f} MB）" for k, (n, b) in freed.items()))
+            except Exception as exc:  # noqa: BLE001
+                log(f"缓存清扫出错：{exc}")
+            time.sleep(86400)
+
     def _diag_loop(self) -> None:
         last = dict(self.device.stats)
         while True:
@@ -1464,7 +1568,7 @@ class App:
             cur = dict(self.device.stats)
             delta = {k: cur[k] - last[k] for k in cur}
             last = cur
-            if self.device.connected:
+            if self.device.connected and any(delta.values()):
                 log(f"读取统计 {delta}")
 
     def _standby_loop(self) -> None:
