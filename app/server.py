@@ -24,6 +24,7 @@ import json
 import math
 import zipfile
 import random
+import re
 import os
 import queue
 import shutil
@@ -32,7 +33,6 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -487,6 +487,7 @@ class SoundPlayer:
     def __init__(self):
         self.q: queue.Queue = queue.Queue()
         self.n = 0
+        self.open_aliases: list[str] = []
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _mci(self, cmd: str) -> int:
@@ -500,13 +501,16 @@ class SoundPlayer:
             op, path = self.q.get()
             if op == "stop":
                 self._mci("close all")
+                self.open_aliases.clear()
                 continue
             self.n += 1
             alias = f"m18snd{self.n}"
             if self._mci(f'open "{path}" type mpegvideo alias {alias}') == 0:
                 self._mci(f"play {alias} from 0")
-            if self.n % 32 == 0:
-                pass  # MCI 设备播完不会自动释放；「停止音效」会统一关闭
+                self.open_aliases.append(alias)
+            # MCI 设备播完不会自动释放：只保留最近 8 个（允许叠着播），更早的关掉
+            while len(self.open_aliases) > 8:
+                self._mci(f"close {self.open_aliases.pop(0)}")
 
     def play(self, path: str) -> None:
         self.q.put(("play", path))
@@ -865,7 +869,29 @@ def hex_to_rgb(value: str):
     value = (value or "").strip().lstrip("#")
     if len(value) != 6:
         return (0, 0, 0)
-    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+    try:
+        return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:              # 非十六进制（坏配置 / 插件传了乱值）：当黑色，别让灯效线程崩掉
+        return (0, 0, 0)
+
+
+def run_forever(fn, name: str) -> None:
+    """后台循环的守护：循环体抛异常时记一笔、歇 1 秒再重进，而不是整条线程悄悄退出
+    （以前动图 / 插件画面 / 灯效线程只要撞上一次「遍历时字典被改」就永久停摆）。"""
+    fails = 0
+    while True:
+        try:
+            fn()
+            return                  # 循环函数自己正常返回（一般不会）
+        except Exception as exc:  # noqa: BLE001
+            fails += 1
+            if fails <= 5 or fails % 100 == 0:
+                log(f"后台任务「{name}」出错（第 {fails} 次，已自动恢复）：{type(exc).__name__}: {exc}")
+            time.sleep(1.0)
+
+
+def start_loop(fn, name: str) -> None:
+    threading.Thread(target=run_forever, args=(fn, name), daemon=True, name=name).start()
 
 
 def parse_color(value: str):
@@ -1021,18 +1047,18 @@ class App:
             self.device.set_led_brightness(self.lighting["brightness"])
             if self.wallpaper_enabled:
                 self.apply_keys()
-        threading.Thread(target=self._engine_loop, daemon=True).start()
-        threading.Thread(target=self._animation_loop, daemon=True).start()
-        threading.Thread(target=self._watch_loop, daemon=True).start()
-        threading.Thread(target=self._keepalive_loop, daemon=True).start()
-        threading.Thread(target=self._standby_loop, daemon=True).start()
-        threading.Thread(target=self._album_loop, daemon=True).start()
-        threading.Thread(target=self._diag_loop, daemon=True).start()
-        threading.Thread(target=self._official_loop, daemon=True).start()
+        start_loop(self._engine_loop, "灯效")
+        start_loop(self._animation_loop, "动图")
+        start_loop(self._watch_loop, "设备监视")
+        start_loop(self._keepalive_loop, "保活")
+        start_loop(self._standby_loop, "待机")
+        start_loop(self._album_loop, "相册幻灯片")
+        start_loop(self._diag_loop, "诊断")
+        start_loop(self._official_loop, "官方软件检测")
         threading.Thread(target=self._auto_sync_official, daemon=True).start()
         threading.Thread(target=self._warm_gif_cache, daemon=True).start()
         threading.Thread(target=self.index_official_sources, daemon=True).start()
-        threading.Thread(target=self._app_watch_loop, daemon=True).start()
+        start_loop(self._app_watch_loop, "前台程序监视")
         threading.Thread(target=self._auto_mirror_icons, daemon=True).start()
 
     # -- 热插拔 ------------------------------------------------------------ #
@@ -1229,6 +1255,8 @@ class App:
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=92)
         data = buf.getvalue()
+        if len(self._num_cache) > 400:          # 时钟 / 监控类插件每帧一张新图：超量就整体清掉重建
+            self._num_cache.clear()
         self._num_cache[ck] = data
         return data
 
@@ -2248,7 +2276,14 @@ class App:
     def _save_config(self) -> None:
         # 多个请求线程可能同时保存，共用同一个 .tmp 会互相覆盖 / os.replace 报错
         with self._save_lock:
-            self._save_config_locked()
+            for attempt in range(3):
+                try:
+                    self._save_config_locked()
+                    break
+                except RuntimeError as exc:     # 别的线程正在增删按键字典：稍等重拍一次快照
+                    if attempt == 2:
+                        log(f"保存配置失败：{exc}")
+                    time.sleep(0.05)
         self._plugin_sync()
 
     def _save_config_locked(self) -> None:
@@ -2650,7 +2685,7 @@ class App:
             now = time.time()
             pushed = 0
             # SDK 原生播放的键不归这里管
-            host_keys = [k for k, it in self.key_overrides.items()
+            host_keys = [k for k, it in list(self.key_overrides.items())
                          if it.get("type") == "anim" and it.get("frames") and k not in self._gif_active
                          and not self._plugin_vis(k)]
             if not host_keys:
@@ -3432,7 +3467,9 @@ class App:
 
     def program_icon(self, path: str, size: int = 64) -> str | None:
         """取程序 / 快捷方式的图标，存成 PNG 缓存。"""
-        if not path or not os.path.isfile(path):
+        # 网络路径（\\主机\共享）和设备路径（\\?\、\\.\）一律不碰：
+        # 访问它们会让 Windows 自动把本机账号的 NTLM 凭据发给对方
+        if not path or path.replace("/", "\\").startswith("\\\\") or not os.path.isfile(path):
             return None
         try:
             import ctypes
@@ -6060,7 +6097,6 @@ class App:
         tiles: list = [[] for _ in range(KEY_COUNT)]
         durations: list[int] = []
         with Image.open(src) as im:
-            frames = []
             try:
                 frames_total = int(getattr(im, "n_frames", 1) or 1)
             except Exception:  # noqa: BLE001
@@ -6364,7 +6400,7 @@ class App:
             self.plugin_host = None
             return
         self._plugins_live = True
-        threading.Thread(target=self._plugin_flush_loop, daemon=True).start()
+        start_loop(self._plugin_flush_loop, "插件画面")
         self._plugin_sync()
 
     def _device_id(self) -> str:
@@ -6575,7 +6611,7 @@ class App:
         self._plog("host", message, "error" if any(w in message for w in ("失败", "退出", "不支持")) else "info")
 
     def plugin_log_items(self, plugin: str = "", since: int = 0, limit: int = 200) -> list:
-        items = [x for x in self.plugin_logs if x["seq"] > since and (not plugin or x["plugin"] == plugin
+        items = [x for x in list(self.plugin_logs) if x["seq"] > since and (not plugin or x["plugin"] == plugin
                                                          or (x["plugin"] == "host" and plugin in x["message"]))]
         return items[-max(1, min(1000, limit)):]
 
@@ -6732,7 +6768,8 @@ class App:
                     self.broadcast({"type": "keyvisual", "key": key, "rev": vis.get("rev", 0)})
             if not self._plugin_dirty:
                 continue
-            ready = sorted((k for k, t in self._plugin_dirty.items()), key=lambda k: self._plugin_dirty[k])
+            dirty = dict(self._plugin_dirty)
+            ready = sorted(dirty, key=dirty.get)
             can_dev = (self.device.connected and not (self.in_standby or self.writes_paused or self.quiet
                                                       or self.lighting_only or self.yielded or self.screen_off))
             pushed = 0
@@ -6806,7 +6843,10 @@ class App:
             ctype = result["headers"].get("Content-Type", "")
             if "charset=" in ctype:
                 charset = ctype.split("charset=", 1)[1].split(";")[0].strip() or "utf-8"
-            result["body"] = raw.decode(charset, "replace") if raw else ""
+            try:
+                result["body"] = raw.decode(charset, "replace") if raw else ""
+            except LookupError:
+                result["body"] = raw.decode("utf-8", "replace")
         self._plog(uid, f"M18.http {url[:120]} → {result['status'] or result['error']}",
                    "error" if result["error"] or result["status"] >= 400 else "info")
         if self.plugin_host:
@@ -6927,7 +6967,13 @@ __CODE__
 </body></html>
 """
 
+    @staticmethod
+    def _valid_custom_id(pid: str) -> bool:
+        return bool(re.fullmatch(re.escape(CUSTOM_PREFIX) + r"[0-9a-zA-Z_-]{1,40}", pid or ""))
+
     def _custom_folder(self, pid: str) -> str:
+        if not self._valid_custom_id(pid):
+            raise ValueError(f"非法的自制插件 id：{pid!r}")
         return os.path.join(CUSTOM_PLUGIN_DIR, f"{pid}.sdPlugin")
 
     def list_custom_plugins(self) -> list:
@@ -7052,7 +7098,7 @@ __CODE__
         return {"ok": True, "id": pid}
 
     def delete_custom_plugin(self, pid: str) -> bool:
-        if not pid.startswith(CUSTOM_PREFIX):
+        if not self._valid_custom_id(pid):
             return False
         folder = self._custom_folder(pid)
         if not os.path.isdir(folder):
@@ -7292,15 +7338,22 @@ __CODE__
 
     def set_lighting(self, patch: dict) -> None:
         self._save_soon()
+        clean = {}
+        try:
+            if patch.get("mode") in MODES:
+                clean["mode"] = patch["mode"]
+            color = str(patch.get("color") or "")
+            if re.fullmatch(r"#?[0-9a-fA-F]{6}", color):
+                clean["color"] = color if color.startswith("#") else "#" + color
+            if patch.get("speed") is not None:
+                clean["speed"] = max(0.1, min(10.0, float(patch["speed"])))
+            if patch.get("brightness") is not None:
+                # 设备端 LED 亮度是 0–100 的百分比，超过 100 固件会走到奇怪的分支
+                clean["brightness"] = max(0, min(100, int(float(patch["brightness"]))))
+        except (TypeError, ValueError):
+            log(f"灯光参数不合法，已忽略：{patch}")
         with self.lock:
-            for k in ("mode", "color", "speed", "brightness"):
-                if k in patch and patch[k] is not None:
-                    self.lighting[k] = patch[k]
-            self.lighting["speed"] = max(0.1, min(10.0, float(self.lighting["speed"])))
-            # 设备端 LED 亮度是 0–100 的百分比，超过 100 固件会走到奇怪的分支
-            self.lighting["brightness"] = max(0, min(100, int(self.lighting["brightness"])))
-            if self.lighting["mode"] not in MODES:
-                self.lighting["mode"] = "solid"
+            self.lighting.update(clean)
             self._dirty = True
             snap = {"mode": self.lighting["mode"], "color": self.lighting["color"],
                     "speed": self.lighting["speed"], "brightness": self.lighting["brightness"]}
@@ -7686,6 +7739,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403, "Forbidden host")
             return False
         if not write:
+            # 读接口：浏览器跨站发起的（别的网页里的 <img>/<script>）一律拒绝；
+            # 页面本身、地址栏直接打开、本机脚本（不带这个头）照常
+            site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+            if site in ("cross-site", "same-site"):
+                self.send_error(403, "Cross-site request blocked")
+                return False
             return True
         origin = (self.headers.get("Origin") or "").strip().lower()
         if origin and origin not in {f"http://{h}" for h in self._allowed_hosts()}:

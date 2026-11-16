@@ -635,7 +635,7 @@ def convert_page(manifest: dict, page_src, plugins: PluginIndex, install_root: s
             }
         elif not img:
             # 既没图也没标题：用动作名兜底，免得整键一片黑
-            name = _clean(act.get("Name")) or uuid.rsplit(".", 1)[-1]
+            name = _clean(act.get("Name")) or str(act.get("UUID") or "").rsplit(".", 1)[-1]
             styles[key] = {"text": name[:12], "color": "#e8eefc", "bg": "#12161f",
                            "opacity": 100, "size": 13, "pos": "center"}
     return {"actions": actions, "styles": styles, "images": images,

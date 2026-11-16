@@ -5,7 +5,7 @@
 控制台没开就在后台拉起来。
 
     python app/mcp_server.py           # 源码
-    mcp\m18-mcp.exe                    # 绿色版（在 M18Console.exe 所在目录的 mcp 子文件夹里）
+    mcp/m18-mcp.exe                    # 绿色版（在 M18Console.exe 所在目录的 mcp 子文件夹里）
 
 环境变量：M18_URL=http://127.0.0.1:8642 指定控制台地址（默认自动在 8642–8653 里找）。
 """

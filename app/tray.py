@@ -13,6 +13,7 @@ import ctypes
 import os
 import sys
 import threading
+import time
 
 WM_DESTROY = 0x0002
 WM_COMMAND = 0x0111
@@ -112,6 +113,8 @@ class Tray:
         self._proc = None            # 必须留着引用，否则回调会被回收
         self._ready = threading.Event()
         self._title = "M18ConsoleTray"
+        self._last_open = 0.0
+        self._taskbar_msg = 0
 
     # -- 对外接口 ----------------------------------------------------------- #
     def start(self) -> bool:
@@ -167,8 +170,11 @@ class Tray:
         try:
             if msg == WM_TRAY:
                 code = lparam & 0xFFFF
-                if code in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
-                    self._call(self.on_open)
+                if code == WM_LBUTTONUP:
+                    now = time.time()
+                    if now - self._last_open > 1.0:      # 1 秒内只开一次（双击里的两次单击合并）
+                        self._last_open = now
+                        self._call(self.on_open)
                 elif code in (WM_RBUTTONUP, WM_CONTEXTMENU):
                     self._menu()
                 return 0
@@ -178,6 +184,9 @@ class Tray:
                     self._call(self.on_open)
                 elif cmd == command_exit:
                     self._call(self.on_exit)
+                return 0
+            if self._taskbar_msg and msg == self._taskbar_msg and self._nid:
+                shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._nid))
                 return 0
             if msg == WM_DESTROY:
                 user32.PostQuitMessage(0)
@@ -235,6 +244,10 @@ class Tray:
                 self._ready.set()
                 return
             self._hwnd = hwnd
+            try:
+                self._taskbar_msg = user32.RegisterWindowMessageW("TaskbarCreated")
+            except Exception:  # noqa: BLE001
+                self._taskbar_msg = 0
             nid = NOTIFYICONDATAW()
             nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
             nid.hWnd = hwnd

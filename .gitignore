@@ -33,3 +33,5 @@ __pycache__/
 # ---- 打包产物 ----
 build/
 dist/
+app/assets/library/
+app/cache/

@@ -365,11 +365,19 @@ class PluginHost:
         else:
             cmd = [entry] + args
         log_path = os.path.join(self.data_dir, "logs", f"{uid}.log")
+        try:                     # 日志超过 2 MB 就轮换一份，免得长期运行越写越大
+            if os.path.getsize(log_path) > 2 * 1024 * 1024:
+                os.replace(log_path, log_path + ".1")
+        except OSError:
+            pass
         logf = open(log_path, "a", encoding="utf-8", errors="replace")
         logf.write(f"\n==== {time.strftime('%Y-%m-%d %H:%M:%S')} 启动 {' '.join(cmd[:2])}\n")
         logf.flush()
-        proc = subprocess.Popen(cmd, cwd=p["folder"], stdout=logf, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        try:
+            proc = subprocess.Popen(cmd, cwd=p["folder"], stdout=logf, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        finally:
+            logf.close()        # 子进程已继承句柄；父进程这边不关，插件每重启一次就漏一个
         with self.lock:
             self.procs[uid] = proc
         self._save_pids()

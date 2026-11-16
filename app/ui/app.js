@@ -63,13 +63,44 @@ let pickMode = null;
 
 /* ------------------------------------------------------------------ 工具 */
 async function post(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
-  return res.json().catch(() => ({}));
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+  } catch (err) {
+    // 服务没响应（刚退出 / 重启中）：给个提示，别让一堆 await 静默挂掉
+    if (!post._warned) {
+      post._warned = true;
+      setTimeout(() => { post._warned = false; }, 5000);
+      try { toast("连不上控制台服务，稍后再试", 2200); } catch (_) { /* ignore */ }
+    }
+    return { ok: false, error: String(err) };
+  }
+  return res.json().catch(() => ({ ok: res.ok }));
 }
+
+/* 用户正在操作的输入框 / 滑杆：服务器推过来的状态不要把它改回旧值
+   （以前拖滑杆会来回跳、输入标题会丢字，中文输入法组字时也会被打断） */
+const busyUntil = new WeakMap();
+function markBusy(el, ms = 800) {
+  if (el) busyUntil.set(el, Date.now() + ms);
+}
+function isBusy(el) {
+  if (!el) return false;
+  if (document.activeElement === el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type !== "range"))) {
+    return true;                                  // 文本框正在输入
+  }
+  return (busyUntil.get(el) || 0) > Date.now();   // 刚拖过 / 刚改过
+}
+function setVal(el, v) {
+  if (el && !isBusy(el) && String(el.value) !== String(v)) el.value = v;
+}
+document.addEventListener("input", (e) => markBusy(e.target), true);
+document.addEventListener("pointerdown", (e) => { if (e.target?.type === "range") markBusy(e.target, 3000); }, true);
+document.addEventListener("pointerup", (e) => { if (e.target?.type === "range") markBusy(e.target, 600); }, true);
 
 /* KeyboardEvent.code → 后端 send_hotkey 认识的键名；修饰键本身返回 null */
 const CODE_NAMES = {
@@ -379,7 +410,7 @@ function refreshCells() {
     cell.style.backgroundColor = hasImg || live ? "" : (st.bg || "#000");
     const label = $(".cell-label", cell);
     if (label) {
-      label.innerHTML = splitLabel(st.text, st.size ?? 20).join("<br>");
+      label.innerHTML = splitLabel(st.text, st.size ?? 20).map(escHtml).join("<br>");
       label.style.color = st.color || "#e8eefc";
       label.style.opacity = `${(st.opacity ?? 100) / 100}`;
       // 与设备一致：设备是 64×64、字号 = st.size，这里按实际格子大小等比缩放
@@ -2102,7 +2133,7 @@ function choiceDialog(message, choices) {
     box.innerHTML = `<div class="modal-card confirm-card">
       <div class="confirm-body">${message}</div>
       <div class="confirm-actions choice-actions${choices.length > 2 ? " choice-vertical" : ""}">
-        ${choices.map((c) => `<button class="seg${c.primary ? " on" : ""}" data-v="${c.value}">${c.label}</button>`).join("")}
+        ${choices.map((c) => `<button class="seg${c.primary ? " on" : ""}" data-v="${escHtml(c.value)}">${c.label}</button>`).join("")}
         <button class="seg" data-v="">取消</button>
       </div>
     </div>`;
@@ -2497,19 +2528,23 @@ function renderEditor() {
         parts.push(`<span class="thumb-label" style="color:${st.color || "#e8eefc"};`
           + `opacity:${(st.opacity ?? 100) / 100};font-size:${fs}px;line-height:1.15;`
           + `padding:${Math.max(1, (3 * tw) / 64)}px;align-items:${align}">`
-          + `${splitLabel(label, st.size ?? 20).join("<br>")}</span>`);
+          + `${splitLabel(label, st.size ?? 20).map(escHtml).join("<br>")}</span>`);
       }
       thumb.innerHTML = parts.join("");
     }
   }
-  $("#sel-text").value = st.text || "";
-  $("#sel-fg").value = st.color || "#e8eefc";
-  $("#sel-bg").value = st.bg || "#000000";
-  $("#sel-opacity").value = st.opacity ?? 100;
-  $("#sel-opacity-val").textContent = `${st.opacity ?? 100}%`;
-  $("#sel-size").value = st.size ?? 20;
-  $("#sel-size-val").textContent = `${st.size ?? 20}`;
-  $("#sel-pos").value = st.pos || "center";
+  // 同一个键还在编辑中：服务器推回来的是上一拍的值，别覆盖用户正在打的字（换了键才整体回填）
+  const sameKey = renderEditor._key === n;
+  renderEditor._key = n;
+  const fill = (sel, v) => (sameKey ? setVal($(sel), v) : ($(sel).value = v));
+  fill("#sel-text", st.text || "");
+  fill("#sel-fg", st.color || "#e8eefc");
+  fill("#sel-bg", st.bg || "#000000");
+  fill("#sel-opacity", st.opacity ?? 100);
+  if (!sameKey || !isBusy($("#sel-opacity"))) $("#sel-opacity-val").textContent = `${st.opacity ?? 100}%`;
+  fill("#sel-size", st.size ?? 20);
+  if (!sameKey || !isBusy($("#sel-size"))) $("#sel-size-val").textContent = `${st.size ?? 20}`;
+  fill("#sel-pos", st.pos || "center");
 
   $("#sel-action").textContent = !act ? "未绑定"
     : type === "nav" ? `导航：${act}` : type === "plugin" ? act : `打开：${act}`;
@@ -2741,9 +2776,6 @@ async function dropOnKey(key, dt) {
 }
 
 /* ------------------------------------------------------------------ 状态 */
-async function refreshState() {
-  applyState(await (await fetch("/api/state")).json());
-}
 
 function applyMode(mode) {
   document.querySelectorAll("#modes .chip").forEach((c) => {
@@ -2762,18 +2794,22 @@ function applyLighting(L) {
   currentColor = L.color || currentColor;
   ledBrightness = L.brightness ?? 100;
   const colorEl = $("#color");
-  if (colorEl) colorEl.value = currentColor;
+  setVal(colorEl, currentColor);
   const hexEl = $("#color-hex");
   if (hexEl) hexEl.textContent = String(currentColor).toUpperCase();
   syncSwatch();
   const brightEl = $("#led-brightness");
-  if (brightEl) brightEl.value = ledBrightness;
-  const brightVal = $("#led-brightness-val");
-  if (brightVal) brightVal.textContent = ledBrightness;
+  if (!isBusy(brightEl)) {
+    setVal(brightEl, ledBrightness);
+    const brightVal = $("#led-brightness-val");
+    if (brightVal) brightVal.textContent = ledBrightness;
+  }
   const speedEl = $("#speed");
-  if (speedEl) speedEl.value = L.speed;
-  const speedVal = $("#speed-val");
-  if (speedVal && L.speed != null) speedVal.textContent = Number(L.speed).toFixed(1) + "×";
+  if (!isBusy(speedEl)) {
+    setVal(speedEl, L.speed);
+    const speedVal = $("#speed-val");
+    if (speedVal && L.speed != null) speedVal.textContent = Number(L.speed).toFixed(1) + "×";
+  }
   applyMode(L.mode);
   if (Array.isArray(L.custom) && L.custom.length === 24) {
     localCustom = L.custom.map((c) => [...c]);
@@ -2814,11 +2850,31 @@ async function fetchState() {
   return res.json();
 }
 
+// 多处同时要求刷新时合并成一次；后发先至的旧结果直接丢掉
+let refreshSeq = 0;
+let refreshing = null;
+let refreshAgain = false;
 async function refreshState() {
+  if (refreshing) {               // 正在刷：等它结束后再补刷一次（拿最新的），期间的请求都合并
+    refreshAgain = true;
+    return refreshing;
+  }
+  refreshing = (async () => {
+    do {
+      refreshAgain = false;
+      const seq = ++refreshSeq;
+      try {
+        const s = await fetchState();
+        if (seq === refreshSeq) applyState(s);
+      } catch (err) {
+        console.error("刷新状态失败", err);
+      }
+    } while (refreshAgain);
+  })();
   try {
-    applyState(await fetchState());
-  } catch (err) {
-    console.error("刷新状态失败", err);
+    await refreshing;
+  } finally {
+    refreshing = null;
   }
 }
 
@@ -2844,8 +2900,10 @@ function applyState(s) {
   if (s.frame) paintDots(s.frame);
   applyLighting(L);
 
-  $("#screen-brightness").value = s.screenBrightness;
-  $("#screen-brightness-val").textContent = s.screenBrightness;
+  if (!isBusy($("#screen-brightness"))) {
+    setVal($("#screen-brightness"), s.screenBrightness);
+    $("#screen-brightness-val").textContent = s.screenBrightness;
+  }
 
   const gap = s.wallpaper?.gap ?? 27;
   $("#wallpaper-gap").value = gap;
@@ -2911,7 +2969,7 @@ function applyState(s) {
     ["灯带", `${info.leds || 24} 颗 RGB`],
     ["壁纸", s.wallpaper?.file || "-"],
     ["设备路径", info.path || "-"],
-  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+  ].map(([k, v]) => `<dt>${k}</dt><dd>${escHtml(v)}</dd>`).join("");
 
   try {
     applyRotation();
@@ -3053,9 +3111,11 @@ function bindUI() {
     pushLighting({ speed: v });
   });
 
+  // 以前每次 input 都新建一个节流函数 = 根本没节流，拖一下发几十个请求，还被服务器推回来的旧值拽回去
+  const pushScreenB = throttle((v) => post("/api/screen-brightness", { value: v }), 120);
   $("#screen-brightness").addEventListener("input", (e) => {
     $("#screen-brightness-val").textContent = e.target.value;
-    throttle((v) => post("/api/screen-brightness", { value: v }), 120)(Number(e.target.value));
+    pushScreenB(Number(e.target.value));
   });
 
   $("#reset-led").addEventListener("click", async () => {
@@ -3479,7 +3539,7 @@ function bindUI() {
       const d = formDrafts[g];
       const before = gestureView(n, g);
       if (before?.type === "folder" && d.type !== "folder"
-        && !(await confirmDialog(`按键 ${n} 的${gestureLabel(g)}原来是文件夹「${before.value}」，替换后文件夹和里面的按键会一起删除。继续？`))) return;
+        && !(await confirmDialog(`按键 ${n} 的${gestureLabel(g)}原来是文件夹「${escHtml(before.value)}」，替换后文件夹和里面的按键会一起删除。继续？`))) return;
       if (d.type === "folder" && n > 15) return toast("导航键没有屏幕，不能做文件夹", 1800);
     }
 
@@ -3520,9 +3580,12 @@ function bindUI() {
     await refreshState();
   });
 
-  const pushStyle = throttle(async () => {
-    if (!selectedKey) return;
-    await post("/api/key/style", {
+  const sendStyle = throttle(async (body) => {
+    await post("/api/key/style", body);
+  }, 320);
+  const pushStyle = (e) => {
+    if (!selectedKey || e?.isComposing) return;          // 中文输入法还在组字：等上屏再发
+    const body = {
       key: selectedKey,
       text: $("#sel-text").value,
       color: $("#sel-fg").value,
@@ -3530,9 +3593,15 @@ function bindUI() {
       opacity: Number($("#sel-opacity").value),
       size: Number($("#sel-size").value),
       pos: $("#sel-pos").value,
-    });
-    await refreshState();
-  }, 320);
+    };
+    if (state) {                                          // 本地先改，格子立刻跟着变
+      state.keyStyles = state.keyStyles || {};
+      const { key, ...style } = body;
+      state.keyStyles[key] = { ...(state.keyStyles[key] || {}), ...style };
+      refreshCells();
+    }
+    sendStyle(body);       // body 里已带上 key：节流延迟期间切了键也不会写错键
+  };
   ["#sel-text", "#sel-fg", "#sel-bg", "#sel-pos"].forEach((sel) => {
     const el = $(sel);
     if (el) el.addEventListener("change", pushStyle);
@@ -3548,6 +3617,7 @@ function bindUI() {
     });
   });
   $("#sel-text").addEventListener("input", pushStyle);
+  $("#sel-text").addEventListener("compositionend", pushStyle);
 
   let recording = false;  $("#sel-record").addEventListener("click", () => {
     if (!selectedKey) return;
@@ -3780,7 +3850,7 @@ function bindUI() {
         toast(r.ok ? (v.trim() ? `已关联：${v}` : "已取消关联") : "保存失败", 1800);
         renderScenes(r.items || []);
       } else if (act === "del") {
-        if (!(await confirmDialog(`删除场景「${name}」？`))) return;
+        if (!(await confirmDialog(`删除场景「${escHtml(name)}」？`))) return;
         const r = await post("/api/scenes", { delete: name });
         renderScenes(r.items || []);
       }
@@ -4046,7 +4116,7 @@ function bindUI() {
       toast(target.builtin ? "内置相册不能删除" : "自定义场景不能删除", 1600);
       return;
     }
-    if (!(await confirmDialog(`删除场景「${name}」？${target?.albumScene ? "<br>里面的图片文件不会被删掉。" : ""}`))) return;
+    if (!(await confirmDialog(`删除场景「${escHtml(name)}」？${target?.albumScene ? "<br>里面的图片文件不会被删掉。" : ""}`))) return;
     const r = await post("/api/scenes", { delete: name });
     selectedScene = null;
     renderScenes(r.items || []);
@@ -4646,9 +4716,15 @@ function connectEvents() {
       window.m18ReloadScenes?.();
     }
   };
+  es.onopen = () => {
+    // 断线期间（电脑睡眠 / 服务重启）漏掉的推送：重连上就整份补刷一次
+    if (connectEvents.retry) refreshState();
+    connectEvents.retry = 0;
+  };
   es.onerror = () => {
     es.close();
-    setTimeout(connectEvents, 1500);
+    connectEvents.retry = (connectEvents.retry || 0) + 1;
+    setTimeout(connectEvents, Math.min(10000, 1000 * connectEvents.retry));
   };
 }
 
@@ -4671,7 +4747,6 @@ async function boot() {
   buildSwatches();
   bindRingPainting();
   bindUI();
-  window.addEventListener("resize", applyRotation);
   applyRotation();
   try {
     applyState(await (await fetch("/api/state")).json());
@@ -4679,8 +4754,7 @@ async function boot() {
     console.error(e);
   }
   if (!location.search.includes("noevents")) connectEvents();
-  const tab = new URLSearchParams(location.search).get("tab");
-  if (tab) activateTab(tab);
+  // ?tab=xxx 是早期多页签留下的：现在只有一个主页面，带了反而会把界面切成空白，忽略
 }
 
 boot();
