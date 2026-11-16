@@ -6383,7 +6383,7 @@ class App:
         try:
             os.makedirs(PLUGIN_DATA, exist_ok=True)
             self.plugin_host = PluginHost(
-                install_root=SD_ROOT, data_dir=PLUGIN_DATA, http_port_fn=lambda: PORT, log=self._host_log,
+                install_root=SD_ROOT, data_dir=PLUGIN_DATA, http_port_fn=lambda: PLUGIN_PORT, log=self._host_log,
                 on_plugin_message=self._on_plugin_msg, on_pi_message=self._on_pi_msg,
                 on_plugin_ready=self._on_plugin_ready, on_host_message=self._on_host_msg)
             plugins = {}
@@ -6820,8 +6820,13 @@ class App:
         rid = payload.get("id")
         url = str(payload.get("url") or "")
         result = {"id": rid, "status": 0, "body": "", "headers": {}, "error": ""}
+        target = urllib.parse.urlparse(url)
+        local_ports = {PORT, PLUGIN_PORT, getattr(getattr(self.plugin_host, "server", None), "port", 0)}
         if not url.lower().startswith(("http://", "https://")):
             result["error"] = "只支持 http / https 地址"
+        elif (target.hostname or "").lower() in ("127.0.0.1", "localhost", "::1", "0.0.0.0") and \
+                (target.port or (443 if target.scheme == "https" else 80)) in local_ports:
+            result["error"] = "不允许请求控制台自己的接口"
         else:
             body = payload.get("body")
             data = body.encode("utf-8") if isinstance(body, str) else None
@@ -7269,6 +7274,7 @@ __CODE__
                        "device": self._device_id(), "payload": self._plugin_payload(key, spec)}
         self._plugin_event("propertyInspectorDidAppear", key, spec, payload={})
         return {"ok": True, "url": f"/plugins/{uid}/{pi_path.replace(os.sep, '/')}",
+                "frame": f"http://127.0.0.1:{PLUGIN_PORT}/pi-frame.html",
                 "port": self.plugin_host.server.port, "uuid": spec.get("context"),
                 "info": self.plugin_host.info_json(uid), "actionInfo": json.dumps(action_info, ensure_ascii=False),
                 "name": spec.get("name") or ""}
@@ -7970,30 +7976,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
-        elif path.startswith("/plugins/"):
-            # 插件自己的网页 / 脚本 / 图片（网页插件和设置页从这里加载）
-            uid, _, rel = path[len("/plugins/"):].partition("/")
-            fp = APP.plugin_file(urllib.parse.unquote(uid), rel)
-            if not fp:
-                self.send_error(404)
-                return
-            ctype = {
-                ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
-                ".js": "application/javascript; charset=utf-8", ".mjs": "application/javascript; charset=utf-8",
-                ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
-                ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
-                ".svg": "image/svg+xml", ".webp": "image/webp", ".ico": "image/x-icon",
-                ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
-                ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
-            }.get(os.path.splitext(fp)[1].lower(), "application/octet-stream")
-            with open(fp, "rb") as fh:
-                data = fh.read()
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(data)
         elif path == "/api/keys/sheet.png":
             data = APP.keys_sheet_png()
             self.send_response(200)
@@ -8671,6 +8653,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 静态文件 ---------------------------------------------------------- #
     def _static(self, name: str):
+        if os.path.basename(name) in ("plugin-host.html", "pi-frame.html"):
+            self.send_error(404)
+            return
         safe = os.path.normpath(os.path.join(UI_DIR, name))
         if not safe.startswith(UI_DIR) or not os.path.isfile(safe):
             self.send_error(404)
@@ -8742,31 +8727,127 @@ def free_port(start=8642, tries=12) -> int:
     raise SystemExit("找不到可用端口")
 
 
-def _disable_edge_mouse_gestures() -> bool:
-    """关掉 Edge 的「鼠标手势」：按住右键画线会被浏览器当成手势，和控制台里的右键拖动冲突。"""
+# 控制台窗口里要关掉的 Edge 功能。鼠标手势（按住右键拖动画线）会和控制台里的右键拖动冲突，
+# 而且以前写注册表策略关它：要么被拒绝访问（关不掉），要么连用户自己的 Edge 一起关了还显示「由你的组织管理」。
+# 现在只在控制台这个独立窗口里关，三层同时生效：启动参数关功能 + 窗口自己的配置文件关开关 + 页面里拦右键拖动。
+EDGE_DISABLED_FEATURES = [
+    "msEdgeMouseGestureSupported", "msEdgeMouseGestureDefaultEnabled",
+    "msEdgeCircleToCopilotInMouseGesture", "msEdgeScribbleToCopilotInMouseGesture",
+    "msEdgeSuperDragAndDrop", "msEdgeSidebarV2", "msEdgeCollections", "msEdgeWebWidgets", "Translate",
+]
+
+
+def _prepare_browser_profile(profile: str) -> None:
+    """控制台窗口专用配置目录：写好「鼠标手势关闭」等偏好（只影响这个窗口，不碰用户自己的 Edge）。"""
+    pref = os.path.join(profile, "Default", "Preferences")
+    try:
+        os.makedirs(os.path.dirname(pref), exist_ok=True)
+        try:
+            with open(pref, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        mg = data.setdefault("edge_mouse_gesture", {})
+        want = {"enabled": False, "engaged": True, "first_tip": True, "hint": False, "track": False,
+                "circle_to_copilot_in_web_page_enabled": False}
+        if any(mg.get(k) != v for k, v in want.items()):
+            mg.update(want)
+            tmp = pref + ".m18tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, separators=(",", ":"))
+            os.replace(tmp, pref)
+    except OSError as exc:
+        log(f"写控制台窗口配置失败（不影响使用）：{exc}")
+
+
+def _cleanup_edge_policy() -> None:
+    """旧版本往 HKCU\\Software\\Policies\\Microsoft\\Edge 写过 MouseGestureEnabled=0：
+    它会把用户自己的 Edge 手势也关掉、还显示「由你的组织管理」。是我们写的就删掉（键空了连键一起删）。"""
     path = r"Software\Policies\Microsoft\Edge"
     try:
-        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0,
-                                 winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE)
-        with key:
-            cur = None
-            try:
-                cur, _ = winreg.QueryValueEx(key, "MouseGestureEnabled")
-            except OSError:
-                cur = None
-            if cur != 0:
-                winreg.SetValueEx(key, "MouseGestureEnabled", 0, winreg.REG_DWORD, 0)
-                log("已关闭 Edge 的鼠标手势（右键拖动会被浏览器画成手势线）；"
-                    "想恢复：删掉 HKCU\\Software\\Policies\\Microsoft\\Edge 下的 MouseGestureEnabled")
-        return True
-    except OSError as exc:
-        log(f"关 Edge 鼠标手势失败：{exc}")
-        return False
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0,
+                            winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
+            val, _ = winreg.QueryValueEx(key, "MouseGestureEnabled")
+            if val != 0:
+                return
+            winreg.DeleteValue(key, "MouseGestureEnabled")
+            empty = winreg.QueryInfoKey(key)[:2] == (0, 0)
+        if empty:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+        log("已撤销旧版本写入的 Edge 全局策略（MouseGestureEnabled），你自己的 Edge 恢复原样")
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# 插件专用端口：网页插件 / 插件设置页 / 后台插件宿主页都从这里加载
+# --------------------------------------------------------------------------- #
+# 和控制台不是同一个端口 = 不同源：第三方插件网页调不了控制台的接口（浏览器同源策略 + 控制台的
+# Origin / Sec-Fetch-Site 校验都会拦），也读不到控制台页面。这里也只提供插件文件，别的一概 404。
+PLUGIN_PORT = 0
+PLUGIN_UI_FILES = {"/plugin-host.html", "/pi-frame.html"}
+
+
+class PluginHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):  # noqa: D401
+        return
+
+    def do_GET(self):  # noqa: N802
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in {f"127.0.0.1:{PLUGIN_PORT}", f"localhost:{PLUGIN_PORT}"}:
+            self.send_error(403, "Forbidden host")
+            return
+        path = urllib.parse.urlparse(self.path).path
+        if path in PLUGIN_UI_FILES:
+            fp = os.path.join(UI_DIR, path.lstrip("/"))
+        elif path.startswith("/plugins/"):
+            uid, _, rel = path[len("/plugins/"):].partition("/")
+            fp = APP.plugin_file(urllib.parse.unquote(uid), rel) if APP else None
+        else:
+            fp = None
+        if not fp or not os.path.isfile(fp):
+            self.send_error(404)
+            return
+        self._serve(fp)
+
+    def _serve(self, fp: str) -> None:
+        ctype = {
+            ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8", ".mjs": "application/javascript; charset=utf-8",
+            ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+            ".svg": "image/svg+xml", ".webp": "image/webp", ".ico": "image/x-icon",
+            ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+        }.get(os.path.splitext(fp)[1].lower(), "application/octet-stream")
+        with open(fp, "rb") as fh:
+            data = fh.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):  # noqa: N802
+        self.send_error(405)
+
+
+def start_plugin_server() -> int:
+    """在一个空闲端口上起插件专用服务；返回端口号。"""
+    srv = QuietServer(("127.0.0.1", 0), PluginHandler)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True, name="插件端口").start()
+    return srv.server_address[1]
 
 
 def open_window(url: str) -> bool:
     """用独立配置目录启动一个应用窗口；启动前先关掉旧的控制台窗口。"""
-    _disable_edge_mouse_gestures()
+    _cleanup_edge_policy()
     profile = os.path.join(os.environ.get("LOCALAPPDATA") or HERE, "M18Console", "browser")
     try:
         os.makedirs(profile, exist_ok=True)
@@ -8796,13 +8877,15 @@ def open_window(url: str) -> bool:
     ):
         if not os.path.isfile(exe):
             continue
+        if profile:
+            _prepare_browser_profile(profile)
         args = [
             exe,
             f"--app={url}",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-background-mode",
-            "--disable-features=msEdgeSuperDragAndDrop,msEdgeSidebarV2,msEdgeCollections,msEdgeWebWidgets,Translate",
+            "--disable-features=" + ",".join(EDGE_DISABLED_FEATURES),
             "--window-size=1360,880",
         ]
         if profile:
@@ -8924,7 +9007,7 @@ def _tray_ui_watch(tray) -> None:
 
 
 def main() -> int:
-    global APP, PORT
+    global APP, PORT, PLUGIN_PORT
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
@@ -8949,6 +9032,7 @@ def main() -> int:
     PORT = args.port or free_port(PORT)
     url = f"http://127.0.0.1:{PORT}/"
     server = QuietServer(("127.0.0.1", PORT), Handler)
+    PLUGIN_PORT = start_plugin_server()
     threading.Timer(0.5, APP.start_plugins).start()
     server.daemon_threads = True
     log(f"控制台已启动 {url}")

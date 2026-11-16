@@ -13,6 +13,7 @@
 <script>
 const params = new URLSearchParams(location.search);
 const port = params.get("ws");
+const hostToken = params.get("token") || "";
 const frames = new Map();
 let ws = null;
 let lastItems = [];
@@ -24,7 +25,7 @@ function log(message) {
 
 function connect() {
   ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  ws.onopen = () => ws.send(JSON.stringify({ event: "registerHost" }));
+  ws.onopen = () => ws.send(JSON.stringify({ event: "registerHost", token: hostToken }));
   ws.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch (_) { return; }
@@ -41,12 +42,13 @@ function connect() {
 }
 
 function syncPlugins(items, wsPort) {
-  const want = new Set(items.map((i) => i.uuid));
+  // it.id 是插件真实 id（用来对应 iframe / 写日志），it.uuid 是注册令牌（只交给插件自己）
+  const want = new Set(items.map((i) => i.id));
   for (const [uuid, f] of frames) {
     if (!want.has(uuid)) { f.remove(); frames.delete(uuid); }
   }
   for (const it of items) {
-    if (frames.has(it.uuid)) continue;
+    if (frames.has(it.id)) continue;
     const f = document.createElement("iframe");
     f.style.cssText = "width:320px;height:240px;border:0";
     f.addEventListener("load", () => {
@@ -54,13 +56,13 @@ function syncPlugins(items, wsPort) {
       const w = f.contentWindow;
       const fn = w && (w.connectElgatoStreamDeckSocket || w.connectSocket);
       if (typeof fn !== "function") {
-        log(`${it.uuid}：插件页没有 connectElgatoStreamDeckSocket`);
+        log(`${it.id}：插件页没有 connectElgatoStreamDeckSocket`);
         return;
       }
       try {
         fn.call(w, wsPort, it.uuid, "registerPlugin", it.info);
         f.dataset.registered = "1";
-        log(`${it.uuid}：网页插件已加载`);
+        log(`${it.id}：网页插件已加载`);
         try {
           // 插件靠 window.open 弹便签 / 待办窗口。后台宿主窗口在屏幕外，
           // 直接弹会被 Edge 并成宿主窗口里的一个标签页（用户看不到）；
@@ -68,21 +70,21 @@ function syncPlugins(items, wsPort) {
           w.open = (url, name, feat) => {
             let abs = url;
             try { abs = new URL(url, w.location.href).href; } catch (_) { /* 保持原样 */ }
-            log(`${it.uuid}：打开弹窗 ${abs}`);
+            log(`${it.id}：打开弹窗 ${abs}`);
             const wpx = 620, hpx = 700;
             const left = Math.max(0, Math.round((screen.availWidth - wpx) / 2));
             const top = Math.max(0, Math.round((screen.availHeight - hpx) / 2));
             return window.open(abs, "_blank",
               `popup=1,width=${wpx},height=${hpx},left=${left},top=${top}`);
           };
-        } catch (e) { log(`${it.uuid}：接管弹窗失败 ${e}`); }
+        } catch (e) { log(`${it.id}：接管弹窗失败 ${e}`); }
       } catch (e) {
-        log(`${it.uuid}：注册出错 ${e}`);
+        log(`${it.id}：注册出错 ${e}`);
       }
     });
     f.src = it.url;
     document.body.appendChild(f);
-    frames.set(it.uuid, f);
+    frames.set(it.id, f);
   }
 }
 

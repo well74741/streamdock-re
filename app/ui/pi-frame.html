@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>插件设置</title>
+<style>html,body{margin:0;height:100%;background:#2d2d2d}iframe{border:0;width:100%;height:100%;display:block}</style>
+</head>
+<body>
+<!--
+  插件设置页（Property Inspector）的中转页：由「插件专用端口」提供，和设置页同源。
+  控制台界面在另一个端口（不同源），碰不到设置页里的函数；由这里替它调用
+  connectElgatoStreamDeckSocket 完成注册。插件设置页因此也调不了控制台的接口。
+  参数放在 # 后面（JSON），不会发给服务器。
+-->
+<script>
+let cfg = {};
+try { cfg = JSON.parse(decodeURIComponent(location.hash.slice(1))); } catch (_) { /* ignore */ }
+const tell = (msg) => { try { parent.postMessage({ type: "m18-pi", ...msg }, "*"); } catch (_) { /* ignore */ } };
+if (!cfg.url || !String(cfg.url).startsWith("/plugins/")) {
+  tell({ error: "设置页地址不对" });
+} else {
+  const f = document.createElement("iframe");
+  f.title = "插件设置";
+  f.addEventListener("load", () => {
+    if (f.dataset.registered) return;
+    const w = f.contentWindow;
+    const fn = w && (w.connectElgatoStreamDeckSocket || w.connectSocket);
+    if (typeof fn !== "function") { tell({ error: "这个插件的设置页不兼容" }); return; }
+    try {
+      fn.call(w, cfg.port, cfg.uuid, "registerPropertyInspector", cfg.info, cfg.actionInfo);
+      f.dataset.registered = "1";
+      tell({ ok: true });
+    } catch (e) {
+      tell({ error: `插件设置页出错：${e}` });
+    }
+  });
+  f.src = cfg.url;
+  document.body.appendChild(f);
+}
+</script>
+</body>
+</html>

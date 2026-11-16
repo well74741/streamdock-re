@@ -55,6 +55,7 @@
 - 运行：`python app/server.py`（`--no-browser` 只起服务）；改了 Python 要重启：
   `POST /api/quit`（带 `Origin: http://127.0.0.1:8642`、`Content-Type: application/json`）后再启动
 - HTTP 写接口要求同源 `Origin` + JSON，自己写脚本时带上这两个头
+- 网页插件、插件设置页、后台宿主页由**插件专用端口**提供（和控制台不同源）；插件注册只认启动时发的随机令牌（pluginUUID），不认插件 id
 - 用户数据（配置、场景、自制插件）：源码运行在 `app/` 下，绿色版在 `%APPDATA%\M18Console`
 - 设备命令没有回执和背压，别一次性狂发图片；动图用 SDK 原生 `setKeyGif`
 - 代码注释、界面文字用中文

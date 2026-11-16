@@ -1791,23 +1791,18 @@ async function openPluginSettings(key) {
     </div>`;
   document.body.appendChild(modal);
   const frame = modal.querySelector("iframe");
-  frame.addEventListener("load", () => {
-    if (frame.dataset.registered) return;
-    const w = frame.contentWindow;
-    const fn = w && (w.connectElgatoStreamDeckSocket || w.connectSocket);
-    if (typeof fn !== "function") {
-      toast("这个插件的设置页不兼容", 1800);
-      return;
-    }
-    try {
-      fn.call(w, r.port, r.uuid, "registerPropertyInspector", r.info, r.actionInfo);
-      frame.dataset.registered = "1";
-    } catch (e) {
-      toast(`插件设置页出错：${e}`, 2200);
-    }
-  });
-  frame.src = r.url;
+  // 设置页由插件专用端口提供（和控制台不同源，调不了控制台接口），中转页负责注册，结果用 postMessage 告诉这里
+  const pluginOrigin = new URL(r.frame).origin;
+  const onMsg = (e) => {
+    if (e.origin !== pluginOrigin || e.source !== frame.contentWindow || e.data?.type !== "m18-pi") return;
+    if (e.data.error) toast(e.data.error, 2200);
+  };
+  window.addEventListener("message", onMsg);
+  frame.src = r.frame + "#" + encodeURIComponent(JSON.stringify({
+    url: r.url, port: r.port, uuid: r.uuid, info: r.info, actionInfo: r.actionInfo,
+  }));
   const close = async () => {
+    window.removeEventListener("message", onMsg);
     modal.remove();                       // iframe 卸载即断开设置页连接
     await post("/api/plugin/pi-closed", { key });
     await refreshState();

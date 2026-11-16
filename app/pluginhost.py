@@ -10,6 +10,9 @@
 - 属性检查器（插件设置页）在控制台界面里用 iframe 加载，注册事件 registerPropertyInspector，
   uuid 用该动作实例的 context。
 - 安全：WebSocket 握手校验 Origin——浏览器里别的网页连不上；本地进程（没有 Origin）放行。
+  每个插件启动时拿到一个随机令牌当作 pluginUUID（官方软件也是这样给的），注册时只认令牌：
+  别的插件猜不到令牌，就冒充不了它（尤其是能开程序 / 发热键的自制插件）。
+  网页插件和设置页由独立端口提供（和控制台不同源），调不了控制台的接口。
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ import base64
 import hashlib
 import json
 import os
+import secrets
 import socket
 import struct
 import subprocess
@@ -240,6 +244,9 @@ class PluginHost:
         self.fallback_node: str | None = None     # 官方驱动卸载后用本地备份的 node
         self._browser_started = 0.0
         os.makedirs(os.path.join(data_dir, "logs"), exist_ok=True)
+        self._tokens: dict[str, str] = {}          # 插件 uuid → 注册令牌
+        self._token_uid: dict[str, str] = {}       # 令牌 → 插件 uuid
+        self.host_token = secrets.token_hex(16)    # 后台插件浏览器（宿主页）的注册令牌
         self.server = WSServer(self._on_message, self._on_close, self._origins)
         self._kill_leftovers()
         log(f"插件宿主已启动：ws://127.0.0.1:{self.server.port}")
@@ -248,6 +255,16 @@ class PluginHost:
     def _origins(self) -> set:
         p = self.http_port_fn()
         return {f"http://127.0.0.1:{p}", f"http://localhost:{p}"}
+
+    def token(self, uid: str) -> str:
+        """插件的注册令牌（就是传给插件的 pluginUUID）。"""
+        with self.lock:
+            tok = self._tokens.get(uid)
+            if not tok:
+                tok = secrets.token_hex(16)
+                self._tokens[uid] = tok
+                self._token_uid[tok] = uid
+            return tok
 
     def register_plugins(self, plugins: dict) -> None:
         """plugins: uuid -> {folder, manifest}（来自官方插件目录）。"""
@@ -353,7 +370,7 @@ class PluginHost:
         entry = p["entry"]
         if not os.path.isfile(entry):
             raise FileNotFoundError(f"找不到入口 {entry}")
-        args = ["-port", str(self.server.port), "-pluginUUID", uid,
+        args = ["-port", str(self.server.port), "-pluginUUID", self.token(uid),
                 "-registerEvent", "registerPlugin", "-info", self.info_json(uid)]
         if p["kind"] == "cmd":
             cmd = ["cmd", "/c", entry] + args
@@ -463,7 +480,8 @@ class PluginHost:
         self._kill_browser()
         self._patch_profile_exit()
         self._host_hwnd = 0                       # 宿主窗口句柄，找到标题后记下来
-        url = f"http://127.0.0.1:{self.http_port_fn()}/plugin-host.html?ws={self.server.port}"
+        url = (f"http://127.0.0.1:{self.http_port_fn()}/plugin-host.html"
+               f"?ws={self.server.port}&token={self.host_token}")
         args = [exe, "--no-first-run", "--no-default-browser-check",
                 "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",   # 不弹「还原页面」
                 "--noerrdialogs", "--disable-features=InfiniteSessionRestore",
@@ -587,7 +605,8 @@ class PluginHost:
                 if not p:
                     continue
                 rel = os.path.relpath(p["entry"], p["folder"]).replace(os.sep, "/")
-                items.append({"uuid": uid, "url": f"/plugins/{uid}/{rel}", "info": self.info_json(uid)})
+                items.append({"id": uid, "uuid": self.token(uid), "url": f"/plugins/{uid}/{rel}",
+                              "info": self.info_json(uid)})
         self.send_host({"event": "plugins", "items": items, "port": self.server.port})
 
     def _kill_browser(self) -> None:
@@ -702,8 +721,12 @@ class PluginHost:
     def _on_message(self, conn: WSConn, msg: dict) -> None:
         event = msg.get("event")
         if not conn.role:
-            if event == "registerPlugin" and msg.get("uuid") in self.plugins:
-                uid = msg["uuid"]
+            uid = self._token_uid.get(str(msg.get("uuid") or "")) if event == "registerPlugin" else None
+            if event == "registerPlugin" and not (uid and uid in self.plugins):
+                self.log(f"拒绝了一个插件注册（令牌不对）：{str(msg.get('uuid'))[:48]}")
+                conn.close()
+                return
+            if event == "registerPlugin":
                 conn.role, conn.uuid = "plugin", uid
                 with self.lock:
                     old = self.conns.get(uid)
@@ -726,7 +749,8 @@ class PluginHost:
                 # 官方宿主在设置页注册后会主动推一次 didReceiveSettings，
                 # 不少设置页（如系统监控）收到它才把界面显示出来，自己并不发 getSettings
                 self.on_pi_message(conn.uuid, {"event": "getSettings"})
-            elif event == "registerHost" and conn.origin:
+            elif event == "registerHost" and conn.origin and secrets.compare_digest(
+                    str(msg.get("token") or ""), self.host_token):
                 conn.role = "host"
                 self.host_conn = conn
                 self.log("后台插件浏览器已就绪")
