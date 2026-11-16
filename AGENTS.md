@@ -43,7 +43,15 @@
 
 | 文件 | 内容 |
 |---|---|
-| `app/server.py` | 本地服务、渲染、动作、场景、插件宿主集成、HTTP 接口 |
+| `app/server.py` | `App` 主类（`__init__`、配置读写）、HTTP 接口、插件专用端口、启动入口 |
+| `app/core.py` | 公共部分：常量、数据目录、输入模拟（热键 / 文字 / 鼠标）、动作标签、路径工具 |
+| `app/app_render.py` | 按键画面渲染、待机画面、Dock 同步预览、原生动图 |
+| `app/app_pages.py` | 多页面、文件夹、配置加载 |
+| `app/app_media.py` | 按键图片素材、旋转、相册、相册场景 |
+| `app/app_scenes.py` | 按键输入与动作、场景、场景导出导入、官方场景同步、前台程序自动切换 |
+| `app/app_catalog.py` | 官方图标包 / 插件目录、回收站、裁图工具 |
+| `app/app_plugins.py` | 插件宿主集成、自制插件、AI 测试接口 |
+| `app/app_lighting.py` | 灯光效果引擎、状态快照 |
 | `app/pluginhost.py` | 兼容官方 / Elgato 协议的插件宿主（Node / exe / 无头 Edge 网页插件） |
 | `app/official.py` | 读取官方驱动的场景、图标包、插件（含 `.mbg` 解密） |
 | `app/wssdk.py` | WebSocket 客户端 + 官方 SDK 设备封装 |

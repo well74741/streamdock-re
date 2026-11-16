@@ -185,7 +185,7 @@ python packaging/build.py      # 先检查环境，缺 Pillow / PyInstaller 会�
 
 | 路径 | 说明 |
 |---|---|
-| `app/server.py` | 本地服务、渲染、灯光引擎、动作执行 |
+| `app/server.py` + `app/core.py` + `app/app_*.py` | 本地服务：主类与 HTTP 接口、公共工具、按功能拆开的渲染 / 页面 / 素材相册 / 场景动作 / 资源目录 / 插件 / 灯光 |
 | `app/wssdk.py` | 极简 WebSocket 客户端 + 官方 SDK 设备封装 |
 | `app/mcp_server.py` | MCP 服务（给 AI 智能体用，绿色版是 `mcp\m18-mcp.exe`） |
 | `app/ui/` | 界面（HTML/CSS/JS） |
