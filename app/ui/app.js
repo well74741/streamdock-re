@@ -370,7 +370,7 @@ function refreshCells() {
     const act = acts[n];
     const imgEl = $(".cell-img", cell);
     // 刚放上去、还没写入的图标：先按这个样子显示（点保存才真正写进按键）
-    const pend = pendingIcon && pendingIcon.key === Number(n) ? pendingIcon : null;
+    const pend = pendingIconOf(Number(n)) || pendingIconOf(Number(n), "press");
     cell.classList.toggle("pending-icon", !!pend);
     if (imgEl) {
       const plug = state?.keyPlugin?.[n];
@@ -1351,7 +1351,7 @@ function bindIconDrag(container) {
       const hk = t?.dataset?.key ? Number(t.dataset.key) : 0;
       const name = img.dataset.name;
       if (hk >= 1 && hk <= 15) showDockPreview(hk, name);
-      else if (pendingIcon) showDockPreview(pendingIcon.key, dockPreviewSrc(pendingIcon));
+      else if (pendingIconOf()) showDockPreview(selectedKey, dockPreviewSrc(pendingIconOf()));
       else hideDockPreview();
     };
     const onUp = async (ev) => {
@@ -1363,7 +1363,7 @@ function bindIconDrag(container) {
         const t0 = dragging ? dropTargetAt(ev.clientX, ev.clientY) : null;
         const k0 = t0?.dataset?.key ? Number(t0.dataset.key) : 0;
         if (dragging && !(k0 >= 1 && k0 <= 15)) {
-          if (pendingIcon) showDockPreview(pendingIcon.key, dockPreviewSrc(pendingIcon));
+          if (pendingIconOf()) showDockPreview(selectedKey, dockPreviewSrc(pendingIconOf()));
           else hideDockPreview();
         }
       }
@@ -2004,7 +2004,7 @@ document.addEventListener("contextmenu", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeImageMenu();
-    if (pendingIcon) clearPendingIcon();      // Esc 也撤销临时预览
+    if (pendingIconOf()) clearPendingIcon();      // Esc 也撤销临时预览
   }
 });
 
@@ -2212,11 +2212,30 @@ async function appsDialog(name, current) {
   });
 }
 
+/* 有未保存的草稿 / 图标预览时切场景，先问一次（预保存模式的最后一道闸） */
+async function pendingDraftsPrompt() {
+  const keys = [...new Set([...Object.keys(draftsAll), ...Object.keys(pendingStore).map((x) => x.split("|")[0])])];
+  if (!keys.length) return true;
+  const one = keys.length === 1 ? `键 ${keys[0]}` : `${keys.length} 个键`;
+  return new Promise((resolve) => {
+    choiceDialog(`有 ${one} 的改动还没保存。切换场景会丢弃这些未保存的改动，确定吗？`, [
+      { label: "丢弃并切换", value: "ok" },
+      { label: "回去保存", value: "", primary: true },
+    ]).then((v) => {
+      if (v === "ok") {
+        for (const k of keys) { delete draftsAll[k]; }
+        for (const id of Object.keys(pendingStore)) delete pendingStore[id];
+        hideDockPreview();
+      }
+      resolve(v === "ok");
+    });
+  });
+}
+
 function selectKey(n) {
-  if (pendingIcon && pendingIcon.key !== n) clearPendingIcon();   // 换键：上一个键的临时预览作废
+  /* 预保存：换键不清未保存的草稿和预览（每个键各存各的），回来还在 */
   if (n !== selectedKey) {
     editGesture = "press";                          // 换键时回到「短按」
-    formDrafts = {};                                // 上一个键没保存的草稿丢弃
   }
   selectedKey = n;
   refreshCells();
@@ -2228,13 +2247,22 @@ function selectKey(n) {
 
 let editGesture = "press";
 // 三个触发方式的「草稿」：切页签不丢、点保存才一起提交
-let formDrafts = {};
+/* 每个键一份表单草稿（按 key 存，换键不清）：{key: {press/long/double: draft}}。
+   读旧名 formDrafts 的地方统一改成 draftsFor(键)。 */
+const draftsAll = {};
+const draftsFor = (k) => (k ? (draftsAll[k] = draftsAll[k] || {}) : {});
+const draftsCount = (k) => Object.keys(draftsFor(k)).length;
 let sceneNames = [];
 let sceneItems = [];          // 场景列表原始数据（含 sceneType / albumScene）
 let sceneDragEndedAt = 0;     // 拖动排序刚结束，别把这一下当成单击
 let selectedScene = null;     // 列表里选中的场景（编辑区按它决定显示相册还是按键）
-// 从图标库点图标 / 插件动作时先只做「临时预览」，点「保存」才真正写进按键
-let pendingIcon = null;       // {key, gesture, kind, name?, plugin?, index?, src?, label}
+/* 未保存的图标 / 程序 / 图片预览，按「键|触发方式」存（预保存）：
+   放上去立即显示在键上和 Dock 上，点「保存」才写进服务端；
+   换键、点空白都不丢，回来还在。 */
+const pendingStore = {};
+const pendId = (k, g) => `${k}|${g}`;
+const pendingIconOf = (k = selectedKey, g = editGesture) => pendingStore[pendId(k, g)] || null;
+const pendingIconAnyFor = (k) => Object.entries(pendingStore).filter(([id]) => id.startsWith(`${k}|`));
 
 /* Dock 同步预览：拖到按键上悬停、放下后还没保存时，设备上也显示这张图（服务端只画不存） */
 let dockPreview = { key: 0, src: "" };
@@ -2262,40 +2290,38 @@ function hideDockPreview() {
   sendDockPreview(0, "");
 }
 
-function clearPendingIcon() {
-  if (!pendingIcon) return;
-  const k = pendingIcon.key;
-  pendingIcon = null;
-  hideDockPreview();
-  document.querySelector(`.ring-board .cell[data-key="${k}"]`)?.classList.remove("pending-icon");
+function clearPendingIcon(key = 0, gesture = "") {
+  // 撤销未保存的预览；不传参 = 当前键当前触发方式
+  const k = key || selectedKey;
+  const g = gesture || editGesture;
+  if (pendingIconOf(k, g)) delete pendingStore[pendId(k, g)];
+  if (!pendingIconAnyFor(selectedKey).length) hideDockPreview();
   refreshCells();
   renderEditor();
 }
 
-/* 清掉某个键上还没保存的预览（清除 / 删除按键时用；不传 key 就全清） */
+/* 清掉某个键上所有还没保存的预览（清除按键时用；不传 key 就全清） */
 function dropPendingForKey(key) {
-  if (!pendingIcon) return;
-  if (key && pendingIcon.key !== key) return;
-  clearPendingIcon();
+  for (const id of Object.keys(pendingStore)) {
+    const [k] = id.split("|");
+    if (!key || Number(k) === Number(key)) delete pendingStore[id];
+  }
+  if (!key || Number(key) === Number(selectedKey)) hideDockPreview();
 }
 
 function setPendingIcon(key, gesture, info) {
   if (selectedKey !== key) selectKey(key);          // 先把编辑区切到这个键
-  pendingIcon = { key, gesture, ...info };
-  showDockPreview(key, dockPreviewSrc(pendingIcon));
+  pendingStore[pendId(key, gesture)] = { key, gesture, ...info };
+  showDockPreview(key, dockPreviewSrc(pendingStore[pendId(key, gesture)]));
   paintPendingIcon();
 }
 
-/* 点空白处（既不是按键、也不在编辑区/图标库/插件面板里）就撤销没保存的图标 */
-document.addEventListener("pointerdown", (e) => {
-  if (!pendingIcon) return;
-  const t = e.target;
-  if (t.closest(".cell, .ring-btn, #key-editor, #icon-groups, #plugin-list, .icon-group, details.plugin, .img-menu, .lib-menu, .confirm-modal, .toast")) return;
-  clearPendingIcon();
-}, true);
+/* 点空白处不再撤销未保存的预览（预保存）：草稿留着，点「保存」才写进服务端 */
 
 function paintPendingIcon() {
-  if (!pendingIcon) return;
+  if (!pendingIconAnyFor(selectedKey).length && !pendingIconAnyFor(selectedKey, ).length) {
+    // 只看当前键：没预览也要重画一次（撤销路径）
+  }
   refreshCells();     // 按键格子直接按「放上去以后」的样子显示
   renderEditor();     // 编辑区的缩略图、功能行也跟着显示，可以继续改标题 / 颜色
 }
@@ -2417,12 +2443,12 @@ function draftDiffersFromSaved(n, g) {
 
 function paintDraftMarks() {
   const dirtyBtn = $("#sel-save-top");
-  if (dirtyBtn) dirtyBtn.classList.toggle("dirty", Object.keys(formDrafts).length > 0);
+  if (dirtyBtn) dirtyBtn.classList.toggle("dirty", draftsCount(selectedKey) > 0);
   document.querySelectorAll("#sel-gesture button").forEach((b) => {
-    b.classList.toggle("dirty", !!formDrafts[b.dataset.g]);
+    b.classList.toggle("dirty", !!draftsFor(selectedKey)[b.dataset.g]);
   });
   const n = selectedKey;
-  const d = n ? formDrafts[editGesture] : null;
+  const d = n ? draftsFor(n)[editGesture] : null;
   if (!d) return;
   const line = $("#sel-action");
   if (line) {
@@ -2480,7 +2506,7 @@ function fillSceneSelect(selected) {
 }
 
 function fillActionForm(n) {
-  const draft = formDrafts[editGesture];
+  const draft = draftsFor(selectedKey)[editGesture];
   const view = gestureView(n, editGesture);
   const d = draft || viewToDraft(view);
   let t = d.type;
@@ -2505,11 +2531,11 @@ function fillActionForm(n) {
     const g = b.dataset.g;
     b.classList.toggle("on", g === editGesture);
     b.classList.toggle("has", !!gestureView(n, g) && g !== "press");
-    b.classList.toggle("dirty", !!formDrafts[g]);
+    b.classList.toggle("dirty", !!draftsFor(selectedKey)[g]);
   });
   applyTypeVisibility(t);
   const dirtyBtn = $("#sel-save-top");
-  if (dirtyBtn) dirtyBtn.classList.toggle("dirty", Object.keys(formDrafts).length > 0);
+  if (dirtyBtn) dirtyBtn.classList.toggle("dirty", draftsCount(selectedKey) > 0);
   return t;
 }
 
@@ -2571,7 +2597,7 @@ function renderEditor() {
   const act = state?.keyActions?.[n];
   const type = state?.keyActionTypes?.[n] || "launch";
   // 刚拖进来、还没点保存的图标 / 程序：编辑区按「已经放上去了」的样子显示
-  const pend = pendingIcon && pendingIcon.key === n ? pendingIcon : null;
+  const pend = pendingIconOf(n) || pendingIconOf(n, "press");
   const thumb = $("#sel-thumb");
   if (thumb) {
     thumb.classList.add("as-key");
@@ -2628,7 +2654,7 @@ function renderEditor() {
     : ((img || pend?.src) ? "单独图片 / 动图" : "无（标题 / 编号）");
 
   const actType = fillActionForm(n);
-  const curDraft = formDrafts[editGesture];
+  const curDraft = draftsFor(selectedKey)[editGesture];
   if (editGesture !== "press") {
     const shown = curDraft ? { label: draftLabel(curDraft) } : gestureView(n, editGesture);
     $("#sel-action").textContent = `${gestureLabel(editGesture)}：${shown?.label || "未设置"}${curDraft ? "（未保存）" : ""}`;
@@ -2646,7 +2672,7 @@ function renderEditor() {
     : isNav
       ? "导航键默认：左=上一页，中=主页，右=下一页；也可以改成打开程序、网页或热键。"
       : "拖图片换画面；拖程序 / 快捷方式 / 脚本 / 文件夹绑定动作，按下即打开。";
-  if (Object.keys(formDrafts).length) hint = "有未保存的改动 —— 三种触发方式改完一起点右上角「保存」生效。" + hint;
+  if (draftsCount(selectedKey)) hint = "有未保存的改动 —— 点右上角「保存」生效。" + hint;
   if (pend) hint = "已经放到这个键上了：标题 / 颜色可以直接改，点右上角「保存」写进按键（点空白处或换键就撤销）。" + hint;
   $("#sel-hint").textContent = hint;
 }
@@ -3493,17 +3519,17 @@ function bindUI() {
 
   // 下拉只改表单，不提交；点「保存」时三种触发方式一起写进服务端
   $("#sel-nav").addEventListener("change", () => {
-    if (selectedKey) formDrafts[editGesture] = readFormDraft();
+    if (selectedKey) draftsFor(selectedKey)[editGesture] = readFormDraft();
   });
   $("#sel-type").addEventListener("change", () => {
-    if (selectedKey) formDrafts[editGesture] = readFormDraft();
+    if (selectedKey) draftsFor(selectedKey)[editGesture] = readFormDraft();
     applyTypeVisibility($("#sel-type").value);
   });
   $("#sel-secret").addEventListener("change", () => applyTypeVisibility($("#sel-type").value));
   document.querySelectorAll("#sel-gesture button").forEach((b) => {
     b.addEventListener("click", () => {
       // 切页签前把当前表单存成草稿，换回来时还在（不再依赖服务端）
-      if (selectedKey && draftDiffersFromSaved(selectedKey, editGesture)) formDrafts[editGesture] = readFormDraft();
+      if (selectedKey && draftDiffersFromSaved(selectedKey, editGesture)) draftsFor(selectedKey)[editGesture] = readFormDraft();
       editGesture = b.dataset.g;
       renderEditor();
     });
@@ -3514,7 +3540,7 @@ function bindUI() {
     if (!el) return;
     const snap = () => {
       if (!selectedKey) return;
-      formDrafts[editGesture] = readFormDraft();
+      draftsFor(selectedKey)[editGesture] = readFormDraft();
       paintDraftMarks();
     };
     el.addEventListener("input", snap);
@@ -3524,7 +3550,7 @@ function bindUI() {
     const r = await post("/api/dialog/pick", { mode: "file" });
     if (r.ok && r.path) {
       $("#sel-value").value = r.path;
-      if (selectedKey) formDrafts[editGesture] = readFormDraft();
+      if (selectedKey) draftsFor(selectedKey)[editGesture] = readFormDraft();
     }
   });
 
@@ -3532,9 +3558,10 @@ function bindUI() {
     if (!selectedKey) return;
     // 拖上来还没写入的图标 / 图片 / 程序：点保存才真正写进去
     let appliedPending = false;
-    if (pendingIcon) {
-      const p = pendingIcon;
-      pendingIcon = null;
+    if (pendingIconAnyFor(selectedKey).length) {
+      const list = pendingIconAnyFor(selectedKey).map(([, v]) => v);
+      for (const [id] of pendingIconAnyFor(selectedKey)) delete pendingStore[id];
+      const p = list.find((v) => v.kind && v.kind !== "none") || list[0];
       const r = p.kind === "plugin"
         ? await post("/api/key/plugin", { key: p.key, plugin: p.plugin, index: p.index })
         : p.kind === "program"
@@ -3562,14 +3589,14 @@ function bindUI() {
     const n = selectedKey;
     // 当前页签的内容也进草稿，这样三种触发方式可以一起提交
     // （只保存了刚拖上来的图标时，别把"没改过的表单"也当成改动）
-    if (!appliedPending || Object.keys(formDrafts).length) formDrafts[editGesture] = readFormDraft();
+    if (!appliedPending || draftsCount(selectedKey)) draftsFor(selectedKey)[editGesture] = readFormDraft();
     const order = ["press", "long", "double"];
-    const todo = order.filter((g) => formDrafts[g]);
+    const todo = order.filter((g) => draftsFor(selectedKey)[g]);
     if (!todo.length) return;
 
     // 文件夹被替换：先问一次
     for (const g of todo) {
-      const d = formDrafts[g];
+      const d = draftsFor(selectedKey)[g];
       const before = gestureView(n, g);
       if (before?.type === "folder" && d.type !== "folder"
         && !(await confirmDialog(`按键 ${n} 的${gestureLabel(g)}原来是文件夹「${escHtml(before.value)}」，替换后文件夹和里面的按键会一起删除。继续？`))) return;
@@ -3580,7 +3607,7 @@ function bindUI() {
     let failed = "";
     let madeFolder = false;
     for (const g of todo) {
-      const d = formDrafts[g];
+      const d = draftsFor(selectedKey)[g];
       if (d.type === "plugin") continue;                 // 插件动作不在这里设置
       const before = gestureView(n, g);
       const spec = specFromDraft(d, n, g);
@@ -3606,7 +3633,7 @@ function bindUI() {
     }
 
     if (saved.length) {
-      formDrafts = {};
+      delete draftsAll[selectedKey];
       toast(`已保存：${saved.join(" + ")}${madeFolder ? "（文件夹已创建，点「打开文件夹编辑」往里放按键）" : ""}`, madeFolder ? 2600 : 1400);
     }
     if (failed) toast("没保存上：" + failed, 2400);
@@ -3987,6 +4014,7 @@ function bindUI() {
         if (row.querySelector(".scene-rename")) return;      // 正在改名
         if (row.dataset.album === "1") {
           // 相册场景：先选中并把编辑区换成图片编辑区（空相册也能直接拖图进去），再看要不要播。
+          if (!(await pendingDraftsPrompt())) return;
           selectedScene = name;
           renderEditor();
           if (row.classList.contains("active")) {
@@ -4006,6 +4034,7 @@ function bindUI() {
           await refreshState();
           return;
         }
+        if (!(await pendingDraftsPrompt())) return;
         selectedScene = name;
         renderEditor();
         if (row.classList.contains("active") || row.classList.contains("switching")) return;
@@ -4179,7 +4208,7 @@ function bindUI() {
     if (!name) return;
     if (!(await confirmDialog(`把按键 ${selectedKey} 还原成默认的「${name}」？<br><small>长按 / 双击都会清掉，只保留短按。</small>`))) return;
     await post("/api/key/reset-nav", { key: selectedKey });
-    formDrafts = {};
+    delete draftsAll[selectedKey];
     await refreshState();
     renderEditor();
   });
@@ -4250,7 +4279,7 @@ function renderAlbum(a) {
       setSwitch($("#album-slideshow"), a.standby.slideshow);
       const sp = $("#album-preview");
       if (a.standby.items && sp) {
-        sp.src = `/api/album/preview.jpg?v=${Date.now()}`;
+        sp.src = `/api/album/raw/${a.standby.index || 0}?v=${Date.now()}`;
         sp.hidden = false;
         $("#album-empty").hidden = true;
       }
@@ -4290,7 +4319,7 @@ function renderAlbum(a) {
   if (sig !== albumSig) {
     albumSig = sig;
     if (items.length) {
-      prev.src = `/api/album/preview.jpg?v=${Date.now()}`;
+      prev.src = `/api/album/raw/${a.index || 0}?v=${Date.now()}`;
       prev.hidden = false;
     } else {
       prev.hidden = true;
@@ -4298,7 +4327,7 @@ function renderAlbum(a) {
     }
     $("#album-empty").hidden = !!items.length;
     $("#album-strip").innerHTML = items.map((name, i) => `<div class="album-thumb${i === a.index ? " on" : ""}" data-i="${i}" draggable="true" title="单击：显示这张　拖动：调整顺序">
-      <img src="/api/album/thumb/${i}.jpg?n=${encodeURIComponent(name)}" alt="" /><button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
+      <img src="/api/album/raw/${i}?n=${encodeURIComponent(name)}" alt="" /><button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
   } else {
     document.querySelectorAll("#album-strip .album-thumb").forEach((t) => t.classList.toggle("on", Number(t.dataset.i) === a.index));
   }
@@ -4481,7 +4510,8 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
   albumSceneSig = sig;
   const prev = $("#as-preview");
   if (items.length) {
-    prev.src = `/api/album/preview.jpg?scene=${encodeURIComponent(name)}&v=${Date.now()}`;
+    // 动图原文件直通：浏览器自己会播，和 Dock 一致（cover 效果由 CSS object-fit 出）
+    prev.src = `/api/album/raw/${a.index || 0}?scene=${encodeURIComponent(name)}&v=${Date.now()}`;
     prev.hidden = false;
   } else {
     prev.hidden = true;
@@ -4491,7 +4521,7 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
   const q = encodeURIComponent(name);
   $("#as-strip").innerHTML = items.map((n, i) => `<div class="album-thumb${i === a.index ? " on" : ""}"`
     + ` data-i="${i}" draggable="true" title="单击：显示这张　拖动：调整顺序">`
-    + `<img src="/api/album/thumb/${i}.jpg?scene=${q}&n=${encodeURIComponent(n)}" alt="" />`
+    + `<img src="/api/album/raw/${i}?scene=${q}&n=${encodeURIComponent(n)}" alt="" />`
     + `<button class="album-del" data-del="${i}" title="移除">×</button></div>`).join("");
 }
 
@@ -4656,7 +4686,7 @@ function bindAlbumSceneEditor() {
 function refreshAlbumPreview(name) {
   const prev = $("#as-preview");
   if (!prev || prev.hidden || !name) return;
-  prev.src = `/api/album/preview.jpg?scene=${encodeURIComponent(name)}&v=${Date.now()}`;
+  prev.src = `/api/album/raw/${(albumSceneState?.index) || 0}?scene=${encodeURIComponent(name)}&v=${Date.now()}`;
 }
 
 

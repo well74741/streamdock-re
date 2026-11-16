@@ -630,6 +630,32 @@ class Handler(BaseHTTPRequestHandler):
                         "dataDir": DATA_DIR, "pid": os.getpid(), "shuttingDown": SHUTTING_DOWN})
         elif path == "/api/events":
             self._sse()
+        elif path.startswith("/api/album/raw/"):
+            # 相册原图直通：浏览器自己会播 GIF，界面里的缩略图 / 预览和 Dock 保持一致
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            scene = (q.get("scene") or [""])[0]
+            try:
+                idx = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                idx = -1
+            fp = APP._album_path_for(scene, idx) if idx >= 0 else None
+            if not fp or os.path.splitext(fp)[1].lower() not in IMAGE_EXTS:
+                self.send_error(404)
+                return
+            self._image_file(fp)
+        elif path.startswith("/api/album/raw/"):
+            # 相册原图直通：浏览器自己会播 GIF，界面里的缩略图 / 预览和 Dock 保持一致
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            scene = (q.get("scene") or [""])[0]
+            try:
+                idx = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                idx = -1
+            fp = APP._album_path_for(scene, idx) if idx >= 0 else None
+            if not fp or os.path.splitext(fp)[1].lower() not in IMAGE_EXTS:
+                self.send_error(404)
+                return
+            self._image_file(fp)
         elif path in ("/api/album/tiles.png", "/api/album/preview.jpg") or (
                 path.startswith("/api/album/thumb/") and path.endswith(".jpg")):
             # 相册场景的图片走 ?scene=场景名；不传就是「待机画面」里那本相册

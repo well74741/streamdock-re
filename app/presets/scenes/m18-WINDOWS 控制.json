@@ -1,0 +1,145 @@
+{
+ "pages": [
+  {
+   "name": "WINDOWS 控制",
+   "images": {
+    "1": "m18-sd_707a86938f6091fc.gif",
+    "6": "m18-sd_9b03ddccfb4a5773.gif",
+    "11": "m18-sd_7934736a6776e51d.gif",
+    "2": "m18-sd_d0919fea05c38472.gif",
+    "7": "m18-sd_86f97ca4eec34afe.gif",
+    "12": "m18-sd_07a2092794e65d2e.gif",
+    "3": "m18-sd_390f2f416aac8a24.gif",
+    "8": "m18-sd_3c09db829176e307.gif",
+    "13": "m18-sd_1188f0f67084d583.gif",
+    "4": "m18-sd_1b4b0495edf6f5d8.gif",
+    "9": "m18-sd_6596ec29e165f69d.gif",
+    "14": "m18-sd_de61027605351f6a.gif",
+    "5": "m18-sd_4e0b71ce5b55491f.gif",
+    "10": "m18-sd_101f5de4af7a503c.gif",
+    "15": "m18-sd_99a87adf9a6f0beb.gif"
+   },
+   "actions": {
+    "1": {
+     "type": "hotkey",
+     "keys": "win+s"
+    },
+    "6": {
+     "type": "macro",
+     "steps": [
+      {
+       "op": "hotkey",
+       "keys": "win+x"
+      },
+      {
+       "op": "delay",
+       "sec": 0.2
+      },
+      {
+       "op": "hotkey",
+       "keys": "u"
+      },
+      {
+       "op": "delay",
+       "sec": 0.3
+      },
+      {
+       "op": "hotkey",
+       "keys": "u"
+      }
+     ],
+     "macro": "hotkey win+x\ndelay 0.2\nhotkey u\ndelay 0.3\nhotkey u"
+    },
+    "11": {
+     "type": "hotkey",
+     "keys": "win+d"
+    },
+    "2": {
+     "type": "macro",
+     "steps": [
+      {
+       "op": "hotkey",
+       "keys": "win+x"
+      },
+      {
+       "op": "delay",
+       "sec": 0.2
+      },
+      {
+       "op": "hotkey",
+       "keys": "u"
+      },
+      {
+       "op": "delay",
+       "sec": 0.3
+      },
+      {
+       "op": "hotkey",
+       "keys": "s"
+      }
+     ],
+     "macro": "hotkey win+x\ndelay 0.2\nhotkey u\ndelay 0.3\nhotkey s"
+    },
+    "7": {
+     "type": "hotkey",
+     "keys": "win+a"
+    },
+    "12": {
+     "type": "launch",
+     "path": "C:\\WINDOWS\\system32\\calc.exe"
+    },
+    "3": {
+     "type": "hotkey",
+     "keys": "win+e"
+    },
+    "8": {
+     "type": "hotkey",
+     "keys": "win+x"
+    },
+    "13": {
+     "type": "hotkey",
+     "keys": "win+i"
+    },
+    "4": {
+     "type": "hotkey",
+     "keys": "ctrl+shift+esc"
+    },
+    "9": {
+     "type": "hotkey",
+     "keys": "win+l"
+    },
+    "14": {
+     "type": "hotkey",
+     "keys": "win+="
+    },
+    "5": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "10": {
+     "type": "hotkey",
+     "keys": "win+t"
+    },
+    "15": {
+     "type": "hotkey",
+     "keys": "win+-"
+    },
+    "16": {
+     "type": "nav",
+     "name": "上一页"
+    },
+    "17": {
+     "type": "nav",
+     "name": "主页"
+    },
+    "18": {
+     "type": "nav",
+     "name": "下一页"
+    }
+   },
+   "styles": {}
+  }
+ ],
+ "page": 0,
+ "sceneType": "normal"
+}

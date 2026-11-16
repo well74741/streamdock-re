@@ -211,6 +211,16 @@ def main() -> int:
         return 1
     t0 = time.time()
 
+    # 0) 默认场景：控制台正在跑时，把用户当前的场景（含相册场景和图片）导出成随包默认场景。
+    #     必须在 pyinstaller 之前：presets/ 是 --add-data 打进程序的。
+    #     控制台没开也能打包，只是不带当前场景（随包自带的「相册1 / 音乐控制台」仍在）。
+    try:
+        sys.path.insert(0, HERE)
+        from export_presets import export_presets  # noqa: E402
+        print(f"默认场景：已导出 {export_presets()} 个（当前控制台里的场景会随包带给新用户）")
+    except Exception as exc:  # noqa: BLE001
+        print(f"默认场景：跳过（{exc}）")
+
     # 1) 程序本体（文件夹版，启动快、不会每次解压到临时目录）
     pyinstaller(
         "--name", "M18Console", "--windowed", "--onedir",

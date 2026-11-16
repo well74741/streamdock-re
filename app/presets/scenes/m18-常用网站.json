@@ -1,0 +1,200 @@
+{
+ "pages": [
+  {
+   "id": "10b4ece2a1",
+   "name": "第 1 页",
+   "images": {
+    "1": "m18-sd_ddcce4770fe45cd5.gif",
+    "6": "m18-sd_4935ee9425f9d249.gif",
+    "11": "m18-sd_b4c4eb7a0a5c136c.gif",
+    "2": "m18-sd_547f875fdb0b46f5.gif",
+    "7": "m18-sd_89ddeb33997bdead.gif",
+    "12": "m18-sd_9769d3030ead6a23.gif",
+    "3": "m18-sd_566159a6348709c3.gif",
+    "8": "m18-sd_5a6d29d845cecf47.gif",
+    "13": "m18-sd_ce394b7215dca92c.gif",
+    "4": "m18-sd_2029afcddcfbc3d8.gif",
+    "9": "m18-sd_a90b1878a78e8aa7.gif",
+    "14": "m18-sd_70ca7ce3b609d5f1.gif",
+    "5": "m18-sd_4e0b71ce5b55491f.gif",
+    "10": "m18-sd_0c4c42aee98c9eaf.gif",
+    "15": "m18-sd_c6f62a28622939bc.gif"
+   },
+   "actions": {
+    "1": {
+     "type": "url",
+     "url": "https://www.douyin.com/"
+    },
+    "6": {
+     "type": "url",
+     "url": "https://www.zhihu.com/"
+    },
+    "11": {
+     "type": "url",
+     "url": "https://www.baidu.com/"
+    },
+    "2": {
+     "type": "url",
+     "url": "https://www.toutiao.com/"
+    },
+    "7": {
+     "type": "url",
+     "url": "https://www.eastmoney.com/"
+    },
+    "12": {
+     "type": "url",
+     "url": "https://www.bilibili.com/"
+    },
+    "3": {
+     "type": "url",
+     "url": "https://www.jd.com/"
+    },
+    "8": {
+     "type": "url",
+     "url": "https://www.douban.com/"
+    },
+    "13": {
+     "type": "url",
+     "url": "https://www.sina.com.cn/"
+    },
+    "4": {
+     "type": "url",
+     "url": "https://www.xiaohongshu.com/explore?m_source=pinpai"
+    },
+    "9": {
+     "type": "url",
+     "url": "https://www.ctrip.com/"
+    },
+    "14": {
+     "type": "url",
+     "url": "https://www.taobao.com/"
+    },
+    "5": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "10": {
+     "type": "url",
+     "url": "https://www.zol.com.cn/"
+    },
+    "15": {
+     "type": "url",
+     "url": "http://www.people.com.cn/"
+    },
+    "16": {
+     "type": "nav",
+     "name": "上一页"
+    },
+    "17": {
+     "type": "nav",
+     "name": "主页"
+    },
+    "18": {
+     "type": "nav",
+     "name": "下一页"
+    }
+   },
+   "styles": {},
+   "gestures": {}
+  },
+  {
+   "id": "1c5542a1e5",
+   "name": "第 2 页",
+   "images": {
+    "1": "m18-sd_4935ee9425f9d249.gif",
+    "6": "m18-sd_70ca7ce3b609d5f1.gif",
+    "11": "m18-sd_ddcce4770fe45cd5.gif",
+    "2": "m18-sd_547f875fdb0b46f5.gif",
+    "7": "m18-sd_9769d3030ead6a23.gif",
+    "12": "m18-sd_b4c4eb7a0a5c136c.gif",
+    "3": "m18-sd_a90b1878a78e8aa7.gif",
+    "8": "m18-sd_04fe45206034999f.gif",
+    "13": "m18-sd_3591cbe076182516.gif",
+    "4": "m18-sd_5a6d29d845cecf47.gif",
+    "9": "m18-sd_89ddeb33997bdead.gif",
+    "14": "m18-sd_50573b3ef9cea70b.gif",
+    "5": "m18-sd_4e0b71ce5b55491f.gif",
+    "10": "m18-sd_caf29608724d151c.gif",
+    "15": "m18-sd_8e0f98b08ea5a4c6.gif"
+   },
+   "actions": {
+    "1": {
+     "type": "url",
+     "url": "https://www.zhihu.com/"
+    },
+    "6": {
+     "type": "url",
+     "url": "https://www.taobao.com/"
+    },
+    "11": {
+     "type": "url",
+     "url": "https://www.douyin.com/"
+    },
+    "2": {
+     "type": "url",
+     "url": "https://www.toutiao.com/"
+    },
+    "7": {
+     "type": "url",
+     "url": "https://www.bilibili.com/"
+    },
+    "12": {
+     "type": "url",
+     "url": "https://www.baidu.com/"
+    },
+    "3": {
+     "type": "url",
+     "url": "https://www.ctrip.com"
+    },
+    "8": {
+     "type": "url",
+     "url": "https://weibo.com/"
+    },
+    "13": {
+     "type": "url",
+     "url": "https://www.kuaishou.com/"
+    },
+    "4": {
+     "type": "url",
+     "url": "https://douban.com"
+    },
+    "9": {
+     "type": "url",
+     "url": "https://www.eastmoney.com/"
+    },
+    "14": {
+     "type": "url",
+     "url": "https://deepseek.com"
+    },
+    "5": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "10": {
+     "type": "url",
+     "url": "https://www.ifeng.com/"
+    },
+    "15": {
+     "type": "url",
+     "url": "https://www.amazon.com/"
+    },
+    "16": {
+     "type": "nav",
+     "name": "上一页"
+    },
+    "17": {
+     "type": "nav",
+     "name": "主页"
+    },
+    "18": {
+     "type": "nav",
+     "name": "下一页"
+    }
+   },
+   "styles": {},
+   "gestures": {}
+  }
+ ],
+ "page": 0,
+ "sceneType": "normal"
+}

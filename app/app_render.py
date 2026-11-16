@@ -288,6 +288,8 @@ class RenderMixin:
         others = [k for k in self.key_previews if k != key]
         self.key_previews = {key: buf.getvalue()}       # 同一时间只预览一个键
         self._repaint_keys([key, *others])
+        # 上一处预览被恢复的键重新开始播动图时，起点和别的键差了半拍：整组拉回同一时刻
+        self._gif_resync()
         return True
 
     def clear_key_preview(self, key: int = 0) -> bool:
@@ -297,6 +299,7 @@ class RenderMixin:
         for k in keys:
             self.key_previews.pop(k, None)
         self._repaint_keys(keys)
+        self._gif_resync()
         return True
 
     def _repaint_keys(self, keys) -> None:
