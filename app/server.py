@@ -1017,6 +1017,8 @@ class App:
         self.lighting_only = False
         self.quiet = False
         self._num_cache: dict[int, bytes] = {}
+        # 界面里「还没保存」的预览（拖图标悬停 / 放下后未点保存）：只画到设备上，不进配置
+        self.key_previews: dict[int, bytes] = {}
         self._calib_until = 0.0
         self._identify = None
         self._pushing = False
@@ -1333,6 +1335,77 @@ class App:
             self.device.refresh()
         return True
 
+    # -- Dock 同步预览 ------------------------------------------------------ #
+    def _preview_source(self, src: str) -> str | None:
+        """界面传来的预览来源 → 本机图片文件。只认这几种，不接受任意路径。"""
+        src = src or ""
+        if src.startswith("pack:"):
+            pack_id, _, fname = src[5:].partition("/")
+            return self.icon_pack_file(pack_id, fname)
+        if src.startswith("lib:"):
+            return self.library_path(src[4:])
+        if src.startswith("plugin:"):
+            plugin_id, _, idx = src[7:].rpartition("/")
+            try:
+                return self.plugin_icon_path(plugin_id, int(idx))
+            except ValueError:
+                return None
+        if src.startswith("asset:"):
+            return asset_path(src[6:])
+        if src.startswith("program:"):
+            return self.program_icon(src[8:])
+        return None
+
+    def set_key_preview(self, key: int, src: str) -> bool:
+        """把一张还没保存的图临时显示在设备的某个键上（只取第一帧，不写配置）。"""
+        if not (1 <= key <= KEY_COUNT):
+            return False
+        path = self._preview_source(src)
+        if not path or not os.path.isfile(path):
+            return False
+        try:
+            img = official.read_image(path)
+            raw = img[1] if img else open(path, "rb").read()
+            with Image.open(io.BytesIO(raw)) as im:
+                rgb = ImageOps.fit(self._flat_rgb(im), (KEY_SIZE, KEY_SIZE), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            rgb.save(buf, "JPEG", quality=90)
+        except Exception as exc:  # noqa: BLE001
+            log(f"预览图读取失败 {path}: {exc}")
+            return False
+        others = [k for k in self.key_previews if k != key]
+        self.key_previews = {key: buf.getvalue()}       # 同一时间只预览一个键
+        self._repaint_keys([key, *others])
+        return True
+
+    def clear_key_preview(self, key: int = 0) -> bool:
+        keys = list(self.key_previews) if not key else [k for k in self.key_previews if k == key]
+        if not keys:
+            return False
+        for k in keys:
+            self.key_previews.pop(k, None)
+        self._repaint_keys(keys)
+        return True
+
+    def _repaint_keys(self, keys) -> None:
+        if not (self.device.connected and not (self.in_standby or self.writes_paused or self.quiet
+                                               or self.lighting_only or self.yielded or self.screen_off)):
+            return
+        self._anim_pause_until = time.time() + 0.6
+        for k in keys:
+            if not (1 <= k <= KEY_COUNT):
+                continue
+            if k in self.key_previews:
+                # 预览盖住原生动图：先停掉这个键的动图，否则 SDK 会马上把下一帧画回去
+                with self._gif_lock:
+                    if self._gif_active.pop(k, None):
+                        self.device.clear_key_gif(k)
+            else:
+                self._gif_update_key(k)
+            if k not in self._gif_active:
+                self.device.send_image(k, self._render_key(k))
+        self.device.refresh()
+
     def _plugin_vis(self, key: int) -> dict | None:
         spec = self.key_actions.get(key)
         if isinstance(spec, dict) and spec.get("type") == "plugin":
@@ -1340,6 +1413,9 @@ class App:
         return None
 
     def _key_jpeg(self, key: int) -> bytes | None:
+        pv = self.key_previews.get(key)
+        if pv:
+            return pv
         vis = self._plugin_vis(key)
         if vis and vis.get("jpeg"):
             return vis["jpeg"]
@@ -1507,7 +1583,7 @@ class App:
                 return
             want = {}
             for key in range(1, KEY_COUNT + 1):
-                path = self._gif_want(key)
+                path = None if key in self.key_previews else self._gif_want(key)
                 if path:
                     want[key] = path
             for key in [k for k in self._gif_active if k not in want]:
@@ -1548,7 +1624,7 @@ class App:
         """单个键换图 / 改标题：只动这一个键。要在写静态画面之前调用。"""
         with self._gif_lock:
             self._gif_sync_session()
-            want = self._gif_want(key) if self._gif_allowed() else None
+            want = self._gif_want(key) if self._gif_allowed() and key not in self.key_previews else None
             old = self._gif_active.get(key)
             if old == want:
                 return
@@ -1972,6 +2048,7 @@ class App:
             self.page = idx if idx >= 0 else (self._main_pages() or [0])[0]
 
     def _bind_page(self) -> None:
+        self.key_previews = {}
         self._ensure_page_ids()
         page = self.pages[self.page]
         self.key_overrides = page["images"]
@@ -8322,6 +8399,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/key/bind-program":
             self._json(APP.bind_program(int(body.get("key", 0)),
                                         str(body.get("path") or "")))
+        elif path == "/api/key/preview":
+            if body.get("src"):
+                self._json({"ok": APP.set_key_preview(int(body.get("key", 0)), str(body["src"]))})
+            else:
+                self._json({"ok": APP.clear_key_preview(int(body.get("key", 0)))})
         elif path == "/api/key/icon":
             self._json({"ok": APP.set_key_icon(int(body.get("key", 0)),
                                                str(body.get("name") or ""))})

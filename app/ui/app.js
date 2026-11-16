@@ -1330,12 +1330,26 @@ function bindIconDrag(container) {
       }
       const t = dropTargetAt(ev.clientX, ev.clientY);
       if (t && !t.closest(".side-scroll")) t.classList.add("drop-hover");
+      // 悬停在某个屏幕键上：设备上的这个键也临时换成这张图，移开就还原
+      const hk = t?.dataset?.key ? Number(t.dataset.key) : 0;
+      const name = img.dataset.name;
+      if (hk >= 1 && hk <= 15) showDockPreview(hk, name);
+      else if (pendingIcon) showDockPreview(pendingIcon.key, dockPreviewSrc(pendingIcon));
+      else hideDockPreview();
     };
     const onUp = async (ev) => {
       document.removeEventListener("pointermove", onMove, true);
       document.removeEventListener("pointerup", onUp, true);
       endGhost();
       clearDropHover();
+      {
+        const t0 = dragging ? dropTargetAt(ev.clientX, ev.clientY) : null;
+        const k0 = t0?.dataset?.key ? Number(t0.dataset.key) : 0;
+        if (dragging && !(k0 >= 1 && k0 <= 15)) {
+          if (pendingIcon) showDockPreview(pendingIcon.key, dockPreviewSrc(pendingIcon));
+          else hideDockPreview();
+        }
+      }
       let key = 0;
       if (dragging) {
         const t = dropTargetAt(ev.clientX, ev.clientY);
@@ -2195,10 +2209,37 @@ let selectedScene = null;     // 列表里选中的场景（编辑区按它决�
 // 从图标库点图标 / 插件动作时先只做「临时预览」，点「保存」才真正写进按键
 let pendingIcon = null;       // {key, gesture, kind, name?, plugin?, index?, src?, label}
 
+/* Dock 同步预览：拖到按键上悬停、放下后还没保存时，设备上也显示这张图（服务端只画不存） */
+let dockPreview = { key: 0, src: "" };
+const sendDockPreview = throttle((key, src) => {
+  post("/api/key/preview", src ? { key, src } : { key: 0 }).catch(() => {});
+}, 90);
+function dockPreviewSrc(info) {
+  // 界面里的预览 → 服务端认识的来源（不接受任意路径）
+  if (!info) return "";
+  if (info.kind === "plugin") return `plugin:${info.plugin}/${info.index}`;
+  if (info.kind === "icon" && /^(pack|lib|plugin):/.test(info.name || "")) return info.name;
+  if (info.kind === "image" && info.name) return `asset:${info.name}`;
+  if (info.kind === "program" && info.path) return `program:${info.path}`;
+  return "";
+}
+function showDockPreview(key, src) {
+  if (!key || key > 15 || !src) return hideDockPreview();
+  if (dockPreview.key === key && dockPreview.src === src) return;
+  dockPreview = { key, src };
+  sendDockPreview(key, src);
+}
+function hideDockPreview() {
+  if (!dockPreview.key) return;
+  dockPreview = { key: 0, src: "" };
+  sendDockPreview(0, "");
+}
+
 function clearPendingIcon() {
   if (!pendingIcon) return;
   const k = pendingIcon.key;
   pendingIcon = null;
+  hideDockPreview();
   document.querySelector(`.ring-board .cell[data-key="${k}"]`)?.classList.remove("pending-icon");
   refreshCells();
   renderEditor();
@@ -2214,6 +2255,7 @@ function dropPendingForKey(key) {
 function setPendingIcon(key, gesture, info) {
   if (selectedKey !== key) selectKey(key);          // 先把编辑区切到这个键
   pendingIcon = { key, gesture, ...info };
+  showDockPreview(key, dockPreviewSrc(pendingIcon));
   paintPendingIcon();
 }
 
@@ -3511,6 +3553,7 @@ function bindUI() {
         renderEditor();
         return;
       }
+      hideDockPreview();
       await refreshState();
       if (p.kind === "plugin" && r.native && r.needsInput) {
         selectKey(p.key);
