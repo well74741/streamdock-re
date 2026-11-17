@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_mixins(baseline=False):
     # core 导入时会探测/创建真实数据目录，因此只注入本测试所需的常量与纯函数。
     core = types.ModuleType("core")
-    constants = dict(KEY_COUNT=15, KEY_SIZE=64, GRID_COLS=5, GRID_ROWS=3,
+    constants = dict(KEY_COUNT=15, KEY_SIZE=64, KEY_GAP=27, GRID_COLS=5, GRID_ROWS=3,
                      IMAGE_EXTS=(".png", ".jpg", ".gif"),
                      ALBUM_TRANSITIONS=("none", "fade", "slide", "wipe", "mosaic"))
     for name in ("GIF_CACHE", "CROP_CACHE", "LIB_THUMB_DIR", "LIBRARY_DIR", "PLUGIN_DATA",
@@ -130,6 +130,9 @@ def make_app(folder, media=MEDIA, render=RENDER, delay=0):
         def current_scene(self):
             return self.active_scene or self.custom_scene_name
 
+        def _layer_reload(self):
+            pass          # 相册场景的按键层（app_scene_keys）不在本测试范围
+
     for module in (media, render):
         module.UPLOAD_DIR = str(folder)
         module.GIF_CACHE = str(folder / "gifcache")
@@ -212,6 +215,42 @@ def wait_worker(app, timeout=10):
         raise AssertionError("相册工作线程未在超时内结束")
 
 
+class AlbumTransitionTests(unittest.TestCase):
+    """并行写屏下四种过渡都是整板逐帧：每帧一次算完整块画布，而不是按列/按键依次揭开。"""
+    size = (5 * 64 + 4 * 27, 3 * 64 + 2 * 27)
+
+    def share(self, frame):
+        # 新图(白)所占像素比例
+        data = frame.convert("L").getdata()
+        return sum(v > 127 for v in data) / len(data)
+
+    def test_every_frame_spans_whole_board_and_progresses(self):
+        prev, cur = Image.new("RGB", self.size, "black"), Image.new("RGB", self.size, "white")
+        mix = MEDIA.MediaMixin._transition_frame
+        noise = MEDIA.MediaMixin._transition_noise(self.size)
+        for mode in ("fade", "slide", "wipe", "mosaic"):
+            shares = [self.share(mix(mode, prev, cur, i / 8, noise)) if mode != "fade"
+                      else mix(mode, prev, cur, i / 8).convert("L").getpixel((0, 0)) / 255 for i in range(1, 8)]
+            self.assertEqual(shares, sorted(shares), mode)             # 单调推进
+            self.assertGreater(shares[0], 0.0, mode)
+            self.assertLess(shares[3], 1.0, mode)                      # 中间帧仍是新旧混合
+        # 马赛克：中间帧的新旧方块散布在每个键里，而不是整键整键地出现
+        frame = mix("mosaic", prev, cur, 0.5, noise).convert("L")
+        mixed_keys = 0
+        for row in range(3):
+            for col in range(5):
+                tile = frame.crop((col * 91, row * 91, col * 91 + 64, row * 91 + 64))
+                low, high = tile.getextrema()
+                mixed_keys += low < 128 < high
+        self.assertGreaterEqual(mixed_keys, 13)
+        # 擦除：柔边竖线，同一列上下一致（整列同一时刻），左新右旧
+        frame = mix("wipe", prev, cur, 0.5).convert("L")
+        x = self.size[0] // 3
+        self.assertEqual(len({frame.getpixel((x, y)) for y in range(self.size[1])}), 1)
+        self.assertGreater(frame.getpixel((5, 5)), 200)
+        self.assertLess(frame.getpixel((self.size[0] - 5, 5)), 50)
+
+
 class AlbumRenderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="m18-offline-")
@@ -247,7 +286,7 @@ class AlbumRenderTests(unittest.TestCase):
         self.app.album_items = ["movie.gif"]
         before = self.app._album_gif_paths(self.app._album_snapshot())
         sprite_before = self.app.album_canvas_gif(index=0)
-        for field, value in (("album_fit", "contain"), ("wallpaper_gap", 10),
+        for field, value in (("album_fit", "contain"),
                              ("wallpaper_zoom", 1.25), ("rotation", 180),
                              ("standby_brightness", 40)):
             setattr(self.app, field, value)

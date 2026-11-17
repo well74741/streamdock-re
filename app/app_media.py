@@ -24,6 +24,7 @@ from core import (  # noqa: F401
     GRID_ROWS,
     IMAGE_EXTS,
     KEY_COUNT,
+    KEY_GAP,
     KEY_SIZE,
     LIBRARY_DIR,
     LIB_THUMB_DIR,
@@ -148,8 +149,8 @@ class MediaMixin:
         return self.apply_wallpaper()
 
     def set_key_image(self, key: int, path: str) -> bool:
-        if not (1 <= key <= KEY_COUNT) or not os.path.isfile(path):
-            return False
+        if not (1 <= key <= KEY_COUNT) or not os.path.isfile(path) or getattr(self, "_layer_scene_name", lambda: "")():
+            return False                # 相册 / 灯效场景的屏幕被整屏画面占用，按键只能设动作
         data = self._load_image_source(path)
         if data is None:
             return False
@@ -247,11 +248,12 @@ class MediaMixin:
             if self.screen_off:
                 self._blanked = False
                 self.blank_screen()
+            elif self.album_active() or getattr(self, "effect_active", lambda: False)():
+                self._restore_display()
             elif self.in_standby:
                 self.apply_standby()
             else:
-                self.apply_keys()
-            self._gif_start_all()
+                self._restore_display()
             self._frame_hash = None
             self._dirty = True
             self._last_activity = time.time()
@@ -260,11 +262,12 @@ class MediaMixin:
             time.sleep(1.5)
             if self.device.connected and not self.screen_off:
                 try:
-                    if self.in_standby:
+                    if self.album_active() or getattr(self, "effect_active", lambda: False)():
+                        self._restore_display()
+                    elif self.in_standby:
                         self.apply_standby()
                     else:
-                        self.apply_keys()
-                    self._gif_start_all()
+                        self._restore_display()
                 except Exception:  # noqa: BLE001
                     pass
             log("休眠恢复：按键通道已重新订阅，画面和动图已重推")
@@ -406,6 +409,8 @@ class MediaMixin:
         last_refresh = 0.0
         while True:
             time.sleep(0.012)
+            if getattr(self, "effect_active", lambda: False)():
+                continue
             if (not self.device.connected or not self.key_overrides
                     or self.in_standby or self.lighting_only
                     or self.quiet or self.writes_paused or self.yielded
@@ -449,9 +454,8 @@ class MediaMixin:
                 self._anim_pushes += pushed      # 诊断：主机侧推了多少张动图（会占通道）
 
     def _gap(self, gap: int | None = None) -> int:
-        """键间缝隙；相册场景可以有自己的缝隙，传 gap 就按它算（None = 全局设置）。"""
-        g = self.wallpaper_gap if gap is None else gap
-        return max(0, min(64, int(g)))
+        """固定物理间隙；保留参数以兼容旧配置与调用，但不再采用其值。"""
+        return KEY_GAP
 
     def _canvas_size(self, gap: int | None = None) -> tuple[int, int]:
         gap = self._gap(gap)
@@ -542,7 +546,7 @@ class MediaMixin:
         except OSError:
             mtime = 0
         return (
-            self.wallpaper_file, mtime, self.wallpaper_gap, self.wallpaper_zoom,
+            self.wallpaper_file, mtime, KEY_GAP, self.wallpaper_zoom,
             self.wallpaper_ox, self.wallpaper_oy, self.wallpaper_fit,
             self.wallpaper_flip, self.rotation, "calibration" if self.preview_mode == "calibration" else "wp",
             self.standby_brightness,
@@ -581,12 +585,16 @@ class MediaMixin:
             self.apply_wallpaper()
 
     def _push_canvas(self, note: str) -> bool:
+        if getattr(self, "effect_active", lambda: False)():
+            return False
         self._cancel_album_push()
         with self._paint_lock:
             return self._push_canvas_locked(note)
 
     def _push_canvas_locked(self, note: str) -> bool:
-        """把画布按当前 gap 切块，逐键写入设备。"""
+        """把画布按固定间隙切块，逐键写入设备。"""
+        if getattr(self, "effect_active", lambda: False)():
+            return False
         if not self.device.connected or self.writes_paused or self.quiet or self.lighting_only or self.yielded:
             return False
         if self.screen_off:
@@ -636,6 +644,9 @@ class MediaMixin:
         self._num_cache.clear()
         self._gif_active = {}
         self._save_config()
+        if getattr(self, "effect_active", lambda: False)():
+            self.effect_repaint()  # 差分模式下静止的屏幕也需要按新方向重发
+            return True
         if self.album_active():
             return self._push_album()
         if self.preview_mode == "calibration":
@@ -682,16 +693,12 @@ class MediaMixin:
             return fit if fit in ("cover", "contain", "fill") else "cover"
         return self.album_fit
 
-    def _alb_gap(self) -> int | None:
-        """相册场景自己的键间缝隙；没单独设过就返回 None（跟全局设置走）。"""
-        if self.album_scene_name:
-            g = self._album_scene.get("gap")
-            return None if g is None else self._gap(g)
-        return None
+    def _alb_gap(self) -> int:
+        """相册与壁纸共用固定物理间隙，不读取旧场景的自定义值。"""
+        return KEY_GAP
 
     def _alb_gap_eff(self) -> int:
-        g = self._alb_gap()
-        return self._gap() if g is None else g
+        return KEY_GAP
 
     def _alb_set_index(self, index: int) -> None:
         n = len(self._alb_items())
@@ -759,124 +766,6 @@ class MediaMixin:
         self.broadcast({"type": "album", **self.album_state()})
         return True
 
-    ALBUM_NAV = {16: "上一页", 17: "主页", 18: "下一页"}
-
-    def _album_nav_page(self, name: str) -> dict | None:
-        """相册场景文件里的第一页（导航键的动作/手势都存在这里，不跟当前页走）。"""
-        data = self._scene_file_data(self._scene_path(name))
-        if not data or data.get("sceneType") != "album":
-            return None
-        pages = data.get("pages")
-        if not isinstance(pages, list) or not pages:
-            return None
-        if not isinstance(pages[0], dict):
-            return None
-        return pages[0]
-
-    def _album_nav_write(self, name: str, key: int, spec: dict | None, gesture: str = "") -> bool:
-        """把相册场景里导航键的动作写回场景文件：长按 / 双击进 gestures，短按进 actions。"""
-        data = self._scene_file_data(self._scene_path(name))
-        if not data or data.get("sceneType") != "album":
-            return False
-        pages = data.get("pages")
-        if not isinstance(pages, list) or not pages or not isinstance(pages[0], dict):
-            pages = [{"name": name, "images": {}, "actions": {}}]
-            data["pages"] = pages
-            data["page"] = 0
-        page = pages[0]
-        if gesture in ("long", "double"):
-            gs = page.get("gestures")
-            if not isinstance(gs, dict):
-                gs = {}
-                page["gestures"] = gs
-            one = gs.get(str(key))
-            if not isinstance(one, dict):
-                one = {}
-            if spec:
-                one[gesture] = spec
-            else:
-                one.pop(gesture, None)
-            if one:
-                gs[str(key)] = one
-            else:
-                gs.pop(str(key), None)
-            if not gs:
-                page.pop("gestures", None)
-        else:
-            acts = page.get("actions")
-            if not isinstance(acts, dict):
-                acts = {}
-                page["actions"] = acts
-            if spec:
-                acts[str(key)] = spec
-            else:
-                acts.pop(str(key), None)
-        try:
-            path = self._scene_path(name)
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp, path)
-            return True
-        except OSError as exc:
-            log(f"写入相册场景导航键失败：{exc}")
-            return False
-
-    def _album_nav_load(self, name: str) -> None:
-        """进相册场景时，把场景文件里导航键的动作/手势装进内存，编辑区就能看到。"""
-        page = self._album_nav_page(name)
-        if not page:
-            return
-        acts = page.get("actions") if isinstance(page.get("actions"), dict) else {}
-        for k in self.ALBUM_NAV:
-            spec = acts.get(str(k))
-            if isinstance(spec, dict):
-                self.key_actions[k] = spec
-        gs = page.get("gestures") if isinstance(page.get("gestures"), dict) else {}
-        for k, one in gs.items():
-            try:
-                key = int(k)
-            except (TypeError, ValueError):
-                continue
-            if key in self.ALBUM_NAV and isinstance(one, dict) and one:
-                self.key_gestures[key] = one
-
-    def _album_nav_step(self, key: int) -> None:
-        """相册场景里导航键的短按：◀ 上一张 / ⌂ 第一张 / ▶ 下一张。"""
-        if key == 16:
-            self.album_goto(-1)
-        elif key == 18:
-            self.album_goto(1)
-        elif key == 17:
-            self.go_home()
-
-    def _ensure_album_nav(self, name: str) -> None:
-        """相册场景的三个导航键默认是 上页 / 主页 / 下页：补进场景文件，编辑区里能看到。"""
-        data = self._scene_file_data(self._scene_path(name))
-        if not data or data.get("sceneType") != "album":
-            return
-        pages = data.get("pages")
-        if not isinstance(pages, list) or not pages:
-            return
-        acts = pages[0].get("actions")
-        if not isinstance(acts, dict):
-            acts = {}
-            pages[0]["actions"] = acts
-        changed = False
-        for k, nav in self.ALBUM_NAV.items():
-            if str(k) not in acts:
-                acts[str(k)] = {"type": "nav", "name": nav}
-                changed = True
-        if not changed:
-            return
-        try:
-            tmp = self._scene_path(name) + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp, self._scene_path(name))
-        except OSError as exc:
-            log(f"写入相册场景默认导航键失败：{exc}")
-
     def _album_file_for(self, items: list, index: int) -> str | None:
         if not items:
             return None
@@ -889,7 +778,6 @@ class MediaMixin:
             alb = self._album_scene_data(scene) or {}
             items = [str(n) for n in (alb.get("items") or []) if str(n)]
             fit = str(alb.get("fit") or "cover")
-            gap = alb.get("gap")
             playing = self.album_active() and self.album_scene_name == scene
             index = self._alb_index() if playing else int(alb.get("index") or 0)
             return {"items": items, "index": index, "active": bool(playing),
@@ -897,14 +785,14 @@ class MediaMixin:
                     "interval": max(2, min(600, int(alb.get("interval") or 8))),
                     "transition": str(alb.get("transition") or "fade"),
                     "fit": fit if fit in ("cover", "contain", "fill") else "cover",
-                    "gap": self._gap() if gap is None else self._gap(gap),
-                    "gapOwn": gap is not None,
+                    "gap": KEY_GAP,
+                    "gapOwn": False,
                     "source": "album-scene", "scene": scene}
         return {"items": list(self._alb_items()), "index": self._alb_index(),
                 "active": self.album_active() if active is None else active,
                 "slideshow": self._alb_slideshow(), "interval": int(self._alb_interval()),
                 "transition": self._alb_transition(), "fit": self._alb_fit(),
-                "gap": self._alb_gap_eff(), "gapOwn": self._alb_gap() is not None,
+                "gap": KEY_GAP, "gapOwn": False,
                 "standby": {"items": len(self.album_items),
                             "index": int(self.album_index),
                             "slideshow": bool(self.album_slideshow),
@@ -1385,8 +1273,7 @@ class MediaMixin:
                     alb["transition"] = body["transition"]
                 if body.get("fit") in ("cover", "contain", "fill"):
                     alb["fit"] = body["fit"]
-                if "gap" in body:
-                    alb["gap"] = max(0, min(64, int(body["gap"])))
+                # 旧客户端传来的 gap 不再生效，也不改写场景里的历史字段。
                 return True
             if self._album_scene_edit(scene, change):
                 self._album_last = time.time()
@@ -1642,6 +1529,44 @@ class MediaMixin:
                 self.broadcast({"type": "gif", "t": time.time(), "keys": sorted(self._gif_active)})
             return ok
 
+    @staticmethod
+    def _transition_noise(size) -> Image.Image:
+        """马赛克溶解用的随机阈值图：约 16px 一块（一个键里 4×4 块），最近邻放大保持方块边缘。"""
+        w, h = max(1, size[0] // 16), max(1, size[1] // 16)
+        small = Image.frombytes("L", (w, h), bytes(random.randrange(1, 255) for _ in range(w * h)))
+        return small.resize(size, Image.NEAREST)
+
+    @staticmethod
+    def _transition_frame(mode: str, prev: Image.Image, cur: Image.Image, k: float,
+                          noise: Image.Image | None = None) -> Image.Image:
+        """过渡的第 k(0..1) 帧，整块画布一起算（含键间缝隙），再统一裁成 15 键。"""
+        ease = 1 - (1 - k) ** 2
+        if mode == "fade":
+            return Image.blend(prev, cur, k)
+        if mode == "slide":
+            off = int(cur.width * ease)
+            frame = Image.new("RGB", cur.size)
+            frame.paste(prev, (-off, 0))
+            frame.paste(cur, (cur.width - off, 0))
+            return frame
+        if mode == "wipe":
+            # 带柔边的竖直分界线从左扫到右
+            edge = max(8, cur.width // 10)
+            pos = int((cur.width + edge) * ease) - edge
+            row = bytes(255 if x < pos else 0 if x >= pos + edge else 255 - (x - pos) * 255 // edge
+                        for x in range(cur.width))
+            mask = Image.frombytes("L", (cur.width, 1), row).resize(cur.size, Image.NEAREST)
+            return Image.composite(cur, prev, mask)
+        if mode == "mosaic":
+            if noise is None:
+                w, h = max(1, cur.width // 16), max(1, cur.height // 16)
+                noise = Image.frombytes("L", (w, h), bytes(random.randrange(1, 255) for _ in range(w * h))
+                                        ).resize(cur.size, Image.NEAREST)
+            cut = int(255 * ease)
+            mask = noise.point(lambda v: 255 if v <= cut else 0)
+            return Image.composite(cur, prev, mask)
+        return cur
+
     def _push_album(self, prev: Image.Image | None = None, _request=None) -> bool:
         """冻结目标→准备→串行提交；新请求随时使旧编码/过渡失效。"""
         if not self.album_active() or not self._album_can_push():
@@ -1686,19 +1611,27 @@ class MediaMixin:
                 # 换组/过渡先停旧 GIF；同图低频补帧不重复清组和加载 15 张 GIF。
                 if mode != "none" or self._gif_active != paths or not getattr(self.device, "gif_running", False):
                     self._gif_stop_all()
-                if mode in ("fade", "slide"):
-                    # 保留原有节流，不以堆积无 ACK 的 SDK 命令换取 HTTP 响应更快。
+                # 并行写屏（每键一条 SDK 连接）整板约 57ms：过渡可以多几帧，按真实回执节流
+                parallel = bool(getattr(self.device, "parallel_ready", False))
+                if parallel and mode in ("fade", "slide", "wipe", "mosaic"):
+                    # 整板一帧约 57ms：四种过渡都按整板逐帧动画，15 键同一时刻换同一帧，
+                    # 不再按列/按键依次揭开（那在设备上看就是一排一排、一格一格）。
+                    noise = self._transition_noise(cur.size) if mode == "mosaic" else None
+                    steps = 8
+                    for i in range(1, steps):
+                        if cancelled():
+                            return False
+                        frame = self._transition_frame(mode, prev, cur, i / steps, noise)
+                        ok = self._send_tiles(self._canvas_tiles(frame, spec["gap"], spec["rotation"]),
+                                              cancelled=cancelled) and ok
+                        self.device.refresh()
+                        self.device.wait_writers_idle(0.5)
+                elif mode in ("fade", "slide"):
+                    # 单连接回退：保留原有节流，不以堆积无 ACK 的 SDK 命令换取 HTTP 响应更快。
                     for i in range(1, 3):
                         if cancelled():
                             return False
-                        k = i / 3
-                        if mode == "fade":
-                            frame = Image.blend(prev, cur, k)
-                        else:
-                            off = int(cur.width * (1 - (1 - k) ** 2))
-                            frame = Image.new("RGB", cur.size)
-                            frame.paste(prev, (-off, 0))
-                            frame.paste(cur, (cur.width - off, 0))
+                        frame = self._transition_frame(mode, prev, cur, i / 3)
                         ok = self._send_tiles(self._canvas_tiles(frame, spec["gap"], spec["rotation"]),
                                               cancelled=cancelled) and ok
                         self.device.refresh()
@@ -1789,19 +1722,14 @@ class MediaMixin:
         items = [str(n) for n in (alb.get("items") or []) if str(n)]
         if not items:
             # 空相册也允许「切换过去」：整屏黑 + 界面里可以继续编辑（拖图进来立即显示）
-            self._ensure_album_nav(name)
             if not self.album_active():
                 self._album_return = self.active_scene or self.custom_scene_name
-                self._album_nav_backup = {
-                    k: (self.key_actions.get(k),
-                        dict(self.key_gestures.get(k) or {})) for k in self.ALBUM_NAV
-                }
-            self._album_nav_load(name)
+            self._layer_reload()
             self.album_scene_name = name
             self._album_scene = {"items": [], "index": 0, "slideshow": bool(alb.get("slideshow", True)),
                                  "interval": max(2, min(600, int(alb.get("interval") or 8))),
                                  "transition": str(alb.get("transition") or "fade"),
-                                 "fit": str(alb.get("fit") or "cover"), "gap": None if alb.get("gap") is None else self._gap(alb.get("gap"))}
+                                 "fit": str(alb.get("fit") or "cover"), "gap": KEY_GAP}
             self._gif_stop_all()
             self.preview_mode = "album"
             self.in_standby = True
@@ -1815,14 +1743,7 @@ class MediaMixin:
             return True
         if not self.album_active():
             self._album_return = self.active_scene or self.custom_scene_name
-        self._ensure_album_nav(name)
-        if not self.album_active():
-            # 记住进相册前这三个键的动作，退出时还原
-            self._album_nav_backup = {
-                k: (self.key_actions.get(k),
-                    dict(self.key_gestures.get(k) or {})) for k in self.ALBUM_NAV
-            }
-        self._album_nav_load(name)
+        self._layer_reload()           # 按键层（含默认动作）在第一次用到时从场景文件读出
         self.album_scene_name = name
         fit = str(alb.get("fit") or "cover")
         self._album_scene = {
@@ -1832,7 +1753,7 @@ class MediaMixin:
             "interval": max(2, min(600, int(alb.get("interval") or 8))),
             "transition": str(alb.get("transition") or "fade") if str(alb.get("transition") or "") in ALBUM_TRANSITIONS else "fade",
             "fit": fit if fit in ("cover", "contain", "fill") else "cover",
-            "gap": None if alb.get("gap") is None else self._gap(alb.get("gap")),
+            "gap": KEY_GAP,
         }
         ok = self.album_play()
         if ok:
@@ -1869,19 +1790,7 @@ class MediaMixin:
         self.album_scene_name = ""
         self._album_scene = {}
         self._last_activity = time.time()
-        # 退出相册：把那三个导航键还原成进相册之前的样子，别把相册的设置带到原场景里
-        backup = getattr(self, "_album_nav_backup", None)
-        if backup:
-            for k, (act, gs) in backup.items():
-                if act is None:
-                    self.key_actions.pop(k, None)
-                else:
-                    self.key_actions[k] = act
-                if gs:
-                    self.key_gestures[k] = gs
-                else:
-                    self.key_gestures.pop(k, None)
-            self._album_nav_backup = None
+        self._layer_reload()           # 相册场景的按键层只在播放时生效，底层按键从没被改过
         back = getattr(self, "_album_return", None)
         self._album_return = None
         self.broadcast({"type": "album", **self.album_state()})

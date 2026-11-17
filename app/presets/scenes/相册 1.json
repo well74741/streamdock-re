@@ -1,0 +1,132 @@
+{
+ "sceneType": "album",
+ "album": {
+  "items": [
+   "m18-album_1794825381981_0.gif",
+   "m18-1794828409194.gif",
+   "m18-1794828409221.gif",
+   "m18-1794828409256.gif",
+   "m18-album_1794881573781_0.jpg"
+  ],
+  "index": 0,
+  "slideshow": false,
+  "interval": 8,
+  "transition": "slide",
+  "fit": "cover"
+ },
+ "pages": [
+  {
+   "id": "34bb548aed",
+   "name": "第 1 页",
+   "images": {
+    "5": "m18-sd_4e0b71ce5b55491f.gif",
+    "8": "m18-sd_2af6de136c3b2ae6.gif"
+   },
+   "actions": {
+    "16": {
+     "type": "nav",
+     "name": "上一页"
+    },
+    "17": {
+     "type": "nav",
+     "name": "主页"
+    },
+    "18": {
+     "type": "nav",
+     "name": "下一页"
+    },
+    "5": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "1": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "2": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "3": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "4": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "6": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "7": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "8": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "9": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "10": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "11": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "12": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "13": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "14": {
+     "type": "nav",
+     "name": "下一场景"
+    },
+    "15": {
+     "type": "nav",
+     "name": "下一场景"
+    }
+   },
+   "styles": {},
+   "gestures": {},
+   "keyLayer": 1
+  },
+  {
+   "id": "675a4c56fa",
+   "name": "第 2 页",
+   "images": {
+    "5": "m18-sd_4e0b71ce5b55491f.gif"
+   },
+   "actions": {
+    "16": {
+     "type": "nav",
+     "name": "上一页"
+    },
+    "17": {
+     "type": "nav",
+     "name": "主页"
+    },
+    "18": {
+     "type": "nav",
+     "name": "下一页"
+    },
+    "5": {
+     "type": "nav",
+     "name": "下一场景"
+    }
+   },
+   "styles": {},
+   "gestures": {}
+  }
+ ],
+ "page": 0
+}

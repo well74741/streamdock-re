@@ -1877,6 +1877,48 @@ html, body { overflow: hidden; height: 100%; }
   border-radius: 10px;
 }
 
+/* 灯效编辑与真实几何预览：命中区域仍使用原有屏幕/导航键。 */
+.fx-body { padding: 12px 16px 16px; }
+.fx-steps { margin: 0 0 12px; padding-left: 22px; color: #526077; font-size: 12px; line-height: 1.8; }
+.fx-toolbar, .fx-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.fx-meta label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 180px; font-size: 12px; }
+.fx-meta input { flex: 1; min-width: 0; }
+#fx-code { width: 100%; min-height: 240px; resize: vertical; }
+.fx-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; }
+.fx-row b { flex: 1; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.fx-row.active b { color: #2f6fe0; }
+.fx-row .seg { flex: 0 0 auto; }
+#fx-board-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; object-fit: fill; z-index: 2; }
+#fx-board-preview[hidden] { display: none; }
+/* 轮廓只在控制台 DOM 叠加，不进入会发送到 Dock 的灯效画面。 */
+.effect-scene .ring-board { z-index: 3; background: transparent; }
+.effect-scene .ring { z-index: 4; }
+.effect-scene .ring-board .cell {
+  background: transparent !important;
+  border-color: rgba(207, 224, 246, .72);
+  box-shadow: inset 0 0 0 1px rgba(6, 12, 22, .62), 0 0 0 1px rgba(6, 12, 22, .72);
+}
+.effect-scene .ring-board .cell:hover { border-color: rgba(235, 246, 255, .95); }
+.effect-scene .ring-board .cell > *, .effect-scene .ring-board .cell::after { visibility: hidden; }
+.effect-scene .ring .dot {
+  visibility: visible;
+  background: #000;
+  border-color: rgba(190, 210, 236, .9);
+  outline: 1px solid rgba(6, 12, 22, .8);
+}
+.effect-scene .ring .dot .idx { visibility: hidden; }
+.effect-scene .ring-btn {
+  color: #edf5ff;
+  background: rgba(9, 17, 29, .9);
+  border-color: rgba(190, 210, 236, .9);
+  box-shadow: 0 0 0 1px rgba(6, 12, 22, .8);
+  text-shadow: 0 1px 2px #000;
+}
+.effect-scene .ring-btn::before { transform: rotate(calc(-1 * var(--rot, 0deg))); }
+.effect-scene .ring-btn:hover { border-color: #fff; }
+.effect-scene .ring-btn.pressed { background: #2f5da8; border-color: #edf5ff; }
+.effect-scene .page-row > :not(#crop-tool) { visibility: hidden; }
+
 /* 共同时钟的动图画布：原 img 保留布局、地址和拖拽事件，不再自己显示 GIF。 */
 .gif-clock-view { position: relative; display: block; min-width: 0; line-height: 0; }
 .gif-clock-cover { width: 24px; height: 24px; flex: 0 0 auto; }
@@ -1906,3 +1948,50 @@ html, body { overflow: hidden; height: 100%; }
   display: block;
   pointer-events: auto;
 }
+
+/* ---- 灯效库（左侧「灯效」分类，和「相册」分类同样的网格） ---- */
+.fx-lib .fx-cell { position: relative; aspect-ratio: 1 / 1; line-height: 1; cursor: pointer; border: 2px solid transparent; }
+.fx-lib .fx-cell img { width: 100%; height: 100%; aspect-ratio: auto; object-fit: cover; pointer-events: none; }
+.fx-lib .fx-cell.sel { border-color: #2f6fe0; }
+.fx-lib .fx-cell.running::after {
+  content: "运行中"; position: absolute; top: 3px; left: 3px; padding: 1px 5px; border-radius: 999px;
+  background: rgba(47, 111, 224, .92); color: #fff; font-size: 10px;
+}
+.fx-lib .fx-cell > i, .fx-page > i {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 4px; font-style: normal; font-size: 10.5px;
+  color: #eef4ff; background: linear-gradient(transparent, rgba(0, 0, 0, .78)); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; line-height: 1.3; pointer-events: none;
+}
+.fx-ph {
+  display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+  color: #4f8de8; font-size: 22px; background: radial-gradient(circle at 50% 40%, #1b2b45, #0b1018);
+}
+
+/* ---- 灯效场景：页面编辑区（复用相册场景的布局） ---- */
+#effect-pages { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; }
+#effect-pages .thumb-col { width: auto; gap: 8px; }
+#effect-pages .thumb-actions { flex-direction: row; gap: 8px; }
+#effect-pages .thumb-actions .seg { width: auto; flex: 1 1 0; font-size: 12px; padding: 6px 8px; }
+#effect-pages .editor-info { gap: 8px; }
+#effect-pages .kv-line>span:first-child { width: auto; flex: 0 0 auto; }
+#effect-pages .album-view { width: 100%; max-width: none; }
+#effect-pages .album-view img { object-fit: cover; }
+#effect-pages .hint-line { margin: 4px 0 0; }
+#effect-pages.lib-drop-hot { outline: 2px solid #2f6fe0; outline-offset: -2px; border-radius: 10px; }
+.fx-dragging #effect-pages:not([hidden]) .album-view { border-color: #2f6fe0; }
+#ep-strip { max-height: 132px; flex-wrap: wrap; overflow-y: auto; }
+#ep-strip:empty { display: flex; }
+#ep-strip:empty::before { content: "还没有页：从左侧「灯效」分类拖进来"; color: #8e9bb0; font-size: 11.5px; padding: 6px 0; }
+.fx-page { width: 74px; height: 46px; }
+.fx-page img { object-fit: cover; }
+.fx-page.missing { opacity: .45; border-style: dashed; }
+
+/* ---- 相册 / 灯效场景的按键：只能设动作，不放图片 / 图标 ---- */
+.key-layer #thumb-add, .key-layer #thumb-clear { display: none; }
+.key-layer #sel-thumb { pointer-events: none; opacity: .55; }
+/* 屏幕被整屏画面占用：配色 / 文字样式没意义，收起来 */
+.key-layer .kv-line:has(#sel-fg), .key-layer .kv-line:has(#sel-opacity) { display: none; }
+
+.fx-guide-card ol { margin: 8px 0 8px 18px; padding: 0; line-height: 1.75; }
+.fx-guide-card code { word-break: break-all; font-size: 11.5px; }
+.fx-guide-card .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }

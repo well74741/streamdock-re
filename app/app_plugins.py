@@ -399,6 +399,8 @@ class PluginsMixin:
         ui_due: set[int] = set()          # 界面预览被节流掉、需要补发的键
         while True:
             time.sleep(0.05)
+            if getattr(self, "effect_active", lambda: False)():
+                continue  # 灯效独占屏幕，原场景的时钟/网页插件不能在后台抢着上传旧键面
             now = time.time()
             for key in list(ui_due):
                 if now - last_ui.get(key, 0) >= 0.5:

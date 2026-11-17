@@ -264,6 +264,7 @@ def main() -> int:
         "--distpath", DIST,
         "--paths", APP,
         "--add-data", f"{os.path.join(APP, 'ui')}{SEP}ui",
+        "--add-data", f"{os.path.join(APP, 'effect_guide.md')}{SEP}.",
         "--add-data", f"{os.path.join(APP, 'assets', 'wallpaper.jpg')}{SEP}assets",
         # 官方内置插件（com.hotspot.streamdock.*）随包带走：对方没装官方驱动也能用
         "--add-data", f"{os.path.join(APP, 'builtin-plugins')}{SEP}builtin-plugins",
@@ -305,6 +306,7 @@ def main() -> int:
         "--paths", APP, "--hidden-import", "version",
         "--exclude-module", "tkinter", "--exclude-module", "numpy", "--exclude-module", "PIL",
         "--add-data", f"{os.path.join(APP, 'plugin_guide.md')}{SEP}.",
+        "--add-data", f"{os.path.join(APP, 'effect_guide.md')}{SEP}.",
         os.path.join(APP, "mcp_server.py"),
     )
     shutil.copytree(os.path.join(BUILD, "mcp", "m18-mcp"), os.path.join(app_dir, "mcp"))

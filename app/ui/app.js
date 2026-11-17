@@ -1,4 +1,5 @@
 const $ = (sel, root = document) => root.querySelector(sel);
+const KEY_GAP = 27; // 裁图、壁纸和相册共用固定的物理间隙补偿
 
 const MODE_NAMES = {
   solid: "常亮", rainbow: "彩虹", breathe: "呼吸",
@@ -282,7 +283,7 @@ function layoutBoard() {
   const WW = wrap.clientWidth;
   const WH = wrap.clientHeight;
   if (!WW || !WH) return;
-  // 主控制台用固定间距，不跟随「间隙」滑杆；间隙只在壁纸预览里体现
+  // 主控制台按真实外观缩放；图片切块统一按固定 27px 间隙补偿
   const g = 0.12;
   const cell = Math.max(6, Math.floor(Math.min(
     (WW * 0.74) / (5 + 4 * g),
@@ -303,7 +304,7 @@ function layoutBoard() {
 function renderWpGrid() {
   const grid = $("#wp-grid");
   if (!grid) return;
-  const gap = Number($("#wallpaper-gap")?.value || 0);
+  const gap = KEY_GAP;
   const side = (state?.rotation ?? 0) % 180 !== 0;     // 竖放：画布是 3 列 × 5 行
   const cols = side ? 3 : 5, rows = side ? 5 : 3;
   const W = cols * 64 + (cols - 1) * gap;
@@ -536,7 +537,7 @@ function bindRingPainting() {
   const block = (e) => e.preventDefault();
 
   ring.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || state?.effect?.active) return; // 灯效里的可见灯珠是状态指示，不改全局灯色
     const i = idxOf(e.target);
     if (i < 0) return;
     painting = true;
@@ -896,10 +897,6 @@ function openCropTool() {
             <button class="seg" data-fit="fill">拉伸</button>
           </span>
         </div>
-        <div class="slider-row tight as-gap-row"><span>间隙</span>
-          <input id="crop-gap" type="range" min="0" max="64" step="1" value="27" />
-          <b id="crop-gap-val">27</b>
-        </div>
         <p class="crop-name" id="crop-name">还没有选图片</p>
         <input type="file" id="crop-file" accept="image/*" hidden />
       </div>
@@ -919,14 +916,11 @@ function openCropTool() {
   const grid = $("#crop-grid", box);
   const saveBtn = $("#crop-save", box);
   const fileEl = $("#crop-file", box);
-  const gapEl = $("#crop-gap", box);
-  const gapVal = $("#crop-gap-val", box);
 
   let token = "";
   let fileRel = "";
   let baseName = "";
   let fit = "cover";
-  let gap = 27;
   let busy = false;
 
   // 右侧 15 张的尺寸跟控制台预览区一致（同 cell 边长、同缝隙）
@@ -974,7 +968,7 @@ function openCropTool() {
     if (!fileRel) return;
     cancelToken();
     saveBtn.disabled = true;
-    const r = await post("/api/iconcrop/preview", { file: fileRel, fit, gap, name: baseName });
+    const r = await post("/api/iconcrop/preview", { file: fileRel, fit, gap: KEY_GAP, name: baseName });
     if (!r.ok || !r.token) {
       nameEl.textContent = r.reason || r.error || "这张图裁不了，换一张试试";
       saveBtn.disabled = true;
@@ -1035,15 +1029,6 @@ function openCropTool() {
       box.querySelectorAll("#crop-fit [data-fit]").forEach((x) => x.classList.toggle("on", x === b));
       if (fileRel) await preview();
     });
-  });
-
-  const pushGap = throttle(async (v) => {
-    gap = Number(v);
-    if (fileRel) await preview();
-  }, 320);
-  gapEl.addEventListener("input", () => {
-    gapVal.textContent = gapEl.value;
-    pushGap(gapEl.value);
   });
 
   saveBtn.addEventListener("click", async () => {
@@ -1393,7 +1378,8 @@ function bindIconDrag(container) {
         key = selectedKey;
       }
       if (!key) return;
-      if (key > 15) {
+      if (!img.dataset.name.startsWith("plugin:") && refuseLayerImage()) return;
+      if (key > 15 && !img.dataset.name.startsWith("plugin:")) {
         toast("底部三个实体键没有屏幕，不能放图标", 1600);
         return;
       }
@@ -1926,6 +1912,7 @@ function bindKeyGestures() {
     el.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       clearTimeout(swapTimer);
+      if (keyLayerKind()) return;
       swapTimer = setTimeout(() => {
         swapSource = key;
         el.classList.add("lifting");
@@ -2050,6 +2037,7 @@ function newSceneDialog() {
           <span class="seg-group compact" id="scene-new-kind">
             <button class="seg on" data-kind="normal">普通场景</button>
             <button class="seg" data-kind="album">相册场景</button>
+            <button class="seg" data-kind="effect">灯效场景</button>
           </span>
         </div>
         <p class="muted small" id="scene-new-hint">普通场景：自己摆 15 个按键的画面和动作。</p>
@@ -2065,6 +2053,7 @@ function newSceneDialog() {
     const hints = {
       normal: "普通场景：自己摆 15 个按键的画面和动作。",
       album: "相册场景：整屏轮播图片，点任意屏幕键切到下一个场景。",
+      effect: "灯效场景：JavaScript 联合控制屏幕和灯珠，响应按键与电脑音频。默认科幻打击垫。",
     };
     let kind = "normal";
     const albumDefault = () => {
@@ -2091,7 +2080,11 @@ function newSceneDialog() {
     const dateName = `场景 ${new Date().toLocaleDateString().replace(/\//g, "-")}`;
     nameEl.value = dateName;
     box.querySelectorAll("#scene-new-kind [data-kind]").forEach((b) => b.addEventListener("click", () => {
-      nameEl.value = b.dataset.kind === "album" ? albumDefault() : dateName;
+      if (b.dataset.kind === "effect") {
+        const used = new Set(sceneItems.map((i) => i.name));
+        let n = 1; while (used.has(`灯效 ${n}`)) n++;
+        nameEl.value = `灯效 ${n}`;
+      } else nameEl.value = b.dataset.kind === "album" ? albumDefault() : dateName;
     }));
     nameEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); submit(); }
@@ -2217,7 +2210,10 @@ async function appsDialog(name, current) {
 
 /* 有未保存的草稿 / 图标预览时切场景，先问一次（预保存模式的最后一道闸） */
 async function pendingDraftsPrompt() {
-  const keys = [...new Set([...Object.keys(draftsAll), ...Object.keys(pendingStore).map((x) => x.split("|")[0])])];
+  if (window.M18EffectUI && !(await window.M18EffectUI.guard())) return false;
+  pruneUnchangedDrafts();
+  const keys = [...new Set([...Object.keys(draftsAll).filter((k) => Object.keys(draftsAll[k]).length),
+    ...Object.entries(pendingStore).filter(([, value]) => !!value).map(([id]) => id.split("|")[0])])];
   if (!keys.length) return true;
   const one = keys.length === 1 ? `键 ${keys[0]}` : `${keys.length} 个键`;
   return new Promise((resolve) => {
@@ -2253,7 +2249,11 @@ let editGesture = "press";
 /* 每个键一份表单草稿（按 key 存，换键不清）：{key: {press/long/double: draft}}。
    读旧名 formDrafts 的地方统一改成 draftsFor(键)。 */
 const draftsAll = {};
-const draftsFor = (k) => (k ? (draftsAll[k] = draftsAll[k] || {}) : {});
+const draftsFor = (k, create = false) => {
+  if (!k) return {};
+  if (create && !draftsAll[k]) draftsAll[k] = {};
+  return draftsAll[k] || {};
+};
 const draftsCount = (k) => Object.keys(draftsFor(k)).length;
 let sceneNames = [];
 let sceneItems = [];          // 场景列表原始数据（含 sceneType / albumScene）
@@ -2437,11 +2437,31 @@ function draftLabel(d) {
 
 // 草稿状态即时反馈：保存按钮、页签小条、标题行
 // 切换页签时判断：表单里填的和已存的到底一不一样（一样就别当成「未保存」）
-function draftDiffersFromSaved(n, g) {
-  if (!n) return false;
-  const now = specFromDraft(readFormDraft(), n, g);
-  const was = specFromDraft(viewToDraft(gestureView(n, g)), n, g);
-  return JSON.stringify(now || null) !== JSON.stringify(was || null);
+function draftDiffersFromSaved(n, g, draft = readFormDraft()) {
+  if (!n || !draft || !Object.keys(draft).length) return false;
+  const normalized = (d) => specFromDraft(d, n, g) || { type: d.type || "none" };
+  const now = normalized(draft);
+  const was = normalized(viewToDraft(gestureView(n, g)));
+  return JSON.stringify(now) !== JSON.stringify(was);
+}
+
+function rememberFormDraft(n, g) {
+  if (!n) return;
+  const draft = readFormDraft();
+  if (draftDiffersFromSaved(n, g, draft)) draftsFor(n, true)[g] = draft;
+  else if (draftsAll[n]) {
+    delete draftsAll[n][g];
+    if (!Object.keys(draftsAll[n]).length) delete draftsAll[n];
+  }
+}
+
+function pruneUnchangedDrafts() {
+  for (const [key, gestures] of Object.entries(draftsAll)) {
+    for (const [gesture, draft] of Object.entries(gestures || {})) {
+      if (!draft || !draftDiffersFromSaved(Number(key), gesture, draft)) delete gestures[gesture];
+    }
+    if (!gestures || !Object.keys(gestures).length) delete draftsAll[key];
+  }
 }
 
 function paintDraftMarks() {
@@ -2525,7 +2545,9 @@ function fillActionForm(n) {
   $("#sel-secret").checked = !!d.secret;
   const nav = $("#sel-nav");
   const jumps = Array.from({ length: (state?.mainPages || [0]).length }, (_, i) => `跳到第 ${i + 1} 页`);
-  const opts = [...NAV_PRESETS.slice(0, 4), "返回上级", "返回上一场景", ...jumps, ...NAV_PRESETS.slice(4)];
+  // 灯效场景多一组：上一 / 下一灯效页（默认绑在 ◀ ▶ 的长按上）
+  const fxNav = keyLayerKind() === "effect" ? ["上一灯效页", "下一灯效页"] : [];
+  const opts = [...NAV_PRESETS.slice(0, 4), ...fxNav, "返回上级", "返回上一场景", ...jumps, ...NAV_PRESETS.slice(4)];
   nav.innerHTML = opts.map((p) => `<option value="${p}">${p}</option>`).join("");
   if (t === "nav" && d.nav) nav.value = d.nav;
   fillSceneSelect(t === "scene" ? (d.scene || "") : "");
@@ -2542,12 +2564,37 @@ function fillActionForm(n) {
   return t;
 }
 
+/* 相册 / 灯效场景：按键只能设动作（存在场景自己的按键层里），不能放图片或图标 */
+function keyLayerKind() {
+  return state?.keyLayer?.kind || "";
+}
+function refuseLayerImage() {
+  if (!keyLayerKind()) return false;
+  toast(`${keyLayerKind() === "album" ? "相册" : "灯效"}场景的屏幕被整屏画面占用：按键只能设动作，不能放图片或图标`, 2200);
+  return true;
+}
+
 function renderEditor() {
   const n = selectedKey;
   const label = $("#sel-label");
-  // 相册场景：编辑区换成图片集，保存/清除按钮跟按键无关，收起来
-  // 但三个导航键（16/17/18）还是按键编辑：它们有默认的上页 / 主页 / 下页动作
-  const albScene = n && n > 15 ? null : activeAlbumScene();
+  const effectScene = window.M18EffectUI?.sceneName?.() || "";
+  const pagesEl = $("#effect-pages");
+  document.body.classList.toggle("key-layer", !!keyLayerKind());
+  // 灯效场景、没选按键：编辑区换成页面编辑区（布局同相册场景）
+  const fxPages = effectScene && !n;
+  if (pagesEl) pagesEl.hidden = !fxPages;
+  if (fxPages) {
+    $("#editor-body").hidden = true;
+    $("#album-editor").hidden = true;
+    $("#sel-save-top").hidden = true;
+    $("#sel-clear-top").hidden = true;
+    $("#sel-reset-top").hidden = true;
+    label.textContent = `灯效场景：${effectScene}`;
+    window.M18EffectUI.renderPages(effectScene);
+    return;
+  }
+  // 相册场景、没选按键：编辑区换成图片集；选中任意按键（含 1–15 屏幕键）则是按键编辑（只能设动作）
+  const albScene = effectScene || n ? null : activeAlbumScene();
   syncAlbumBody();
   const bodyEl = $("#editor-body");
   const albEl = $("#album-editor");
@@ -2564,14 +2611,17 @@ function renderEditor() {
   // 「还原」只给三个导航键：一键回到 上一页 / 主页 / 下一页，且只保留短按
   if (resetTop) resetTop.hidden = !!albScene || !(n === 16 || n === 17 || n === 18);
   if (albScene) {
+    if (label) label.textContent = `相册场景：${albScene}`;
     bindAlbumSceneEditor();
     if (albumSceneLoaded !== albScene) {
       albumSceneLoaded = albScene;
-      renderAlbumEditor({ items: [], index: 0, slideshow: true, interval: 8, transition: "fade" }, albScene);
+      const playing = state?.album?.scene === albScene ? state.album : null;
+      renderAlbumEditor(playing || { items: [], index: 0, slideshow: true, interval: 8, transition: "fade" }, albScene);
       reloadAlbumEditor();
     }
     return;
   }
+  albumSceneLoaded = ""; // 从导航键或普通场景返回时重新确认图片集，补回曾被丢弃的异步响应。
   if (!n) {
     label.textContent = "未选中按键";
     $("#sel-action").textContent = "未绑定";
@@ -2594,7 +2644,10 @@ function renderEditor() {
   }
 
   const isNav = n > 15;
-  label.textContent = `按键 ${n}${isNav ? "（导航键）" : ""}`;
+  const layerName = state?.keyLayer?.scene || "";
+  label.textContent = layerName
+    ? `${keyLayerKind() === "album" ? "相册" : "灯效"}场景「${layerName}」· 按键 ${n}${isNav ? "（导航键）" : ""} · 只能设动作`
+    : `按键 ${n}${isNav ? "（导航键）" : ""}`;
   const st = state?.keyStyles?.[n] || {};
   const img = state?.keyImages?.[n];
   const act = state?.keyActions?.[n];
@@ -2751,6 +2804,7 @@ async function resolveProgram(file, pathHint) {
 async function handleFile(key, file, pathHint) {
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name);
   if (isImage) {
+    if (refuseLayerImage()) return;
     // 先放到键上显示出来，点「保存」才真正写进按键
     const up = await upload(file);
     if (!up?.ok) {
@@ -2838,6 +2892,7 @@ async function dropOnKey(key, dt) {
   // 从左侧图标库拖过来的
   const iconName = dt.getData?.("application/x-m18-icon");
   if (iconName) {
+    if (refuseLayerImage()) return;
     const ok = await post("/api/key/icon", { key, name: iconName });
     toast(ok.ok ? "图标已应用" : "应用失败", 1200);
     if (ok.ok) await refreshState();
@@ -2998,9 +3053,6 @@ function applyState(s) {
     $("#screen-brightness-val").textContent = s.screenBrightness;
   }
 
-  const gap = s.wallpaper?.gap ?? 27;
-  $("#wallpaper-gap").value = gap;
-  updateGapLabel(gap);
   const standby = s.standby ?? 300;
   $("#standby-sec").value = standby;
   $("#standby-sec-val").textContent = `${standby} 秒`;
@@ -3011,11 +3063,13 @@ function applyState(s) {
   if (note) note.textContent = s.autostartOther ? `（当前是${s.autostartOther}开机自启，打开这里会改成${s.edition}）` : "";
   setSwitch($("#closetotray-btn"), s.closeToTray !== false);
   const ver = $("#app-version");
+  if (ver && s.version) ver.textContent = `v${s.version} · ${s.edition || "本地控制台"}`;
   if (ver && s.edition) {
     ver.textContent = ver.textContent.replace(/ · .*$/, ` · ${s.edition}`);
     ver.title = `数据目录：${s.dataDir}`;
   }
   if (s.album) renderAlbum(s.album);
+  window.M18EffectUI?.renderState(s.effect || {});
   const wpBtn = $("#wallpaper-toggle");
   if (wpBtn) {
     const on = s.wallpaper?.enabled !== false;
@@ -3107,11 +3161,6 @@ function renderLog(events) {
       <span class="t">${time}</span>
     </div>`;
   }).join("");
-}
-
-function updateGapLabel(gap) {
-  $("#wallpaper-gap-val").textContent = gap;
-  const pct = (gap / 64) * 100;
 }
 
 /* ------------------------------------------------------------------ 色板 */
@@ -3206,17 +3255,6 @@ function bindUI() {
   window.addEventListener("resize", () => applyRotation());
 
   /* 壁纸 */
-  const applyGap = throttle(async (value) => {
-    await post("/api/wallpaper", { gap: value });
-    refreshBoard();
-  }, 420);
-  $("#wallpaper-gap").addEventListener("input", (e) => {
-    const v = Number(e.target.value);
-    updateGapLabel(v);
-    applyRotation();
-    applyGap(v);
-  });
-
   const pushView = throttle(async (patch) => {
     await post("/api/wallpaper/view", patch);
     if (state) state.view = { ...(state.view || {}), ...patch };
@@ -3275,7 +3313,7 @@ function bindUI() {
       }
       // 注意：这里不清 transform，等新图加载完再清（refreshBoard 的 onload），
       // 否则松手瞬间会先弹回原位再跳到新位置。
-      const gap = Number($("#wallpaper-gap")?.value || 0);
+      const gap = KEY_GAP;
       const canvasW = 5 * 64 + 4 * gap;
       const scale = canvasW / Math.max(1, wpImg.clientWidth);
       const ox = Math.max(-400, Math.min(400, Math.round(baseOx + dx * scale)));
@@ -3486,7 +3524,7 @@ function bindUI() {
     if (selectedKey) dropOnKey(selectedKey, e.dataTransfer);
   });
   $("#thumb-add").addEventListener("click", () => {
-    if (!selectedKey || selectedKey > 15) return;
+    if (!selectedKey || selectedKey > 15 || refuseLayerImage()) return;
     $("#key-file").value = "";
     $("#key-file").click();
   });
@@ -3522,17 +3560,17 @@ function bindUI() {
 
   // 下拉只改表单，不提交；点「保存」时三种触发方式一起写进服务端
   $("#sel-nav").addEventListener("change", () => {
-    if (selectedKey) draftsFor(selectedKey)[editGesture] = readFormDraft();
+    if (selectedKey) rememberFormDraft(selectedKey, editGesture);
   });
   $("#sel-type").addEventListener("change", () => {
-    if (selectedKey) draftsFor(selectedKey)[editGesture] = readFormDraft();
+    if (selectedKey) rememberFormDraft(selectedKey, editGesture);
     applyTypeVisibility($("#sel-type").value);
   });
   $("#sel-secret").addEventListener("change", () => applyTypeVisibility($("#sel-type").value));
   document.querySelectorAll("#sel-gesture button").forEach((b) => {
     b.addEventListener("click", () => {
       // 切页签前把当前表单存成草稿，换回来时还在（不再依赖服务端）
-      if (selectedKey && draftDiffersFromSaved(selectedKey, editGesture)) draftsFor(selectedKey)[editGesture] = readFormDraft();
+      if (selectedKey && draftDiffersFromSaved(selectedKey, editGesture)) rememberFormDraft(selectedKey, editGesture);
       editGesture = b.dataset.g;
       renderEditor();
     });
@@ -3543,7 +3581,7 @@ function bindUI() {
     if (!el) return;
     const snap = () => {
       if (!selectedKey) return;
-      draftsFor(selectedKey)[editGesture] = readFormDraft();
+      rememberFormDraft(selectedKey, editGesture);
       paintDraftMarks();
     };
     el.addEventListener("input", snap);
@@ -3553,7 +3591,7 @@ function bindUI() {
     const r = await post("/api/dialog/pick", { mode: "file" });
     if (r.ok && r.path) {
       $("#sel-value").value = r.path;
-      if (selectedKey) draftsFor(selectedKey)[editGesture] = readFormDraft();
+      if (selectedKey) rememberFormDraft(selectedKey, editGesture);
     }
   });
 
@@ -3592,7 +3630,7 @@ function bindUI() {
     const n = selectedKey;
     // 当前页签的内容也进草稿，这样三种触发方式可以一起提交
     // （只保存了刚拖上来的图标时，别把"没改过的表单"也当成改动）
-    if (!appliedPending || draftsCount(selectedKey)) draftsFor(selectedKey)[editGesture] = readFormDraft();
+    if (!appliedPending || draftsCount(selectedKey)) rememberFormDraft(selectedKey, editGesture);
     const order = ["press", "long", "double"];
     const todo = order.filter((g) => draftsFor(selectedKey)[g]);
     if (!todo.length) return;
@@ -3982,6 +4020,7 @@ function bindUI() {
     const box = $("#scene-list");
     if (!box) return;
     sceneItems = items;
+    window.M18EffectUI?.renderLibrary(items);
     box.innerHTML = items.length
       ? items.map((it) => {
         const name = typeof it === "string" ? it : it.name;
@@ -3996,7 +4035,7 @@ function bindUI() {
           + ` data-name="${escHtml(name)}" data-custom="${custom ? 1 : 0}" data-album="${album ? 1 : 0}"`
           + ` data-album-scene="${albumScene ? 1 : 0}">`
           + `<b title="${albumScene ? "相册场景：整屏轮播图片（拖动可调整顺序）" : album ? "整屏相册幻灯片（不可删除）" : isOfficial ? "来自官方驱动的场景" : "拖动可调整顺序"}">`
-          + `${escHtml(name)}${album ? `<em>${it.count || 0}</em>` : ""}</b>`
+          + `${it.sceneType === "effect" ? "✦ " : ""}${escHtml(name)}${album ? `<em>${it.count || 0}</em>` : ""}</b>`
           + ((it.apps || []).length ? `<small class="scene-apps" title="前台切到这些程序时自动切换">⇢ ${escHtml(it.apps.join(", "))}</small>` : "")
           + `<span class="scene-ops">${active ? "使用中" : ""}`
           + `<button class="scene-mute${it.muted ? "" : " on"}" data-mute="${escHtml(name)}" title="${it.muted ? "已停用：「下一场景」和关联程序都会跳过它（点击启用）" : "启用中（点击停用，切换场景时跳过）"}"><span></span></button></span>`
@@ -4187,8 +4226,7 @@ function bindUI() {
     renderScenes(r.items || []);
     renderEditor();
   });
-  reloadScenes();
-
+  // 首次场景加载由 boot 与状态请求一起等待，避免编辑区按空列表误判。
 
   const pushStandbyB = throttle((v) => post("/api/standby-brightness", { value: v }), 250);
   $("#standby-brightness").addEventListener("input", (e) => {
@@ -4271,7 +4309,7 @@ let albumSig = "";
 let albumListSig = "";
 
 function albumVisualVersion(a, scene = "") {
-  return encodeURIComponent(JSON.stringify([scene, a.items, a.index, a.fit, a.gap,
+  return encodeURIComponent(JSON.stringify([scene, a.items, a.index, a.fit, KEY_GAP,
     state?.view, state?.standbyBrightness, state?.rotation ?? 0]));
 }
 
@@ -4479,7 +4517,9 @@ let albumSceneLoaded = "";
 function activeAlbumScene() {
   const name = selectedScene || state?.album?.scene || state?.activeScene || "";
   const it = (sceneItems || []).find((i) => i.name === name);
-  return it && it.sceneType === "album" && !it.builtin ? name : "";
+  if (it) return it.sceneType === "album" && !it.builtin ? name : "";
+  // 首次加载时场景列表可能还没回来；状态中的 scene 已经能确认是相册场景。
+  return name && state?.album?.scene === name ? name : "";
 }
 
 /* 相册场景时给 body 挂个类：导航键显示 ◀ ⌂ ▶、翻页按钮收起。
@@ -4490,7 +4530,8 @@ function syncAlbumBody() {
   const applied = (alb.active && alb.scene) || (state?.activeScene || "");
   const name = applied || selectedScene || "";
   const it = (sceneItems || []).find((i) => i.name === name);
-  document.body.classList.toggle("album-scene", !!(it && it.sceneType === "album" && !it.builtin));
+  const isAlbum = it ? it.sceneType === "album" && !it.builtin : !!(name && alb.active && alb.scene === name);
+  document.body.classList.toggle("album-scene", isAlbum);
 }
 
 function renderAlbumEditor(a, name = activeAlbumScene()) {
@@ -4512,9 +4553,6 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
   document.querySelectorAll("#as-fit [data-fit]").forEach((b) => {
     b.classList.toggle("on", b.dataset.fit === (a.fit || "cover"));
   });
-  const gap = a.gap == null ? 27 : a.gap;
-  $("#as-gap").value = gap;
-  $("#as-gap-val").textContent = gap;
   const sig = `${name}|${items.join("|")}#${a.index}`;
   if (sig === albumSceneSig) {
     document.querySelectorAll("#as-strip .album-thumb").forEach((t) => {
@@ -4547,10 +4585,15 @@ function renderAlbumEditor(a, name = activeAlbumScene()) {
   });
 }
 
+let albumEditorReloadSeq = 0;
 async function reloadAlbumEditor() {
   const name = activeAlbumScene();
   if (!name) return;
-  renderAlbumEditor(await post("/api/album", { scene: name }), name);
+  const seq = ++albumEditorReloadSeq;
+  const a = await post("/api/album", { scene: name });
+  // 换了场景、改选导航键或已有更新的请求时，旧响应不能覆盖当前编辑区。
+  if (seq !== albumEditorReloadSeq || activeAlbumScene() !== name || selectedKey > 15 || a.ok === false) return;
+  renderAlbumEditor(a, name);
 }
 
 async function albumSceneAddFiles(files) {
@@ -4692,17 +4735,6 @@ function bindAlbumSceneEditor() {
     albumSceneSig = "";
     renderAlbumEditor(await post("/api/album/settings", { scene: name, fit: b.dataset.fit }), name);
   }));
-  const pushGap = throttle((v) => {
-    const name = activeAlbumScene();
-    if (!name) return;
-    post("/api/album/settings", { scene: name, gap: v }).then(() => refreshAlbumPreview(name));
-  }, 300);
-  $("#as-gap").addEventListener("input", (e) => {
-    const v = Number(e.target.value);
-    $("#as-gap-val").textContent = v;
-    if (albumSceneState) albumSceneState.gap = v;
-    pushGap(v);
-  });
 }
 
 function refreshAlbumPreview(name) {
@@ -4792,6 +4824,13 @@ function connectEvents() {
     } else if (msg.type === "library") {
       libraryItems = msg.items || [];
       renderLibrary();
+    } else if (msg.type === "effect") {
+      if (state) state.effect = msg.effect || msg;
+      window.M18EffectUI?.renderState(msg.effect || msg);
+      renderEditor();
+    } else if (msg.type === "effectlibrary" || msg.type === "effectscene") {
+      window.M18EffectUI?.onMessage?.(msg);
+      window.m18ReloadScenes?.();
     } else if (msg.type === "lighting") {
       if (state) state.lighting = { ...(state.lighting || {}), ...(msg.lighting || {}) };
       applyLighting(msg.lighting);
@@ -4833,9 +4872,11 @@ async function boot() {
   buildSwatches();
   bindRingPainting();
   bindUI();
+  window.M18EffectUI?.init();
   applyRotation();
   try {
-    applyState(await (await fetch("/api/state")).json());
+    const [initialState] = await Promise.all([fetchState(), window.m18ReloadScenes?.()]);
+    applyState(initialState);
   } catch (e) {
     console.error(e);
   }

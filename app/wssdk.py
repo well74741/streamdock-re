@@ -85,9 +85,8 @@ class WSClient:
     def send_json(self, obj: dict) -> None:
         self._send_frame(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
-    def _send_frame(self, payload: bytes, opcode: int = 0x1) -> None:
-        if not self.sock:
-            raise ConnectionError("未连接")
+    @staticmethod
+    def _frame_bytes(payload: bytes, opcode: int = 0x1) -> bytes:
         header = bytearray([0x80 | opcode])
         n = len(payload)
         mask = os.urandom(4)
@@ -100,9 +99,45 @@ class WSClient:
             header.append(0x80 | 127)
             header += struct.pack(">Q", n)
         header += mask
-        masked = _xor_mask(payload, mask)
+        return bytes(header) + _xor_mask(payload, mask)
+
+    def _send_frame(self, payload: bytes, opcode: int = 0x1) -> None:
+        if not self.sock:
+            raise ConnectionError("未连接")
+        data = self._frame_bytes(payload, opcode)
         with self._send_lock:
-            self.sock.sendall(bytes(header) + masked)
+            self.sock.sendall(data)
+
+    def send_json_batch(self, objects) -> None:
+        """一份有界批次，一次socket写入多条独立WS帧，不把SDK协议改成JSON数组。"""
+        if not isinstance(objects, (list, tuple)) or not 1 <= len(objects) <= 32:
+            raise ValueError("批次需要1–32条消息")
+        frames, size = [], 0
+        for obj in objects:
+            if not isinstance(obj, dict):
+                raise ValueError("批次消息需要对象")
+            frame = self._frame_bytes(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+            size += len(frame)
+            if size > 512 * 1024:
+                raise ValueError("批次不能超过512KB")
+            frames.append(frame)
+        with self._send_lock:
+            sock = self.sock
+            if not sock:
+                raise ConnectionError("未连接")
+            old_timeout = None
+            if os.name == "nt" and isinstance(sock, socket.socket):
+                # 只限制发送，不动接收线程的超时或整个系统时钟。
+                old_timeout = sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, 2000)
+            try:
+                sock.sendall(b"".join(frames))
+            finally:
+                if old_timeout is not None:
+                    try:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, old_timeout)
+                    except OSError:
+                        pass
 
     def _recv_exact(self, n: int) -> bytes:
         while len(self._buf) < n:
@@ -178,6 +213,7 @@ class DeviceWS:
         self.error = ""
         self.firmware = ""
         self.product = ""
+        self.device_type = ""            # SDK 的设备型号（M18 才有整屏临时背景）
         self.path = ""
         self.quiet = False
         self._ws: WSClient | None = None
@@ -195,6 +231,18 @@ class DeviceWS:
         # Dock 竖放 / 倒放时，所有键面图（含动图）在这里统一转正：PIL 角度，逆时针
         self.image_rotation = 0
         self._gif_status = threading.Event()
+        # 并行写屏：官方 SDK 每写完一张键图都在本连接里固定 sleep 50ms，且一条连接内的命令串行，
+        # 15 键整板因此要 ~770ms、自下而上一张张出现。sleep 只阻塞自己那条连接，
+        # 所以每个键固定用一条独立连接（同一键的先后顺序不变），整板实测 ~57ms。
+        # 所有按键级命令（键图、键 GIF、清键 GIF）都走该键自己的连接，所以同一键的先后顺序不变；
+        # 全局命令（清屏、GIF 循环启停）先等各键连接写完再在主连接上执行（_barrier）。
+        self._writers: dict[int, WSClient] = {}
+        self._writer_pending: dict[int, int] = {}            # 已发出、SDK 还没回执的批数
+        self._writer_since: dict[int, float] = {}            # 最近一次发出的时刻
+        self._writer_cond = threading.Condition()
+        self._writers_lock = threading.Lock()
+        self._writer_session = -1
+        self.parallel_writes = True
 
     # -- 进程/连接 ---------------------------------------------------------- #
     @staticmethod
@@ -264,6 +312,8 @@ class DeviceWS:
                 self._send("read", {})
                 self._probe_gif()
                 self.session += 1
+                # 提前建好 15 条写图连接，第一次切场景不用再等握手
+                threading.Thread(target=self._warm_writers, daemon=True, name="m18-writers-warm").start()
                 return True
             except Exception as exc:  # noqa: BLE001
                 self.error = f"连接 SDK 失败：{exc}"
@@ -285,6 +335,144 @@ class DeviceWS:
         ws, self._ws = self._ws, None
         if ws:
             ws.close()
+        self._drop_writers()
+
+    def _drop_writers(self) -> None:
+        with self._writers_lock:
+            writers, self._writers = self._writers, {}
+            self._writer_session = -1
+        with self._writer_cond:
+            self._writer_pending = {}
+            self._writer_since = {}
+            self._writer_cond.notify_all()
+        for ws in writers.values():
+            ws.close()
+
+    @property
+    def parallel_ready(self) -> bool:
+        """并行写屏需要 SDK 支持 gifLoopStatus（回执来源）。"""
+        return bool(self.parallel_writes and self.gif_native and self._ws and self.path)
+
+    def _writer(self, key: int) -> WSClient | None:
+        """键 key 的专用写图连接；只发按键级命令，不订阅按键（read 只在主连接上发）。"""
+        with self._writers_lock:
+            if self._writer_session != self.session:
+                old, self._writers = self._writers, {}
+                self._writer_session = self.session
+                for ws in old.values():
+                    ws.close()
+                with self._writer_cond:
+                    self._writer_pending = {}
+                    self._writer_since = {}
+            ws = self._writers.get(key)
+            if ws is not None and ws.sock is not None:
+                return ws
+            ws = WSClient("127.0.0.1", self.port)
+
+            def done(_key=key):
+                with self._writer_cond:
+                    if self._writer_pending.get(_key, 0) > 0:
+                        self._writer_pending[_key] -= 1
+                    self._writer_cond.notify_all()
+
+            def on_message(raw):
+                # 每批末尾带一句 gifLoopStatus：收到回复说明 SDK 已把这条连接的命令处理完（含那 50ms）
+                if '"gifLoopStatus"' in raw:
+                    done()
+
+            def on_close(_key=key, _ws=ws):
+                with self._writer_cond:
+                    self._writer_pending[_key] = 0
+                    self._writer_cond.notify_all()
+                with self._writers_lock:
+                    if self._writers.get(_key) is _ws:
+                        self._writers.pop(_key, None)
+
+            ws.on_message = on_message
+            ws.on_close = on_close
+            ws.connect(timeout=2.0)
+            threading.Thread(target=ws.recv_loop, daemon=True, name=f"m18-writer-{key}").start()
+            self._writers[key] = ws
+            return ws
+
+    def _warm_writers(self) -> None:
+        if not self.parallel_ready:
+            return
+        for key in range(1, 16):
+            try:
+                self._writer(key)
+            except OSError:
+                self.parallel_writes = False
+                return
+
+    def _pending(self, key: int, now: float) -> int:
+        """回执超过 1 秒没来就当已处理（连接异常时不永久卡住）。"""
+        if now - self._writer_since.get(key, 0.0) > 1.0:
+            self._writer_pending[key] = 0
+        return self._writer_pending.get(key, 0)
+
+    def _send_key(self, key: int, objects: list, *, max_pending: int = 2) -> bool:
+        """把按键级命令发到该键的连接；该连接积压达到 max_pending 批时先等（真背压，最多 1 秒）。"""
+        if not self.parallel_ready:
+            ws = self._ws
+            if not ws:
+                return False
+            try:
+                ws.send_json_batch(objects)
+                return True
+            except Exception:  # noqa: BLE001
+                return False
+        try:
+            ws = self._writer(key)
+        except OSError:
+            self.parallel_writes = False      # 开不出额外连接：退回单连接串行写
+            return self._send_key(key, objects)
+        deadline = time.monotonic() + 1.0
+        with self._writer_cond:
+            while max_pending and self._pending(key, time.monotonic()) >= max_pending:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                self._writer_cond.wait(left)
+            self._writer_pending[key] = self._writer_pending.get(key, 0) + 1
+            self._writer_since[key] = time.monotonic()
+        try:
+            ws.send_json_batch(objects + [{"event": "gifLoopStatus", "path": self.path, "payload": {}}])
+            return True
+        except Exception:  # noqa: BLE001
+            with self._writer_cond:
+                self._writer_pending[key] = 0
+                self._writer_cond.notify_all()
+            ws.close()
+            return False
+
+    def writers_idle(self, keys=None) -> bool:
+        """这些键的连接都已处理完已发命令（SDK 回执，不是发送成功）。"""
+        keys = range(1, 16) if keys is None else keys
+        now = time.monotonic()
+        with self._writer_cond:
+            return all(self._pending(k, now) == 0 for k in keys)
+
+    def wait_writers_idle(self, timeout: float = 1.0) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._writer_cond:
+            while not all(self._pending(k, time.monotonic()) == 0 for k in list(self._writer_pending)):
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                self._writer_cond.wait(left)
+        return True
+
+    def _barrier(self, event: str, payload: dict) -> bool:
+        """全局命令：先等各键连接写完，再在主连接执行并等它处理完，之后的按键命令才不会和它乱序。"""
+        if not self.parallel_ready or not self._writers:
+            return self._send(event, payload)
+        self.wait_writers_idle(1.0)
+        self._gif_status.clear()
+        ok = self._send(event, payload) and self._send("gifLoopStatus", {})
+        if ok:
+            self._gif_status.wait(0.5)
+        return ok
 
     def disconnect(self) -> None:
         with self._lock:
@@ -318,6 +506,7 @@ class DeviceWS:
             self.path = msg.get("path") or _field(payload, "path") or ""
             self.firmware = str(_field(payload, "firmwareVersion", default=""))
             self.product = str(_field(payload, "product", "type", default=""))
+            self.device_type = str(_field(payload, "type", default=""))
 
             def _hex(value, default):
                 try:
@@ -334,6 +523,7 @@ class DeviceWS:
                 "leds": 24,
                 "path": self.path,
                 "product": self.product,
+                "type": self.device_type,
             }
             self.connected = True
             self.error = ""
@@ -388,9 +578,10 @@ class DeviceWS:
             return False
 
     # -- 设备操作（和旧接口同名） -------------------------------------------- #
-    def _rotate_jpeg(self, jpeg: bytes) -> bytes:
+    def _rotate_jpeg(self, jpeg: bytes, rotation: int | None = None) -> bytes:
         from PIL import Image
-        im = Image.open(io.BytesIO(jpeg)).convert("RGB").rotate(self.image_rotation, expand=True)
+        angle = self.image_rotation if rotation is None else rotation
+        im = Image.open(io.BytesIO(jpeg)).convert("RGB").rotate(angle, expand=True)
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=90, subsampling=0)
         return buf.getvalue()
@@ -430,10 +621,61 @@ class DeviceWS:
             except Exception:  # noqa: BLE001
                 pass
         b64 = base64.b64encode(jpeg).decode()
-        return self._send("setKeyImgData", {
-            "keyIndex": key,
-            "imgData": f"data:image/jpeg;base64,{b64}",
-        })
+        if not self.path:
+            return False
+        # 并行时每张图后跟一个 refresh：不依赖别的连接上的 refresh 先后
+        return self._send_key(key, [
+            {"event": "setKeyImgData", "path": self.path,
+             "payload": {"keyIndex": key, "imgData": f"data:image/jpeg;base64,{b64}"}}]
+            + ([{"event": "refresh", "path": self.path, "payload": {}}] if self.parallel_ready else []))
+
+    def send_image_batch(self, images: dict, colors=None, cancelled=None, parallel=None) -> bool:
+        """先准备同一方向的图，再一口气写入图片/配对灯珠/refresh；不是硬件原子翻帧。
+
+        parallel=True 时每个键走自己的写图连接（见 _writer），各连接同时开始写；
+        调用方应先用 writers_idle() 确认上一批已处理完，避免在 SDK 里排队。
+        """
+        ws, path, session, rotation = self._ws, self.path, self.session, self.image_rotation
+        if not ws or not path or not isinstance(images, dict) or not 1 <= len(images) <= 15:
+            return False
+        parallel = self.parallel_ready if parallel is None else parallel
+        try:
+            objects = []
+            for key, jpeg in images.items():
+                if cancelled and cancelled():
+                    return False
+                if isinstance(key, bool) or not isinstance(key, int) or not 1 <= key <= 15 \
+                        or not isinstance(jpeg, bytes) or len(jpeg) > 64 * 1024:
+                    return False
+                if rotation % 360:
+                    jpeg = self._rotate_jpeg(jpeg, rotation)
+                objects.append({"event": "setKeyImgData", "path": path,
+                                "payload": {"keyIndex": key, "imgData": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")}})
+            if parallel and colors is None and self.parallel_ready:
+                if ((cancelled and cancelled()) or ws is not self._ws or path != self.path
+                        or session != self.session or rotation != self.image_rotation):
+                    return False
+                ok = True
+                for obj in objects:
+                    ok = self._send_key(obj["payload"]["keyIndex"],
+                                        [obj, {"event": "refresh", "path": path, "payload": {}}],
+                                        max_pending=0) and ok
+                return ok
+            if colors is not None:
+                if not isinstance(colors, (list, tuple)) or len(colors) != 24 or any(
+                        not isinstance(rgb, (list, tuple)) or len(rgb) != 3 or any(
+                            isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 255 for v in rgb)
+                        for rgb in colors):
+                    return False
+                objects.append({"event": "setSingleLedColor", "path": path, "payload": {"colors": colors}})
+            objects.append({"event": "refresh", "path": path, "payload": {}})
+            if ((cancelled and cancelled()) or ws is not self._ws or path != self.path
+                    or session != self.session or rotation != self.image_rotation):
+                return False
+            ws.send_json_batch(objects)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     def refresh(self) -> bool:
         return self._send("refresh", {})
@@ -445,24 +687,31 @@ class DeviceWS:
                 path = self._rotate_gif(path)
             except Exception:  # noqa: BLE001
                 pass
-        return self._send("setKeyGif", {"keyIndex": key, "imagePath": os.path.normpath(path)})
+        if not self.path:
+            return False
+        # 和该键的静态图同一条连接：先后顺序有保证；SDK 解码 GIF 也能各键并行
+        return self._send_key(key, [{"event": "setKeyGif", "path": self.path,
+                                     "payload": {"keyIndex": key, "imagePath": os.path.normpath(path)}}])
 
     def clear_key_gif(self, key: int) -> bool:
-        return self._send("clearKeyGif", {"keyIndex": key})
+        if not self.path:
+            return False
+        return self._send_key(key, [{"event": "clearKeyGif", "path": self.path, "payload": {"keyIndex": key}}])
 
     def start_gif_loop(self) -> bool:
-        ok = self._send("startGifLoop", {})
+        # 等各键 GIF 都登记完再统一开始，保持共同时钟
+        ok = self._barrier("startGifLoop", {})
         self.gif_running = self.gif_running or ok
         return ok
 
     def stop_gif_loop(self) -> bool:
-        ok = self._send("stopGifLoop", {})
+        ok = self._barrier("stopGifLoop", {})
         if ok:
             self.gif_running = False
         return ok
 
     def clear_keys(self) -> bool:
-        return self._send("clearAllIcon", {})
+        return self._barrier("clearAllIcon", {})
 
     def set_screen_brightness(self, value: int) -> bool:
         return self._send("setBrightness", {"brightness": max(0, min(100, int(value)))})
@@ -473,6 +722,23 @@ class DeviceWS:
     def set_leds(self, colors) -> bool:
         payload = {"colors": [[int(c[0]), int(c[1]), int(c[2])] for c in colors]}
         return self._send("setSingleLedColor", payload)
+
+    def clear_leds(self) -> bool:
+        """同时清零SDK单珠缓存与全灯颜色；两条消息原序连续发送，不改亮度。"""
+        ws, path, session = self._ws, self.path, self.session
+        if not ws or not path:
+            return False
+        messages = [
+            {"event": "setSingleLedColor", "path": path, "payload": {"colors": [[0, 0, 0] for _ in range(24)]}},
+            {"event": "setLEDColor", "path": path, "payload": {"r": 0, "g": 0, "b": 0}},
+        ]
+        try:
+            if ws is not self._ws or path != self.path or session != self.session:
+                return False
+            ws.send_json_batch(messages)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     def set_all_leds(self, r: int, g: int, b: int) -> bool:
         return self._send("setLEDColor", {"r": r, "g": g, "b": b})

@@ -22,6 +22,7 @@ from core import (  # noqa: F401
     GRID_ROWS,
     ICON_DIR,
     KEY_COUNT,
+    KEY_GAP,
     KEY_SIZE,
     MIRROR_DIR,
     MY_ICON_DIR,
@@ -199,7 +200,7 @@ class CatalogMixin:
     def _crop_canvas(self, src: str, fit: str, gap: int) -> tuple[list, list[int], bool]:
         """返回 (15 张图块（按 1..15 排列）、每帧时长、是否动图)。"""
         fit = fit if fit in ("cover", "contain", "fill") else "cover"
-        g = max(0, min(64, int(gap)))
+        g = KEY_GAP                 # 忽略旧客户端和调用方的自定义间隙
         w = GRID_COLS * KEY_SIZE + (GRID_COLS - 1) * g
         h = GRID_ROWS * KEY_SIZE + (GRID_ROWS - 1) * g
         tiles: list = [[] for _ in range(KEY_COUNT)]
@@ -234,7 +235,7 @@ class CatalogMixin:
         row_from_top = GRID_ROWS - 1 - row_from_bottom
         return row_from_top * GRID_COLS + col + 1
 
-    def crop_preview(self, file: str, fit: str = "cover", gap: int = 27, name: str = "") -> dict:
+    def crop_preview(self, file: str, fit: str = "cover", gap: int = KEY_GAP, name: str = "") -> dict:
         src = asset_path(file)
         if not src:
             return {"ok": False, "reason": "找不到这张图片，重新拖一次"}
@@ -243,7 +244,7 @@ class CatalogMixin:
         try:
             os.makedirs(out_dir, exist_ok=True)
             shutil.copy2(src, os.path.join(out_dir, "src" + (os.path.splitext(src)[1].lower() or ".png")))
-            tiles, durations, animated = self._crop_canvas(src, fit, gap)
+            tiles, durations, animated = self._crop_canvas(src, fit, KEY_GAP)
             ext = ".gif" if animated else ".png"
             for idx, frames in enumerate(tiles, start=1):
                 # 文件名按屏幕上看到的顺序补零：图标库按文件名排序时和 15 个键一一对应
@@ -261,7 +262,7 @@ class CatalogMixin:
         return {"ok": True, "token": token, "name": name, "animated": animated,
                 "frames": len(durations) if animated else 1,
                 "fit": fit if fit in ("cover", "contain", "fill") else "cover",
-                "gap": max(0, min(64, int(gap))),
+                "gap": KEY_GAP,
                 "src": f"/api/iconcrop/src?token={token}",
                 "tiles": [f"/api/iconcrop/tile?token={token}&n={self._crop_visual_index(i):02d}{ext}"
                           for i in range(1, KEY_COUNT + 1)]}
@@ -440,6 +441,8 @@ class CatalogMixin:
         return [f for f in files if f.lower().endswith(exts)]
 
     def set_key_icon(self, key: int, name: str) -> bool:
+        if getattr(self, "_layer_scene_name", lambda: "")():
+            return False                # 相册 / 灯效场景的按键只能设动作，不能放图标
         name = name or ""
         src = None
         if name.startswith("pack:"):

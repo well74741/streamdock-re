@@ -77,9 +77,14 @@ from app_scenes import ScenesMixin
 from app_catalog import CatalogMixin
 from app_plugins import PluginsMixin
 from app_lighting import LightingMixin
+from app_effects import EffectsMixin, MAX_EFFECT_BODY, effect_asset
+from app_effect_scenes import EffectScenesMixin
+from app_scene_keys import SceneKeysMixin
+from version import VERSION
 
 
-class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, PluginsMixin, LightingMixin):
+class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, PluginsMixin, LightingMixin,
+          EffectsMixin, EffectScenesMixin, SceneKeysMixin):
     def __init__(self):
         self.lock = threading.RLock()
         # 可重入：保存配置时会顺带读配置写回场景
@@ -127,6 +132,7 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
         self.standby_source = "wallpaper"         # 待机时显示：wallpaper 壁纸 / album 相册幻灯片
         self._album_last = 0.0
         self._init_media_render_state()
+        self._init_effects()
         # 相册场景（可以有多个）：播放时用场景自己的图片和设置，待机相册不受影响
         self.album_scene_name = ""                # 正在播放的相册场景名（空 = 没在放相册场景）
         self._album_scene: dict = {}               # {"items": [...], "index": 0, "slideshow": …, …}
@@ -137,7 +143,7 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
         self.wallpaper_enabled = True
         self.wallpaper_flip = False
         # 屏幕之间的物理间隙（按 64px 键面为单位的像素当量），0 表示不做边框补偿
-        self.wallpaper_gap = 6
+        self.wallpaper_gap = core.KEY_GAP
         self.preview_mode = "wallpaper"
         self.wallpaper_file = WALLPAPER
         self.wallpaper_fit = "cover"
@@ -191,6 +197,7 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
         self._pushing = False
         self._migrate_official_plugins()
         self._seed_presets()
+        self._upgrade_effect_templates()
         self._load_config()
         self.device.image_rotation = self.rotation
         if self._convert_builtin_plugins():
@@ -214,8 +221,8 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
         if self.device.connected and not self.quiet and not self.yielded:
             self.device.set_screen_brightness(self.screen_brightness)
             self.device.set_led_brightness(self.lighting["brightness"])
-            if self.wallpaper_enabled:
-                self.apply_keys()
+            if self.wallpaper_enabled and not self.is_effect_scene(self.active_scene):
+                self._restore_display()
         start_loop(self._engine_loop, "灯效")
         start_loop(self._animation_loop, "动图")
         start_loop(self._watch_loop, "设备监视")
@@ -273,7 +280,6 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
                 self.device.set_led_brightness(self.lighting["brightness"])
                 self.broadcast({"type": "status", "connected": True})
                 return
-            self.preview_mode = "wallpaper"
             self.device.set_screen_brightness(self.screen_brightness)
             self.device.set_led_brightness(self.lighting["brightness"])
             self._dirty = True
@@ -284,7 +290,7 @@ class App(RenderMixin, PagesMixin, MediaMixin, ScenesMixin, CatalogMixin, Plugin
             if self.wake_panel():
                 self._last_wake = time.time()
             time.sleep(0.5)
-            self.apply_keys()
+            self._restore_display()
             self.broadcast({"type": "status", "connected": True})
         except Exception as exc:  # noqa: BLE001
             log(f"重新接管失败：{exc}")
@@ -500,6 +506,7 @@ def _shutdown() -> None:
         if TRAY is not None:
             TRAY.stop()
         if APP is not None:
+            APP.close_effects()
             if APP.plugin_host:
                 APP.plugin_host.stop_all()   # 插件子进程 / 后台浏览器一起收掉
             APP._gif_stop_all()          # SDK 进程不一定随我们退出，别让它继续播旧动图
@@ -624,10 +631,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = self.path.split("?")[0]
         if path == "/api/state":
-            self._json(APP.snapshot())
+            self._json({**APP.snapshot(), "version": VERSION})
         elif path == "/api/health":
             self._json({"app": "m18-console", "url": f"http://127.0.0.1:{PORT}/", "edition": EDITION,
-                        "dataDir": DATA_DIR, "pid": os.getpid(), "shuttingDown": SHUTTING_DOWN})
+                        "dataDir": DATA_DIR, "pid": os.getpid(), "version": VERSION, "shuttingDown": SHUTTING_DOWN})
         elif path == "/api/events":
             self._sse()
         elif path.startswith("/api/album/raw/"):
@@ -890,6 +897,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/api/effect/preview.jpg":
+            data = APP.effect_preview()
+            if not data:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        elif path.startswith("/api/effects/thumb/"):
+            # 灯效库缩略图（运行约 2.5 秒后自动截的整板预览）
+            data = APP.effect_thumb(urllib.parse.unquote(path[len("/api/effects/thumb/"):]))
+            if not data:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
         elif path in ("/", "/index.html"):
             self._static("index.html")
         else:
@@ -901,9 +931,59 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         body = self._body()
         # 息屏状态下，任何控制台操作都先把屏幕点亮（睡眠接口本身除外）
-        if APP.screen_off and path not in ("/api/device/sleep", "/api/quit", "/api/state"):
+        if APP.screen_off and path not in ("/api/device/sleep", "/api/quit", "/api/state", "/api/effects", "/api/effects/input"):
             APP.wake_from_console(path)
-        if path == "/api/lighting":
+        if path == "/api/effects":
+            action = str(body.get("action") or "list")
+            name = str(body.get("name") or "")
+            scene = str(body.get("scene") or "")
+            # 灯效库（左侧「灯效」分类）
+            if action == "get":
+                result = APP.get_effect(name)
+            elif action == "save":
+                result = APP.save_effect(name, body.get("code"), str(body.get("description") or ""),
+                                         str(body.get("original") or ""))
+            elif action == "create":
+                result = APP.create_effect(name)
+            elif action == "delete":
+                result = APP.delete_effect(name)
+            elif action == "reorder":
+                result = APP.reorder_effects(body.get("names") if isinstance(body.get("names"), list) else [])
+            elif action == "run":
+                result = APP.run_effect(name)          # 试运行，不改任何场景
+            elif action == "template":
+                result = {"ok": True, "code": APP.default_effect_code(), "description": "科幻音频打击垫"}
+            # 灯效场景的页（页面编辑区）
+            elif action == "scene":
+                result = APP.get_effect_scene(scene)
+            elif action in ("pageAdd", "pageRemove", "pageMove", "pageGoto"):
+                op = {"pageAdd": "add", "pageRemove": "remove", "pageMove": "move", "pageGoto": "goto"}[action]
+                kw = {k: body[k] for k in ("name", "index", "from", "to") if k in body}
+                result = APP.effect_scene_edit(scene, op, **kw)
+            # 运行状态 / 文档
+            elif action == "stop":
+                result = APP.stop_effect_scene()
+            elif action == "status":
+                result = {"ok": True, **APP.effect_state()}
+            elif action == "guide":
+                result = {"ok": True, "guide": APP.effect_guide()}
+            elif action == "revealGuide":
+                result = APP.reveal_effect_guide()
+            elif action == "logs":
+                result = {"ok": True, "items": APP.effect_logs(int(body.get("since") or 0), int(body.get("limit") or 50))}
+            else:
+                result = {"ok": True, "items": APP.list_effects()}
+            self._json(result)
+        elif path == "/api/effects/input":
+            key = body.get("key")
+            down = body.get("down")
+            ok = isinstance(key, int) and not isinstance(key, bool) and 1 <= key <= 18 and isinstance(down, bool)
+            if ok and not APP.input_muted and not APP.screen_off:
+                ok = APP.effect_input(key, down)
+            else:
+                ok = False
+            self._json({"ok": bool(ok)})
+        elif path == "/api/lighting":
             APP.set_lighting(body)
             self._json(APP.snapshot())
         elif path == "/api/lighting/custom":
@@ -1055,7 +1135,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/iconcrop/preview":
             self._json(APP.crop_preview(str(body.get("file") or ""),
                                         str(body.get("fit") or "cover"),
-                                        int(body.get("gap") or 27),
+                                        core.KEY_GAP,
                                         str(body.get("name") or "")))
         elif path == "/api/iconcrop/save":
             r = APP.crop_save(str(body.get("token") or ""), str(body.get("name") or ""))
@@ -1196,9 +1276,7 @@ class Handler(BaseHTTPRequestHandler):
             if "flip" in body:
                 APP.wallpaper_flip = bool(body["flip"])
                 changed = True
-            if "gap" in body:
-                APP.wallpaper_gap = max(0, min(64, int(body["gap"])))
-                changed = True
+            APP.wallpaper_gap = core.KEY_GAP  # 旧客户端传入间隙也忽略，固定物理间隙27
             if changed:
                 APP._save_config()
             # 调整待机壁纸时，设备立刻切到壁纸画面
@@ -1497,7 +1575,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 静态文件 ---------------------------------------------------------- #
     def _static(self, name: str):
-        if os.path.basename(name) in ("plugin-host.html", "pi-frame.html"):
+        if os.path.basename(name) in ("plugin-host.html", "pi-frame.html", "effect-host.html", "effect-worker.js", "effect-runtime.js"):
             self.send_error(404)
             return
         safe = os.path.normpath(os.path.join(UI_DIR, name))
@@ -1646,6 +1724,23 @@ class PluginHandler(BaseHTTPRequestHandler):
             self.send_error(403, "Forbidden host")
             return
         path = urllib.parse.urlparse(self.path).path
+        if path.startswith("/effects/"):
+            if self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"):
+                self.send_error(403)
+                return
+            asset = effect_asset(path)
+            if asset:
+                data, mime, headers = asset
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._effect_request("GET", path)
+            return
         if path in PLUGIN_UI_FILES:
             fp = os.path.join(UI_DIR, path.lstrip("/"))
         elif path.startswith("/plugins/"):
@@ -1677,8 +1772,53 @@ class PluginHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _effect_request(self, method: str, path: str, body=None):
+        auth = self.headers.get("Authorization") or ""
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        try:
+            result = APP.effect_host_request(method, path, token, body)
+        except PermissionError:
+            self.send_error(403)
+            return
+        except (ValueError, TypeError):
+            self.send_error(400)
+            return
+        data = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_POST(self):  # noqa: N802
-        self.send_error(405)
+        host = (self.headers.get("Host") or "").strip().lower()
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        path = urllib.parse.urlparse(self.path).path
+        if host not in {f"127.0.0.1:{PLUGIN_PORT}", f"localhost:{PLUGIN_PORT}"}:
+            self.send_error(403)
+            return
+        if not path.startswith("/effects/"):
+            self.send_error(405)
+            return
+        if origin != f"http://127.0.0.1:{PLUGIN_PORT}" or self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"):
+            self.send_error(403)
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self.send_error(415)
+            return
+        try:
+            size = int(self.headers.get("Content-Length") or "0")
+            if not 0 < size <= MAX_EFFECT_BODY:
+                self.send_error(413)
+                return
+            body = json.loads(self.rfile.read(size))
+            if not isinstance(body, dict):
+                raise ValueError("需要JSON对象")
+        except (ValueError, TypeError):
+            self.send_error(400)
+            return
+        self._effect_request("POST", path, body)
 
 
 def start_plugin_server() -> int:
@@ -1850,12 +1990,68 @@ def _tray_ui_watch(tray) -> None:
         _close_app_windows()          # 窗口背后那个浏览器进程留着只会占内存、还挂着死连接
 
 
+def _check_effect_host(result_path: str) -> int:
+    """从真实exe父进程验证后台灯效；不构造App、不连接SDK、不采集音频。"""
+    global APP, PLUGIN_PORT
+
+    class AudioProbe:
+        def start(self): pass
+        def stop(self): pass
+        def snapshot(self):
+            return {"available": False, "status": "stopped", "level": 0, "bands": [0] * 8}
+
+    class HostProbe(EffectsMixin):
+        def __init__(self):
+            self.init_effects()
+            self._effect_audio = AudioProbe()
+            self.device = type("OfflineDevice", (), {"connected": False})()
+            self._dirty = False
+        def broadcast(self, _value): pass
+        def apply_keys(self): return True
+
+    probe = HostProbe()
+    APP = probe
+    srv = QuietServer(("127.0.0.1", 0), PluginHandler)
+    srv.daemon_threads = True
+    PLUGIN_PORT = srv.server_address[1]
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    report = {"ok": False, "frozen": bool(getattr(sys, "frozen", False)),
+              "parentCompatibilityLayer": bool(os.environ.get("__COMPAT_LAYER"))}
+    try:
+        probe.start_effects(f"http://127.0.0.1:{PLUGIN_PORT}")
+        probe.load_effect({"name": "离线宿主检查", "code":
+                           "M18FX.on('frame',()=>{M18FX.ctx.fillRect(0,0,1000,740);M18FX.render();});"})
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            state = probe.effect_state()
+            if state["status"] in ("running", "error", "timeout"):
+                break
+            time.sleep(0.05)
+        report.update({"ok": state["status"] == "running" and state["metrics"]["frames"] > 0,
+                       "status": state["status"], "frames": state["metrics"]["frames"]})
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = str(exc)
+    finally:
+        report["logs"] = probe.effect_logs()
+        probe.close_effects()
+        srv.shutdown()
+        srv.server_close()
+        thread.join(timeout=3)
+    with open(result_path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2)
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     global APP, PORT, PLUGIN_PORT
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--check-effect-host", metavar="RESULT_JSON", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.check_effect_host:
+        return _check_effect_host(args.check_effect_host)
 
     # 单实例：已有控制台在跑就只开窗口，避免两个进程同时写设备
     other = None if args.port else wait_previous(PORT)
@@ -1877,6 +2073,9 @@ def main() -> int:
     url = f"http://127.0.0.1:{PORT}/"
     server = QuietServer(("127.0.0.1", PORT), Handler)
     PLUGIN_PORT = start_plugin_server()
+    APP.start_effects(f"http://127.0.0.1:{PLUGIN_PORT}")
+    if APP.is_effect_scene(APP.active_scene):
+        APP._restore_display()
     threading.Timer(0.5, APP.start_plugins).start()
     server.daemon_threads = True
     log(f"控制台已启动 {url}")
@@ -1888,6 +2087,7 @@ def main() -> int:
     except KeyboardInterrupt:
         log("退出")
     finally:
+        APP.close_effects()
         APP.device.disconnect()
     return 0
 

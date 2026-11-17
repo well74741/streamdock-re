@@ -1,0 +1,129 @@
+{
+ "sceneType": "effect",
+ "effect": {
+  "items": [
+   "打击垫"
+  ],
+  "index": 0,
+  "description": "科幻音频打击垫：音频线条和马赛克扩散",
+  "library": {
+   "打击垫": {
+    "code": "/* 默认灯效 v5：星空闪烁背景 + 音频波形铺满三排屏幕（三股叠加）；彩色马赛克和灯珠使用相同的扩散颜色。 */\nconst {ctx, width, height, keys, leds} = M18FX;\nconst waves = [];\nlet now = 0;\nconst clamp = v => Math.max(0, Math.min(1, v));\nconst screens = keys.filter(p => p.screen);\nconst cell = screens[0].size;\nconst rowTop = Math.min(...screens.map(p => p.y)), rowBottom = Math.max(...screens.map(p => p.y));\nconst lineY = (rowTop + rowBottom) / 2;\n// 最大振幅约为上一版的一半（够到上下两排屏幕的边缘），静音时是一条直线\nconst maxAmp = ((rowBottom - rowTop) / 2 + cell * 0.38) * 0.5;\nconst lineLeft = Math.min(...screens.map(p => p.x - p.size / 2)) + 6;\nconst lineRight = Math.max(...screens.map(p => p.x + p.size / 2)) - 6;\nconst POINTS = 220;\nconst smooth = Array(8).fill(0);   // 快起慢落，避免抖成碎线\n// 星星：固定种子，每次加载位置一样；只撒在 15 块屏幕上（键缝被按键框挡住看不到）\nlet seed = 20261117;\nconst random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);\nconst stars = [];\nfor (const key of screens) for (let i = 0; i < 6; i++) {\n  stars.push({x: key.x + (random() - 0.5) * key.size * 0.9, y: key.y + (random() - 0.5) * key.size * 0.9,\n    speed: 1.2 + random() * 2.8, phase: random() * Math.PI * 2, size: 2.5 + random() * 3,\n    tint: random() < 0.25 ? [255, 214, 150] : random() < 0.5 ? [170, 205, 255] : [235, 245, 255]});\n}\nfunction drawStars(time, level) {\n  for (const star of stars) {\n    // 尖峰型闪烁：大部分时间是暗淡小点，偶尔亮起带十字星芒\n    const pulse = Math.max(0, Math.sin(time * star.speed + star.phase));\n    const glow = 0.18 + 0.82 * pulse ** 6 + level * 0.25;\n    const a = Math.min(1, glow), [r, g, b] = star.tint;\n    ctx.fillStyle = `rgba(${r},${g},${b},${a.toFixed(3)})`;\n    const s = star.size * (0.7 + 0.5 * pulse ** 6);\n    ctx.fillRect(star.x - s / 2, star.y - s / 2, s, s);\n    if (pulse ** 6 > 0.35) {\n      const arm = s * (1.5 + 2.5 * pulse ** 6);\n      ctx.fillStyle = `rgba(${r},${g},${b},${(a * 0.55).toFixed(3)})`;\n      ctx.fillRect(star.x - arm, star.y - 1, arm * 2, 2);\n      ctx.fillRect(star.x - 1, star.y - arm, 2, arm * 2);\n    }\n  }\n}\nfunction rgb(h, v) {\n  return [0, 2 / 3, 1 / 3].map(offset => {\n    const x = ((h + offset) % 1) * 6;\n    return Math.round(255 * v * clamp(Math.abs(x - 3) - 1));\n  });\n}\nM18FX.on('key', event => {\n  if (!event.down) return;\n  waves.push({x: event.x, y: event.y, start: event.time / 1000, hue: (event.key * 0.137 + now * 0.05) % 1});\n  if (waves.length > 8) waves.shift();\n});\nfunction waveAt(x, y) {\n  let best = 0, hue = 0.55;\n  for (const wave of waves) {\n    const age = Math.max(0, now - wave.start), radius = age * 650;\n    const distance = Math.hypot(x - wave.x, y - wave.y);\n    const value = Math.exp(-(((distance - radius) / 65) ** 2)) * clamp(1 - age / 1.8);\n    if (value > best) { best = value; hue = wave.hue + distance / 1800; }\n  }\n  return {value: best, hue};\n}\nfunction bandAt(u) {\n  // 8 个频带在横向上线性插值，振幅沿整条线连续变化\n  const f = u * 7, i = Math.min(6, Math.floor(f)), t = f - i;\n  return smooth[i] * (1 - t) + smooth[i + 1] * t;\n}\nfunction strand(time, gain, speed, density, phase, color, lineWidth, level) {\n  ctx.strokeStyle = color; ctx.lineWidth = lineWidth; ctx.beginPath();\n  for (let i = 0; i <= POINTS; i++) {\n    const u = i / POINTS, x = lineLeft + u * (lineRight - lineLeft);\n    const envelope = 0.45 + 0.55 * Math.sin(Math.PI * u);\n    const amp = clamp(bandAt(u) * 1.7 + level * 0.6) * maxAmp * gain * envelope;\n    const y = lineY + Math.sin(time * speed + i * density + phase) * amp\n      + Math.sin(time * speed * 0.6 + i * density * 2.3 + phase) * amp * 0.25;\n    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);\n  }\n  ctx.stroke();\n}\nM18FX.on('frame', ({time}) => {\n  now = time;\n  while (waves.length && now - waves[0].start > 1.8) waves.shift();\n  const audio = M18FX.audio, level = audio.available ? audio.level : 0;\n  const bands = audio.available ? audio.bands : [0, 0, 0, 0, 0, 0, 0, 0];\n  for (let i = 0; i < 8; i++) smooth[i] = Math.max(bands[i] || 0, smooth[i] * 0.82);\n  ctx.fillStyle = '#030713'; ctx.fillRect(0, 0, width, height);\n  ctx.lineWidth = 1;\n  ctx.strokeStyle = '#0a1a2d';\n  for (let x = 70; x <= 930; x += 43) {\n    ctx.beginPath(); ctx.moveTo(x, 70); ctx.lineTo(x, 690); ctx.stroke();\n  }\n  for (let y = 70; y <= 690; y += 31) {\n    ctx.beginPath(); ctx.moveTo(70, y); ctx.lineTo(930, y); ctx.stroke();\n  }\n  drawStars(time, level);\n  // 边框固定，不随音频变化。\n  ctx.strokeStyle = 'rgba(20,170,230,0.22)';\n  for (const key of screens) {\n    const half = key.size / 2;\n    ctx.strokeRect(key.x - half + 3, key.y - half + 3, key.size - 6, key.size - 6);\n  }\n  // 三股叠加的音频波形横穿三排屏幕：外层光晕 + 主线 + 两股反相细线（缩到 64px 屏上仍清楚）。\n  strand(time, 1, 11, 0.252, 0, 'rgba(56,191,230,0.22)', 12, level);\n  strand(time, 0.62, 15, 0.364, Math.PI, 'rgba(150,90,255,0.8)', 3.5, level);\n  strand(time, 0.38, 19, 0.49, Math.PI / 2, 'rgba(120,255,220,0.7)', 2.5, level);\n  strand(time, 1, 11, 0.252, 0, '#38bfe6', 5, level);\n  ctx.lineWidth = 1;\n  if (waves.length) for (let y = 82; y < 690; y += 24) for (let x = 82; x < 930; x += 24) {\n    const wave = waveAt(x, y);\n    if (wave.value < 0.015) continue;\n    const c = rgb(wave.hue, wave.value);\n    ctx.fillStyle = `rgb(${c.join(',')})`;\n    const size = 8 + wave.value * 13;\n    ctx.fillRect(x - size / 2, y - size / 2, size, size);\n  }\n  const colors = leds.map(led => {\n    const wave = waveAt(led.x, led.y);\n    // 与马赛克同色、同一扩散函数；不叠加常亮底色或独立的音频灯效。\n    const color = wave.value >= 0.015 ? rgb(wave.hue, wave.value) : [0, 0, 0];\n    ctx.fillStyle = `rgb(${color.join(',')})`;\n    ctx.fillRect(led.x - 5, led.y - 5, 10, 10);\n    return color;\n  });\n  M18FX.render(colors);\n});\nM18FX.log('星空、三排音频波形与彩色马赛克已加载：按 1–18 键扩散，灯珠同色，无效果时关闭。');\n",
+    "description": "科幻音频打击垫：音频线条和马赛克扩散"
+   }
+  }
+ },
+ "pages": [
+  {
+   "name": "打击垫",
+   "images": {},
+   "actions": {},
+   "gestures": {
+    "1": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "2": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "3": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "4": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "5": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "6": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "7": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "8": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "9": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "10": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "11": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "12": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "13": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "14": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "15": {
+     "long": {
+      "type": "nav",
+      "name": "下一场景"
+     }
+    },
+    "16": {
+     "long": {
+      "type": "nav",
+      "name": "上一灯效页"
+     }
+    },
+    "18": {
+     "long": {
+      "type": "nav",
+      "name": "下一灯效页"
+     }
+    }
+   },
+   "keyLayer": 1
+  }
+ ],
+ "page": 0
+}

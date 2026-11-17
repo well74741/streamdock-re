@@ -153,6 +153,7 @@ STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\St
 STARTUP_LNKS = {"绿色版": "Stream Dock M18 控制台.lnk", "源码版": "Stream Dock M18 控制台（源码版）.lnk"}
 # 15 个键排成 5 列 × 3 行，单键 64×64
 KEY_SIZE = 64
+KEY_GAP = 27                 # 裁图、壁纸和相册统一使用固定的物理间隙补偿
 GRID_COLS, GRID_ROWS = 5, 3
 
 # 上报码 -> 物理键序号（1 = 左下角，左→右，下→上）

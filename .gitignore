@@ -33,5 +33,7 @@ __pycache__/
 # ---- 打包产物 ----
 build/
 dist/
+build-next-*/
+dist-next-*/
 app/assets/library/
 app/cache/

@@ -36,6 +36,9 @@ INSTRUCTIONS = """这是 Stream Dock M18（15 键带屏幕的宏键盘）控制�
 - 写「自制插件」（一段浏览器 JavaScript，控制按键画面、响应按键）：先调 m18_plugin_api 读开发指南
 - 开发循环：m18_save_custom_plugin → m18_bind_key → m18_press_key → m18_view_keys / m18_plugin_logs → 改代码再保存
 - 也能给按键直接设内置动作（m18_set_key_action）、标题样式、切换场景
+- 灯效：先m18_effect_api/m18_status，再m18_save_effect（存进灯效库）→m18_run_effect（试运行）→m18_effect_input（1–18下/上）→m18_view_effect/m18_effect_logs，最后m18_stop_effect恢复。
+- 灯效场景是多页的：每页引用灯效库里的一个灯效（m18_effect_scene 查看/加页/排序），◀ ▶ 长按切换灯效页。
+- 用户代码只在独立浏览器Worker运行；灯效时短按交给灯效互动，不要改已有按键配置。
 键号：底行 1–5，中行 6–10，顶行 11–15。改动会立刻反映到真实设备上；动别人已配置好的键之前先 m18_status 看一下，
 测试时优先用空键。"""
 
@@ -190,6 +193,7 @@ def t_status(_a: dict):
                        "设备没连上（可能官方 Stream Dock 软件占着设备）；画面仍在控制台里渲染，测试照常"),
         "scene": st.get("activeScene"), "page": f"{st.get('page', 0) + 1}/{st.get('pageCount')}",
         "inStandby": st.get("inStandby"), "officialSoftwareRunning": st.get("officialRunning"),
+        "effect": st.get("effect"),
         "keys": _key_summary(st),
     }
     return [_text(info)]
@@ -334,11 +338,83 @@ def t_logs(a: dict):
 
 def t_scenes(_a: dict):
     items = CON.post("/api/scenes").get("items") or []
-    return [_text([{"name": s.get("name"), "active": s.get("active"), "official": s.get("official")} for s in items])]
+    return [_text([{"name": s.get("name"), "active": s.get("active"), "official": s.get("official"),
+                    "sceneType": s.get("sceneType"), "muted": s.get("muted")} for s in items])]
 
 
 def t_apply_scene(a: dict):
     return [_text({"ok": CON.post("/api/scenes", {"apply": str(a.get("name") or "")}).get("ok")})]
+
+
+def t_effect_api(_a: dict):
+    for base in (BUNDLE, HERE, EXE_DIR):
+        path = os.path.join(base, "effect_guide.md")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8-sig") as fh:
+                return [_text(fh.read())]
+    return [_text(CON.post("/api/effects", {"action": "guide"}))]
+
+
+def t_effect_list(_a: dict):
+    return [_text(CON.post("/api/effects", {"action": "list"}))]
+
+
+def t_effect_get(a: dict):
+    return [_text(CON.post("/api/effects", {"action": "get", "name": str(a.get("name") or "")}))]
+
+
+def t_effect_save(a: dict):
+    return [_text(CON.post("/api/effects", {"action": "save", "name": str(a.get("name") or ""),
+                  "original": str(a.get("original") or ""), "code": a.get("code"),
+                  "description": str(a.get("description") or "")}))]
+
+
+def t_effect_delete(a: dict):
+    name = str(a.get("name") or "")
+    if not CON.post("/api/effects", {"action": "get", "name": name}).get("ok"):
+        raise ConsoleError("灯效库里没有这个灯效，未删除任何内容")
+    return [_text(CON.post("/api/effects", {"action": "delete", "name": name}))]
+
+
+def t_effect_run(a: dict):
+    return [_text(CON.post("/api/effects", {"action": "run", "name": str(a.get("name") or "")}))]
+
+
+def t_effect_scene(a: dict):
+    """查看 / 编辑灯效场景的页：op = get | add | remove | move | goto。"""
+    scene = str(a.get("scene") or "")
+    op = str(a.get("op") or "get")
+    if op == "get":
+        return [_text(CON.post("/api/effects", {"action": "scene", "scene": scene}))]
+    action = {"add": "pageAdd", "remove": "pageRemove", "move": "pageMove", "goto": "pageGoto"}.get(op)
+    if not action:
+        raise ConsoleError("op 只能是 get / add / remove / move / goto")
+    body = {"action": action, "scene": scene}
+    for k in ("name", "index", "from", "to"):
+        if k in a:
+            body[k] = a[k]
+    return [_text(CON.post("/api/effects", body))]
+
+
+def t_effect_input(a: dict):
+    return [_text(CON.post("/api/effects/input", {"key": a["key"], "down": a.get("down", True)}))]
+
+
+def t_effect_logs(a: dict):
+    return [_text(CON.post("/api/effects", {"action": "logs", "since": int(a.get("since") or 0),
+                                          "limit": int(a.get("limit") or 50)}))]
+
+
+def t_effect_view(_a: dict):
+    status = CON.post("/api/effects", {"action": "status"})
+    out = [_text(status)]
+    if status.get("active") and status.get("previewRev"):
+        out.append(_image(CON.request("/api/effect/preview.jpg", raw=True), "image/jpeg"))
+    return out
+
+
+def t_effect_stop(_a: dict):
+    return [_text(CON.post("/api/effects", {"action": "stop"}))]
 
 
 TOOLS = [
@@ -393,12 +469,36 @@ TOOLS = [
       "since": {"type": "integer", "description": "只要序号大于它的"},
       "limit": {"type": "integer", "description": "默认 50"}}, t_logs, True),
     ("m18_list_scenes", "列出场景", {}, t_scenes, True),
-    ("m18_apply_scene", "切换到某个场景", {"name": {"type": "string"}}, t_apply_scene, False),
+    ("m18_apply_scene", "切换到某个场景（普通/相册/灯效）。会影响真实设备", {"name": {"type": "string"}}, t_apply_scene, False),
+    ("m18_effect_api", "读灯效开发指南：M18FX、真实几何、音频和按键事件。写灯效前先读", {}, t_effect_api, True),
+    ("m18_list_effects", "列出灯效库里的灯效（左侧「灯效」分类）", {}, t_effect_list, True),
+    ("m18_get_effect", "读取灯效库里某个灯效的完整代码", {"name": {"type": "string"}}, t_effect_get, True),
+    ("m18_save_effect", "新建或保存灯效库里的灯效；新建不自动运行，更新正在运行的灯效会热重载",
+     {"name": {"type": "string"}, "original": {"type": "string", "description": "更新/改名时明确原灯效名称；新建留空"},
+      "code": {"type": "string", "description": "仅M18FX浏览器JavaScript，≤128KB"},
+      "description": {"type": "string"}}, t_effect_save, False),
+    ("m18_delete_effect", "从灯效库删除一个灯效（各灯效场景里引用它的页一并移除），不删除场景",
+     {"name": {"type": "string"}}, t_effect_delete, False),
+    ("m18_run_effect", "在设备上试运行灯效库里的一个灯效（不改任何场景；m18_stop_effect 恢复）。会影响真实设备",
+     {"name": {"type": "string"}}, t_effect_run, False),
+    ("m18_effect_scene", "查看/编辑灯效场景的页：op=get|add(name,index?)|remove(index)|move(from,to)|goto(index)",
+     {"scene": {"type": "string"}, "op": {"type": "string", "enum": ["get", "add", "remove", "move", "goto"]},
+      "name": {"type": "string"}, "index": {"type": "integer"}, "from": {"type": "integer"},
+      "to": {"type": "integer"}}, t_effect_scene, False),
+    ("m18_effect_input", "向当前灯效模拟按键下/上事件，不执行底层热键/程序。会改变真实设备灯效",
+     {"key": {"type": "integer", "minimum": 1, "maximum": 18},
+      "down": {"type": "boolean", "description": "true按下，false松开"}}, t_effect_input, False),
+    ("m18_effect_logs", "灯效错误/日志；since只取新记录",
+     {"since": {"type": "integer"}, "limit": {"type": "integer"}}, t_effect_logs, True),
+    ("m18_view_effect", "查看当前灯效/音频状态及整板画面（软件预览，不是设备屏幕回读）", {}, t_effect_view, True),
+    ("m18_stop_effect", "退出灯效并恢复之前的场景", {}, t_effect_stop, False),
 ]
 TOOL_MAP = {name: (fn, schema) for name, _d, schema, fn, _ro in TOOLS}
 REQUIRED = {"m18_get_custom_plugin": ["id"], "m18_save_custom_plugin": ["code"], "m18_delete_custom_plugin": ["id"],
             "m18_bind_key": ["key", "plugin"], "m18_set_key_action": ["key", "type"], "m18_set_key_style": ["key"],
-            "m18_clear_key": ["key"], "m18_press_key": ["key"], "m18_apply_scene": ["name"]}
+            "m18_clear_key": ["key"], "m18_press_key": ["key"], "m18_apply_scene": ["name"],
+            "m18_get_effect": ["name"], "m18_save_effect": ["name", "code"], "m18_delete_effect": ["name"],
+            "m18_effect_input": ["key", "down"], "m18_run_effect": ["name"], "m18_effect_scene": ["scene"]}
 
 
 def tools_list() -> list:
@@ -409,7 +509,7 @@ def tools_list() -> list:
             schema["required"] = REQUIRED[name]
         out.append({"name": name, "description": desc, "inputSchema": schema,
                     "annotations": {"readOnlyHint": readonly, "destructiveHint": name in (
-                        "m18_delete_custom_plugin", "m18_clear_key"), "openWorldHint": False}})
+                        "m18_delete_custom_plugin", "m18_clear_key", "m18_delete_effect"), "openWorldHint": False}})
     return out
 
 

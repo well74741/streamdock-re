@@ -21,6 +21,7 @@ from core import (  # noqa: F401
     HERE,
     ICON_DIR,
     KEY_COUNT,
+    KEY_GAP,
     LED_COUNT,
     LEGACY_ALBUM_NAMES,
     MODES,
@@ -326,7 +327,7 @@ class PagesMixin:
                 except (OSError, ValueError):
                     continue
         try:
-            self.wallpaper_gap = max(0, min(64, int(cfg.get("gap", self.wallpaper_gap))))
+            self.wallpaper_gap = KEY_GAP     # 旧配置的 gap 只保留在磁盘，不再用于渲染
             self.wallpaper_flip = bool(cfg.get("flip", self.wallpaper_flip))
             self.led_offset = int(cfg.get("ledOffset", 20)) % (LED_COUNT - 2)
             self.rotation = int(cfg.get("rotation", 0)) % 360
@@ -495,7 +496,7 @@ class PagesMixin:
     def _save_config_locked(self) -> None:
         self._backup_config()
         cfg = {
-            "gap": self.wallpaper_gap,
+            "gap": KEY_GAP,
             "flip": self.wallpaper_flip,
             "ledOffset": self.led_offset,
             "ledReverse": self.led_reverse,

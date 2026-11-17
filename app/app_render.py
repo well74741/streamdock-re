@@ -175,8 +175,8 @@ class RenderMixin:
         return data
 
     def set_key_style(self, key: int, spec: dict) -> bool:
-        if not (1 <= key <= KEY_COUNT):
-            return False
+        if not (1 <= key <= KEY_COUNT) or getattr(self, "_layer_scene_name", lambda: "")():
+            return False            # 相册 / 灯效场景的屏幕被整屏画面占用，样式没有意义
         self._anim_pause_until = time.time() + 1.0
         style = self.key_styles.setdefault(key, {})
         if "text" in spec:
@@ -239,7 +239,8 @@ class RenderMixin:
             return True
         self.selected_key = key
         self._anim_pause_until = time.time() + 1.2
-        if self.device.connected and not self.in_standby:
+        # 灯效运行时屏幕归灯效画面：选中键不重画底层按键图，免得盖住灯效（差分缓存也不会补回）
+        if self.device.connected and not self.in_standby and not getattr(self, "effect_active", lambda: False)():
             for k in (old, key):
                 # SDK 正在原生播放的动图键不重画，免得闪一下静态帧
                 if k and 1 <= k <= KEY_COUNT and k not in self._gif_active:
@@ -361,6 +362,8 @@ class RenderMixin:
 
     def apply_keys(self) -> bool:
         """先准备整组图和 GIF，再提交；切场景会取消旧相册任务。"""
+        if getattr(self, "effect_active", lambda: False)():
+            return False  # 灯效独占画面，普通按键后台重绘不得覆盖
         self._cancel_album_push()
         generation = self._album_generation
         rev = self.scene_rev
@@ -663,6 +666,8 @@ class RenderMixin:
         while True:
             time.sleep(1)
             try:
+                if getattr(self, "effect_active", lambda: False)():
+                    continue  # 灯效场景有自己的保活和屏幕调度，不自动进入壁纸
                 if self.album_active():
                     if self.device.connected and time.time() - self._last_paint > 25:
                         self._push_album()       # 定期补一帧，避免设备自己睡过去

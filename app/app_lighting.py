@@ -90,6 +90,10 @@ class LightingMixin:
             self._dirty = True
 
     def _compute(self, t: float):
+        if getattr(self, "_effect_active", False):
+            with self._effect_lock:
+                if self._effect_active:
+                    return [list(rgb) for rgb in self._effect_colors]
         with self.lock:
             cfg = dict(self.lighting)
         mode = cfg["mode"]
@@ -159,12 +163,32 @@ class LightingMixin:
         sends = collections.deque(maxlen=240)       # 每次写灯带耗时
         skipped = 0
         fails = 0                                   # 写灯带失败次数（转发到设备失败）
+        effect_ui_at = 0.0
         while True:
             time.sleep(1 / 30)
             now_tick = time.time()
             gaps.append((now_tick - last_tick) * 1000.0)
             last_tick = now_tick
             t = time.time() - t0
+            if getattr(self, "_effect_active", False):
+                try:
+                    frame = self._effect_led_frame(push=False)
+                except Exception:
+                    self._effect_log("error", "灯效 LED 写入失败")
+                    self._effect_fail(self._effect_generation, "error")
+                    continue
+                if frame is not None:
+                    # 浏览器场景同时接管屏幕与灯带，不再叠加旧灯效/定位闪灯。
+                    h = hash(tuple(tuple(c) for c in frame))
+                    self._frame = frame
+                    self._perf = {"gaps": list(gaps), "sends": list(sends), "skipped": skipped,
+                                  "fails": fails, "pushing": bool(self._pushing), "mode": "effect"}
+                    if h != ui_hash and now_tick - effect_ui_at >= 1 / 20:
+                        ui_hash = h
+                        effect_ui_at = now_tick
+                        if self.clients:
+                            self.broadcast({"type": "frame", "colors": frame})
+                    continue
             if self._identify and time.time() < self._identify[1]:
                 frame = [[0, 0, 0] for _ in range(LED_COUNT)]
                 frame[self._identify[0]] = [255, 255, 255]
@@ -223,6 +247,9 @@ class LightingMixin:
                 pass
 
     def snapshot(self) -> dict:
+        layer = self._layer_snapshot() if hasattr(self, "_layer_snapshot") else None
+        acts = layer["actions"] if layer else self.key_actions
+        gests = layer["gestures"] if layer else self.key_gestures
         with self.lock:
             return {
                 "device": {
@@ -271,6 +298,7 @@ class LightingMixin:
                 "dataDir": DATA_DIR,
                 "inStandby": self.in_standby,
                 "album": self.album_state(),
+                "effect": self.effect_state() if hasattr(self, "effect_state") else {"active": False},
                 "library": self.library_items(),
                 "inputStats": dict(self.device.stats),
                 "lastResponse": getattr(self.device, "last_response", None),
@@ -287,21 +315,23 @@ class LightingMixin:
                     "ox": self.wallpaper_ox,
                     "oy": self.wallpaper_oy,
                 },
-                "keyActions": {str(k): action_label(v) for k, v in self.key_actions.items()},
+                # 相册 / 灯效场景：编辑区和标签看场景自己的按键层，底层普通场景的按键不变
+                "keyLayer": ({"scene": layer["scene"], "kind": layer["kind"]} if layer else None),
+                "keyActions": {str(k): action_label(v) for k, v in acts.items()},
                 "keyActionTypes": {str(k): v.get("type", "launch")
-                                   for k, v in self.key_actions.items()},
+                                   for k, v in acts.items()},
                 "keyStyles": {str(k): v for k, v in self.key_styles.items()},
-                "keyActionValues": {str(k): action_value(v) for k, v in self.key_actions.items()},
+                "keyActionValues": {str(k): action_value(v) for k, v in acts.items()},
                 "keyActionSpecs": {str(k): {f: v.get(f) for f in ("enter", "secret", "button", "pos",
                                                                   "action", "state", "op", "page")}
-                                   for k, v in self.key_actions.items() if isinstance(v, dict)},
+                                   for k, v in acts.items() if isinstance(v, dict)},
                 "keyGestures": {
                     str(k): {gname: {"type": gv.get("type"), "label": action_label(gv),
                                      "value": action_value(gv),
                                      "spec": {f: gv.get(f) for f in ("enter", "secret", "button", "pos",
                                                                      "action", "name", "macro", "op")}}
                              for gname, gv in g.items() if isinstance(gv, dict)}
-                    for k, g in self.key_gestures.items() if g},
+                    for k, g in gests.items() if g},
                 "keyImages": {str(k): v.get("type") for k, v in self.key_overrides.items()},
                 "keyPlugin": {
                     str(k): {"plugin": v.get("plugin"), "name": v.get("name"),

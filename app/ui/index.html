@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stream Dock M18 控制台</title>
   <link rel="icon" href="icon.ico" />
-  <link rel="stylesheet" href="style.css?v=20261116gifclock1" />
+  <link rel="stylesheet" href="style.css?v=20261117effects7" />
 </head>
 <body>
 <div class="app">
@@ -64,6 +64,17 @@
         </div>
       </section>
 
+      <section class="side-sec" data-sec="effects">
+        <div class="side-sec-head">
+          <button class="sec-toggle" type="button"><i class="chev"></i><span>灯效</span><b id="fx-count">0</b></button>
+          <span class="side-sec-actions"><button class="seg tiny icon-btn" id="fx-new-side" title="新建灯效">＋</button></span>
+        </div>
+        <div class="side-sec-body">
+          <div id="fx-list" class="lib-album fx-lib"></div>
+          <p class="side-note">灯效库：点一下在下方「自制灯效」编辑代码，双击试运行；拖到灯效场景的页面编辑区就多一页。</p>
+        </div>
+      </section>
+
       <section class="side-sec" data-sec="custom">
         <div class="side-sec-head">
           <button class="sec-toggle" type="button"><i class="chev"></i><span>自制插件</span><b id="custom-count">0</b></button>
@@ -89,7 +100,7 @@
     </div>
 
     <div class="sidebar-foot">
-      <div class="version" id="app-version">v1.0.0 · 本地控制台</div>
+      <div class="version" id="app-version">本地控制台</div>
     </div>
   </aside>
 
@@ -305,11 +316,6 @@
                     <button class="seg" data-fit="fill">拉伸</button>
                   </span>
                 </div>
-                <div class="slider-row tight as-gap-row">
-                  <span>间隙</span>
-                  <input id="as-gap" type="range" min="0" max="64" step="1" value="27" />
-                  <b id="as-gap-val">27</b>
-                </div>
               </div>
               <div class="editor-info">
                 <div class="kv-line"><span>相册场景</span><b id="as-name">—</b></div>
@@ -334,12 +340,64 @@
                     <button class="seg" data-tr="mosaic">马赛克</button>
                   </span>
                 </div>
-                <p class="hint-line">这个场景在 Dock 上就是整屏相册：点任意屏幕键切到下一个场景，◀ ▶ 翻上/下一张图片，中间键回主场景。</p>
+                <p class="hint-line">这个场景在 Dock 上就是整屏相册：屏幕键默认单击切到下一个场景，◀ ▶ 翻上/下一张，⌂ 回第一张。选中上方按键可改动作（只能设动作，不能放图片 / 图标）。</p>
                 <input id="as-file" type="file" accept="image/*" multiple hidden />
+              </div>
+            </div>
+            <!-- 灯效场景：编辑区换成页面编辑区（布局同相册场景）：每页是灯效库里的一个灯效 -->
+            <div class="editor-body" id="effect-pages" hidden>
+              <div class="thumb-col">
+                <div class="album-view" id="ep-view" title="当前页预览；点一下编辑这一页的代码">
+                  <img id="ep-preview" alt="" hidden />
+                  <div class="album-empty" id="ep-empty">从左侧「灯效」分类拖入灯效<br><span>每个灯效是一页，◀ ▶ 长按切换</span></div>
+                  <span class="album-live" id="ep-live" hidden>运行中</span>
+                </div>
+                <div class="thumb-actions">
+                  <button class="seg small" id="ep-prev" title="切到上一页">◀ 上一页</button>
+                  <button class="seg small" id="ep-next" title="切到下一页">下一页 ▶</button>
+                  <button class="seg small" id="ep-del" title="把当前页移出这个场景（灯效库里的灯效不删）">移除此页</button>
+                </div>
+              </div>
+              <div class="editor-info">
+                <div class="kv-line"><span>灯效场景</span><b id="ep-name">—</b></div>
+                <div class="kv-line"><span>灯效页</span><b id="ep-count">0 页</b></div>
+                <div class="kv-line"><span>当前页</span><b id="ep-current">—</b></div>
+                <div class="album-strip fx-strip" id="ep-strip"></div>
+                <div class="kv-line"><button class="seg small" id="ep-edit">编辑当前页代码</button></div>
+                <p class="hint-line">从左侧「灯效」分类把灯效拖进来就多一页，拖动小图排序，点小图切到那一页。Dock 上屏幕键长按切下一个场景，◀ ▶ 长按切换灯效页；短按、双击留给灯效互动。选中上方按键可改这些动作（只能设动作，不能放图片 / 图标）。</p>
               </div>
             </div>
             <input type="file" id="key-file" accept="image/*,.gif" hidden />
             <input type="file" id="wallpaper-file" accept="image/*" hidden />
+          </div>
+
+          <div class="card effect-lab" id="effect-lab">
+            <div class="card-head">
+              <h2>自制灯效</h2><span class="muted">屏幕＋灯带联合互动，保存到左侧灯效库</span>
+              <span class="spacer"></span><button class="seg small" id="fx-fold">收起</button>
+            </div>
+            <div id="fx-body" class="fx-body">
+              <ol class="fx-steps">
+                <li>点「打开技术文档」，资源管理器会选中文档文件：把它直接拖进其他智能体的对话框，再说清想要的效果。</li>
+                <li>让智能体只返回 JavaScript，把代码复制回下方编辑区，点「保存到灯效库」，再「试运行」看效果。</li>
+                <li>把左侧「灯效」分类里的灯效拖进灯效场景的页面编辑区，一个场景可放多页，◀ ▶ 长按切换。也可通过 MCP 直接开发、测试。</li>
+              </ol>
+              <div class="fx-toolbar"><button class="seg small" id="fx-guide" title="在资源管理器里选中技术文档，方便拖进其他智能体">打开技术文档</button>
+                <button class="seg small" id="fx-prompt">复制智能体指引</button>
+                <button class="seg small" id="fx-agent">接入 AI / MCP</button>
+                <button class="seg small" id="fx-template">载入打击垫示例</button></div>
+              <div class="fx-meta"><label>名称 <input id="fx-name" class="sel-input" maxlength="40" placeholder="灯效 1" /></label>
+                <label>说明 <input id="fx-description" class="sel-input" maxlength="300" placeholder="灯效的用途和互动方式" /></label></div>
+              <textarea id="fx-code" class="cp-code" spellcheck="false" wrap="off" placeholder="把智能体生成的 M18FX JavaScript 粘贴到这里"></textarea>
+              <div class="cp-actions"><button class="seg small on" id="fx-save">保存到灯效库</button>
+                <button class="seg small" id="fx-apply" title="在 Dock 上试运行这个灯效；「退出灯效」回到原场景">试运行</button>
+                <button class="seg small" id="fx-stop">退出灯效</button>
+                <button class="seg small" id="fx-new">新建</button>
+                <button class="seg small" id="fx-delete">删除</button></div>
+              <p class="hint-line">电脑音频仅在灯效运行时采集；只提供强度和频带，不保存声音、不使用麦克风。15 个键并行写屏，整板约 17 帧/秒，灯带独立刷新；运行时点击上方屏幕或导航键可测试互动（同时会选中该键）。</p>
+              <div id="fx-status" class="hint-line">未运行灯效</div>
+              <div id="fx-log" class="cp-console" role="log"></div>
+            </div>
           </div>
 
           <div class="card custom-lab" id="custom-lab">
@@ -514,11 +572,6 @@
               <b id="wp-zoom-val">100%</b>
             </div>
             <div class="slider-row tight">
-              <span>间隙</span>
-              <input id="wallpaper-gap" type="range" min="0" max="64" step="1" value="27" />
-              <b id="wallpaper-gap-val">27</b>
-            </div>
-            <div class="slider-row tight">
               <span>亮度</span>
               <input id="standby-brightness" type="range" min="0" max="100" step="1" value="60" />
               <b id="standby-brightness-val">60</b>
@@ -619,7 +672,8 @@
     </div>
   </main>
 </div>
-<script src="gif-clock.js?v=20261116gifclock1"></script>
-<script src="app.js?v=20261116gifclock1"></script>
+<script src="gif-clock.js?v=20261117effects7"></script>
+<script src="effect-editor.js?v=20261117effects7"></script>
+<script src="app.js?v=20261117effects7"></script>
 </body>
 </html>

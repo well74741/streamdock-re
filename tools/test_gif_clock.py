@@ -2,8 +2,11 @@
 
     python tools/test_gif_clock.py
 """
+import ast
 import base64
+import ctypes as C
 import io
+import os
 import json
 from pathlib import Path
 import re
@@ -23,20 +26,51 @@ UI = ROOT / "app" / "ui"
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 
 
+def test_browser_job(process):
+    # 只提取纯进程管理辅助，避免导入core时创建用户数据目录。
+    tree = ast.parse((ROOT / 'app/app_effects.py').read_text(encoding='utf-8'))
+    nodes = [n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef))
+             and n.name in ('_BrowserJob', 'effect_browser_job')]
+    ns = {'C': C, 'os': os}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), '测试浏览器专属进程组', 'exec'), ns)
+    return ns['effect_browser_job'](process)
+
+
 class Browser:
     """测试专用 CDP，仅终止自己启动的浏览器 PID。"""
     def __init__(self):
+        self.job = None
+        self.sock = None
+        try:
+            self._start()
+        except BaseException:
+            if self.job:
+                self.job.close()
+            if hasattr(self, 'process') and self.process.poll() is None:
+                self.process.kill(); self.process.wait(timeout=5)
+            if hasattr(self, 'profile'):
+                self.profile.cleanup()
+            raise
+
+    def _start(self):
         self.profile = tempfile.TemporaryDirectory(prefix="m18-gif-clock-")
         self.process = subprocess.Popen([
             str(EDGE), "--headless=new", "--disable-gpu", "--remote-debugging-port=0",
+            "--no-first-run", "--no-default-browser-check", "--no-proxy-server",
             f"--user-data-dir={self.profile.name}", "--window-size=1200,900", "about:blank",
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.job = test_browser_job(self.process)
         marker = Path(self.profile.name) / "DevToolsActivePort"
-        for _ in range(100):
-            if marker.exists():
+        for _ in range(150):
+            try:
+                self.port = int(marker.read_text().splitlines()[0])
                 break
-            time.sleep(.1)
-        self.port = int(marker.read_text().splitlines()[0])
+            except (OSError, ValueError, IndexError):
+                if self.process.poll() is not None:
+                    raise RuntimeError('测试浏览器未正常启动')
+                time.sleep(.1)
+        else:
+            raise TimeoutError('测试浏览器未提供调试端口')
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json", timeout=5) as response:
             tab = next(t for t in json.load(response) if t["type"] == "page")
         path = tab["webSocketDebuggerUrl"].split(f":{self.port}", 1)[1]
@@ -103,6 +137,8 @@ class Browser:
         except (OSError, EOFError):
             pass
         self.sock.close()
+        if self.job:
+            self.job.close()
         try:
             self.process.wait(timeout=8)
         except subprocess.TimeoutExpired:

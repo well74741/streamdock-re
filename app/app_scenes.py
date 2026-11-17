@@ -63,8 +63,8 @@ class ScenesMixin:
             self._dirty = True
         if self.input_muted:
             # 屏蔽按键时，只有设了「控制台 → 屏蔽按键开关」的键还能用，否则关不回来
-            acts = [self.key_actions.get(key) or {}]
-            acts += [g for g in (self.key_gestures.get(key) or {}).values() if isinstance(g, dict)]
+            acts = [self._key_action(key) or {}]
+            acts += [g for g in self._key_gesture(key).values() if isinstance(g, dict)]
             if not any(a.get("type") == "console" and a.get("op") == "mute" for a in acts if isinstance(a, dict)):
                 return
         if self.screen_off and state == 1:
@@ -79,28 +79,26 @@ class ScenesMixin:
         if state == 0 and key in self._wake_swallow:
             self._wake_swallow.discard(key)
             return
+        # 换灯效页时运行时会重启一瞬间：preview_mode 仍是 effect，这期间的按键也留在灯效场景里
+        if getattr(self, "effect_active", lambda: False)() or getattr(self, "preview_mode", "") == "effect":
+            self._last_activity = time.time()
+            self.effect_input(key, bool(state))
+            # 灯效场景自己的按键层（默认：屏幕键长按下一场景，◀ ▶ 长按切灯效页；短按/双击空，留给灯效互动）。
+            # 试运行（没有灯效场景）时没有按键层，只交给灯效，不执行底层程序/热键/导航动作。
+            if self._layer_scene_name():
+                self._layer_input(key, state)
+            return
         if self.album_active():
             # 相册场景播放中：点任意屏幕键都是「下一个场景」，导航键是 上页/主场景/下页；
             # 幻灯片（待机相册）只是待机画面，播放时 ◀ ▶ 翻照片、按其他键回到当前场景。
             self._last_activity = time.time()
-            g = self.key_gestures.get(key) or {}
-            if self.album_scene_name and (g.get("long") or g.get("double")):
-                # 相册场景里给导航键设了长按/双击：照常按手势判定，短按还是 上页/主页/下页
-                self._gesture(key, state, g)
+            if self.album_scene_name:
+                # 相册场景：执行场景自己的按键层（默认屏幕键单击下一场景，◀ ⌂ ▶ 上一张/第一张/下一张）
+                self._layer_input(key, state)
                 return
             if state == 1:
                 self._wake_swallow.add(key)
-                if self.album_scene_name:
-                    # 相册场景：◀ ▶ 翻相册里的图片，中间键回主场景，其余屏幕键切下一个场景
-                    if key == 16:
-                        threading.Thread(target=self.album_goto, args=(-1,), daemon=True).start()
-                    elif key == 18:
-                        threading.Thread(target=self.album_goto, args=(1,), daemon=True).start()
-                    elif key == 17:
-                        threading.Thread(target=self.go_home, daemon=True).start()
-                    else:
-                        threading.Thread(target=self.next_scene, daemon=True).start()
-                elif key in (16, 18) and len(self._alb_items()) > 1:
+                if key in (16, 18) and len(self._alb_items()) > 1:
                     threading.Thread(target=self.album_goto, args=(-1 if key == 16 else 1,),
                                      daemon=True).start()
                 else:
@@ -168,10 +166,10 @@ class ScenesMixin:
             time.sleep(0.12)
             # 唤醒后回到息屏前那个场景，而不是让闲置计时立刻又进待机
             self._last_activity = time.time()
-            if self.in_standby:
+            if self.in_standby and not self.album_active():
                 self.in_standby = False
                 self.preview_mode = "wallpaper"
-            self.apply_keys()
+            self._restore_display()
         except Exception as exc:  # noqa: BLE001
             log(f"唤醒屏幕失败：{exc}")
 
@@ -386,6 +384,13 @@ class ScenesMixin:
                 data = loaded if isinstance(loaded, dict) else {}
             except (OSError, ValueError, AttributeError):
                 data = {}
+            if data.get("sceneType") == "effect":
+                eff = data.get("effect") if isinstance(data.get("effect"), dict) else {}
+                items.append({"name": name, "custom": False, "sceneType": "effect",
+                              "effect": True, "description": str(eff.get("description") or ""),
+                              "count": len([n for n in (eff.get("items") or []) if n]),
+                              "apps": data.get("apps") or [], "active": cur == name})
+                continue
             alb = data.get("album") if data.get("sceneType") == "album" else None
             if isinstance(alb, dict):
                 items.append({"name": name, "custom": False, "album": True, "albumScene": True,
@@ -439,6 +444,11 @@ class ScenesMixin:
 
     def create_scene(self, name: str, kind: str = "normal") -> dict:
         """新建场景：普通场景（把当前画面存一份）或相册场景（空的图片集，编辑区里再加图）。"""
+        if kind not in ("normal", "album", "effect"):
+            return {"ok": False, "reason": "未知场景类型"}
+        if kind == "effect":
+            result = self.create_effect_scene(name)
+            return {**result, "reason": result.get("error", "")}
         name = (name or "").strip()[:40]
         if not name and kind == "album":
             i = 1
@@ -456,9 +466,9 @@ class ScenesMixin:
                 data = {"sceneType": "album",
                         "album": {"items": [], "index": 0, "slideshow": True, "interval": 8,
                                   "transition": "fade", "fit": "cover"},
-                        "pages": [{"name": name, "images": {},
-                                   "actions": {str(k): {"type": "nav", "name": v}
-                                               for k, v in self.ALBUM_NAV.items()}}],
+                        # 相册场景自己的按键层：屏幕键单击下一场景，◀ ⌂ ▶ 上一张/第一张/下一张
+                        "pages": [{"name": name, "images": {}, "keyLayer": 1,
+                                   "actions": {str(k): v for k, v in self._layer_defaults("album")[0].items()}}],
                         "page": 0}
                 with open(self._scene_path(name), "w", encoding="utf-8") as fh:
                     json.dump(data, fh, ensure_ascii=False, indent=2)
@@ -476,7 +486,8 @@ class ScenesMixin:
         if not new or old == self.custom_scene_name:
             return False
         src = self._scene_path(old)
-        if not os.path.isfile(src):
+        new = self._canonical_scene(new)
+        if not os.path.isfile(src) or new == self.custom_scene_name or os.path.isfile(self._scene_path(new)):
             return False
         try:
             os.replace(src, self._scene_path(new))
@@ -484,6 +495,9 @@ class ScenesMixin:
             return False
         if self.active_scene == old:
             self.active_scene = new
+            self._layer_reload()          # 灯效/相册场景的按键层按新名字重新读
+            if self.album_scene_name == old:
+                self.album_scene_name = new
             self._save_config()
         return True
 
@@ -561,9 +575,13 @@ class ScenesMixin:
         data = self._scene_data(name)
         if not data or not isinstance(data.get("pages"), list):
             return {"ok": False, "error": "读取场景失败"}
-        scene = {k: data[k] for k in ("pages", "page", "apps") if k in data}
+        scene = {k: data[k] for k in ("sceneType", "effect", "album", "pages", "page", "apps") if k in data}
+        if scene.get("sceneType") == "effect":
+            scene["effect"] = self._effect_export(scene.get("effect"))   # 引用到的灯效代码一起打包
         buf = io.BytesIO()
         images, plugins = set(), set()
+        if scene.get("sceneType") == "album":
+            images.update(str(n) for n in (scene.get("album") or {}).get("items", []) if n)
         for p in scene["pages"]:
             images.update(str(v) for v in (p.get("images") or {}).values() if v)
             specs = list((p.get("actions") or {}).values())
@@ -650,6 +668,16 @@ class ScenesMixin:
         for p in scene["pages"]:
             p["images"] = {k: renamed.get(os.path.basename(str(v)), os.path.basename(str(v)))
                            for k, v in (p.get("images") or {}).items() if v}
+        if scene.get("sceneType") == "album":
+            alb = scene.get("album") or {}
+            alb["items"] = [renamed.get(os.path.basename(str(v)), os.path.basename(str(v)))
+                            for v in (alb.get("items") or []) if v]
+            scene["album"] = alb
+        if scene.get("sceneType") == "effect":
+            effect = self._effect_import(scene.get("effect"))   # 灯效代码写进灯效库，场景只留页顺序
+            if effect is None:
+                return {"ok": False, "error": "灯效代码格式无效或超过 128 KB"}
+            scene["effect"] = effect
         self._fresh_contexts(scene)
         # 场景名：重名自动加序号
         base_name = ((name or meta.get("name") or "导入的场景").strip() or "导入的场景")[:36]
@@ -682,6 +710,9 @@ class ScenesMixin:
         """场景里到底有没有内容：相册场景看有没有图片，普通场景看图片和非导航动作。"""
         if not isinstance(data, dict):
             return False
+        if data.get("sceneType") == "effect":
+            eff = data.get("effect") if isinstance(data.get("effect"), dict) else {}
+            return bool(eff.get("items") or str(eff.get("code") or "").strip())
         if data.get("sceneType") == "album":
             alb = data.get("album") or {}
             return any(str(n) for n in (alb.get("items") or [])) if isinstance(alb, dict) else False
@@ -725,6 +756,22 @@ class ScenesMixin:
         name = self._canonical_scene(name)
         if not name:
             return False
+        # 无效目标不停止当前灯效，不把旧按键配置临时写回灯效场景。
+        target_data = self._scene_file_data(os.path.join(SCENE_DIR, "__custom__.json")
+                                           if name == self.custom_scene_name else self._scene_path(name))
+        if target_data is None:
+            return False
+        if self.is_effect_scene(name):
+            self.scene_rev += 1
+            if self.screen_off:
+                self.screen_off = False
+                self._blanked = False
+            return self._apply_effect_scene(name)
+        if getattr(self, "effect_active", lambda: False)():
+            self._stop_effect_runtime()
+            self._effect_return = None
+            self.preview_mode = "wallpaper"
+            self.in_standby = False
         self.scene_rev += 1
         # 息屏状态下从控制台换场景：先亮屏，再切过去（否则会先补画旧场景、再被切走）
         if self.screen_off:
@@ -787,7 +834,10 @@ class ScenesMixin:
         if not os.path.isfile(path):
             return False
         if self.active_scene == name:
-            self.apply_scene(self.custom_scene_name)
+            if self.is_effect_scene(name) and getattr(self, "effect_active", lambda: False)():
+                self.stop_effect_scene()
+            else:
+                self.apply_scene(self.custom_scene_name)
         try:
             os.remove(path)
         except OSError:
@@ -799,6 +849,8 @@ class ScenesMixin:
         if getattr(self, "_suspend_snapshot", False) or getattr(self, "_applying_scene", False):
             return
         name = self.active_scene or self.custom_scene_name
+        if self.is_effect_scene(name) or self.is_album_scene(name):
+            return  # 特殊场景单独保存，不能把底层普通页写进它的定义
         custom = name == self.custom_scene_name
         path = os.path.join(SCENE_DIR, "__custom__.json") if custom else self._scene_path(name)
         if not custom and not os.path.isfile(path):
@@ -1205,8 +1257,10 @@ class ScenesMixin:
             for name in sorted(os.listdir(preset_scenes)):
                 if not name.endswith(".json"):
                     continue
+                # .scene-order.json 是打包时窗口里的场景顺序，一起拷过去
                 shutil.copy2(os.path.join(preset_scenes, name), os.path.join(SCENE_DIR, name))
-                names.append(os.path.splitext(name)[0])
+                if not name.startswith("."):
+                    names.append(os.path.splitext(name)[0])
             if names:
                 log(f"已载入默认场景：{' / '.join(names)}")
         except Exception as exc:  # noqa: BLE001
@@ -1416,10 +1470,6 @@ class ScenesMixin:
         run = lambda act: threading.Thread(target=self._run_action, args=(key, act), daemon=True).start()  # noqa: E731
 
         def short() -> None:
-            # 相册场景里的导航键，短按就是 上页 / 主场景 / 下页（别去跑那条 nav 动作）
-            if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
-                threading.Thread(target=self._album_nav_step, args=(key,), daemon=True).start()
-                return
             run(None)
         if state == 1:
             st["down"] = time.time()
@@ -1459,7 +1509,7 @@ class ScenesMixin:
             short()
 
     def _run_action(self, key: int, act: dict | None = None) -> None:
-        act = act if act is not None else self.key_actions.get(key)
+        act = act if act is not None else self._key_action(key)
         if not act:
             return
         kind = act.get("type") or "launch"
@@ -1483,7 +1533,15 @@ class ScenesMixin:
 
         if kind == "nav":
             name = act.get("name") or ""
-            if name in ("上一页", "下一页", "主页", "返回上级"):
+            if self.album_active() and self.album_scene_name and name in ("上一页", "下一页", "主页"):
+                # 相册场景里翻页就是翻图片：上一张 / 下一张 / 第一张
+                if name == "主页":
+                    self.album_goto(index=0)
+                else:
+                    self.album_goto(-1 if name == "上一页" else 1)
+            elif name in ("上一灯效页", "下一灯效页"):
+                self.effect_page_step(-1 if name == "上一灯效页" else 1)
+            elif name in ("上一页", "下一页", "主页", "返回上级"):
                 self.add_nav_pages(name)
             elif name == "下一场景":
                 self.next_scene()
@@ -1687,12 +1745,17 @@ class ScenesMixin:
         if key not in self.ALBUM_NAV:
             return False
         spec = {"type": "nav", "name": self.ALBUM_NAV[key]}
+        layer = self._layer()
+        if layer:
+            # 相册 / 灯效场景：还原成该场景类型的默认值
+            acts, gs = self._layer_defaults(layer["kind"])
+            self._layer_set(key, acts.get(key), "")
+            for g in ("long", "double"):
+                self._layer_set(key, (gs.get(key) or {}).get(g), g)
+            log(f"按键 {key} 已还原为{'相册' if layer['kind'] == 'album' else '灯效'}场景默认")
+            return True
         self.key_gestures.pop(key, None)
         self.key_actions[key] = dict(spec)
-        if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
-            self._album_nav_write(self.album_scene_name, key, spec, "")
-            for g in ("long", "double"):
-                self._album_nav_write(self.album_scene_name, key, None, g)
         self._save_config()
         if self.device.connected and not self.in_standby:
             self.device.send_image(key, self._render_key(key))
@@ -1720,14 +1783,13 @@ class ScenesMixin:
         if action is None:
             return False
         gesture = spec.get("gesture")
+        if self._layer():
+            # 相册 / 灯效场景的按键动作存在场景文件里，不碰底层普通场景
+            return self._layer_set(key, action, gesture if gesture in ("long", "double") else "")
         if gesture in ("long", "double"):
             self.key_gestures.setdefault(key, {})[gesture] = action
         else:
             self.key_actions[key] = action
-        if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
-            # 相册场景的导航键存在场景文件里，切场景回来还在
-            self._album_nav_write(self.album_scene_name, key, action,
-                                  gesture if gesture in ("long", "double") else "")
         if self._drop_orphan_folders():           # 原来是文件夹、被换成别的动作：子页一并回收
             self._bind_page()
         self._save_config()
@@ -1737,14 +1799,14 @@ class ScenesMixin:
         return True
 
     def clear_key_gesture(self, key: int, gesture: str) -> bool:
+        if self._layer():
+            return gesture in self._key_gesture(key) and self._layer_set(key, None, gesture)
         g = self.key_gestures.get(key) or {}
         if gesture not in g:
             return False
         g.pop(gesture, None)
         if not g:
             self.key_gestures.pop(key, None)
-        if self.album_active() and self.album_scene_name and key in self.ALBUM_NAV:
-            self._album_nav_write(self.album_scene_name, key, None, gesture)
         if self._drop_orphan_folders():
             self._bind_page()
         self._save_config()
@@ -1839,6 +1901,8 @@ class ScenesMixin:
     def clear_key_action(self, key: int, gesture: str = "") -> bool:
         if gesture in ("long", "double"):
             return self.clear_key_gesture(key, gesture)
+        if self._layer():
+            return self._key_action(key) is not None and self._layer_set(key, None, "")
         if key not in self.key_actions:
             return False
         self.key_actions.pop(key, None)
