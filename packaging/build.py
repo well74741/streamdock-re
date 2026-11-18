@@ -1,4 +1,4 @@
-﻿"""一键构建安装包：python packaging/build.py（或双击项目根目录的「打包.bat」）
+"""一键构建安装包：python packaging/build.py（或双击项目根目录的「打包.bat」）
 
     python packaging/build.py            # 检查环境 → 缺什么引导装什么 → 打包
     python packaging/build.py --yes      # 缺的依赖不问，直接装
@@ -288,15 +288,6 @@ def main() -> int:
     # 2) 官方 WebSocket SDK 放在 exe 旁边（server.py 里 APP_DIR/ws-sdk）
     shutil.copytree(os.path.join(ROOT, "ws-sdk"), os.path.join(app_dir, "ws-sdk"))
 
-    # 2a) 官方 Python 版设备 SDK（transport.dll）：开关屏 / 唤醒屏只有它有，
-    #     WebSocket SDK 没有「唤醒」命令。缺了它，设备睡过去就再也叫不醒（黑屏）。
-    sdk_src = os.path.join(ROOT, "refs", "devicesdk", "Python-SDK", "src", "StreamDock")
-    if os.path.isdir(sdk_src):
-        shutil.copytree(sdk_src, os.path.join(app_dir, "sdk", "StreamDock"),
-                        ignore=shutil.ignore_patterns("__pycache__"))
-    else:
-        print("! 缺 refs\\devicesdk\\Python-SDK\\src\\StreamDock：开关屏 / 唤醒指令将不可用")
-
     # 2b) MCP 服务：给 Codex / DeepSeek Harness / Claude 等 AI 智能体用（带控制台、走标准输入输出）。
     #     文件夹版放在 mcp/ 子目录（不用单文件版：单文件启动要解压到临时目录，会被安全软件拦）
     pyinstaller(
@@ -312,6 +303,8 @@ def main() -> int:
     shutil.copytree(os.path.join(BUILD, "mcp", "m18-mcp"), os.path.join(app_dir, "mcp"))
     for doc in (os.path.join(ROOT, "AGENTS.md"), os.path.join(APP, "plugin_guide.md")):
         shutil.copyfile(doc, os.path.join(app_dir, os.path.basename(doc)))
+    # 给拿到压缩包的人看的使用说明（系统要求、首次使用、连不上设备怎么办）
+    shutil.copyfile(os.path.join(HERE, "使用说明.txt"), os.path.join(app_dir, "使用说明.txt"))
 
     # 3) 程序文件夹 → 绿色版 zip（解压出来就是能直接运行的程序目录）
     release = os.path.join(DIST, "release")

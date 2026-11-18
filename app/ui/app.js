@@ -3038,10 +3038,15 @@ function applyState(s) {
       ? `已连接 ${d.info?.firmware ? "· " + d.info.firmware : ""}`
       : d.error || "未连接");
 
-  $("#banner").classList.toggle("hidden", !s.officialRunning);
+  const offlineLong = !d.connected && !d.yielded && performance.now() > 6000;
+  $("#banner").classList.toggle("hidden", !s.officialRunning && !offlineLong);
   if (s.officialRunning) {
     $("#banner").textContent =
-      "检测到官方 Stream Dock 软件正在运行：两者会抢画面和灯光，日常使用建议只开一个。";
+      "检测到官方 Stream Dock 软件正在运行：两者会抢画面和灯光，日常使用建议只开一个（托盘里也要退出）。";
+  } else if (offlineLong) {
+    $("#banner").textContent =
+      "还没连上 M18：① 检查 / 重新插拔 USB 线 ② 关掉官方 Stream Dock 软件 ③ 确认压缩包已完整解压、ws-sdk 文件夹和 M18Console.exe 在一起"
+      + " ④ 安全软件拦截时选「允许」。仍不行可点右上「设备设置 → 重新连接并接管」。详见程序文件夹里的「使用说明.txt」。";
   }
 
   const L = s.lighting;

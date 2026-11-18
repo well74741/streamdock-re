@@ -272,7 +272,8 @@ class DeviceWS:
             if port_open(self.port):
                 return True
         if not self.exe or not os.path.isfile(self.exe):
-            self.error = f"找不到 StreamDockWebsocketSDK.exe，请把官方 WebSocket SDK 放到：{self.exe}"
+            self.error = ("找不到 ws-sdk\\StreamDockWebsocketSDK.exe：请把压缩包全部解压后再运行，"
+                          "ws-sdk 文件夹要和 M18Console.exe 放在一起")
             return False
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self._proc = subprocess.Popen(
@@ -305,7 +306,7 @@ class DeviceWS:
                 self._dev_ready.clear()
                 threading.Thread(target=ws.recv_loop, daemon=True).start()
                 if not self._dev_ready.wait(8):
-                    self.error = "SDK 已连上，但没收到设备就绪事件"
+                    self.error = "没找到 M18：检查 USB 线，并关掉官方 Stream Dock 软件"
                     self.disconnect()      # 清理掉，下次重试用全新的 SDK 进程
                     return False
                 # 开始监听按键

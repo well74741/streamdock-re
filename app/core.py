@@ -73,11 +73,6 @@ def _ensure_data_dir(path: str) -> str:
 
 
 DATA_DIR = _ensure_data_dir(DATA_DIR)
-# 打包版：refs/ 不会带进安装目录，官方 Python SDK 被复制到 sdk/ 下（开关屏 / 唤醒要用）
-SDK_BUNDLED = os.path.join(APP_DIR, "sdk")
-if os.path.isdir(SDK_BUNDLED):
-    sys.path.insert(0, SDK_BUNDLED)
-
 # 用 pythonw 启动时没有控制台，把输出重定向到日志，避免 print 崩溃
 if sys.stdout is None or sys.stderr is None:
     _log_path = os.path.join(DATA_DIR, "server.log")
